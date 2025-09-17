@@ -1,0 +1,39 @@
+{
+  "name": "opendeploy-cli",
+  "version": "1.0.0-alpha",
+  "description": "OpenDeploy CLI — cross-provider deployment tool focused on Next.js first.",
+  "type": "module",
+  "bin": {
+    "opendeploy": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "engines": {
+    "node": ">=18.17.0"
+  },
+  "license": "MIT",
+  "author": "OpenDeploy Contributors",
+  "dependencies": {
+    "commander": "^14.0.1",
+    "dotenv": "^17.2.2",
+    "pg": "^8.16.3",
+    "zx": "^8.8.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.2.4",
+    "@types/node": "^24.3.3",
+    "tsup": "^8.5.0",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}
