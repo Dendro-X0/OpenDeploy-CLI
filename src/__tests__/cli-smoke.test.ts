@@ -12,7 +12,13 @@ function runCli(args: readonly string[], cwd: string): Promise<{ stdout: string;
       return resolve({ stdout: '', stderr: 'dist/index.js missing; build first', code: 0 })
     }
     const child = execFile(exe, [entry, ...args], { cwd }, (err, stdout, stderr) => {
-      const code = (err && (err as any).code) ? Number((err as any).code) : 0
+      let code = 0
+      if (err) {
+        const ec: unknown = (err as any).code
+        if (typeof ec === 'number' && Number.isFinite(ec)) code = ec
+        else if (typeof ec === 'string' && /^\d+$/.test(ec)) code = Number(ec)
+        else code = 1
+      }
       resolve({ stdout: String(stdout), stderr: String(stderr), code })
     })
     child.on('error', () => resolve({ stdout: '', stderr: 'spawn error', code: 1 }))
@@ -30,7 +36,8 @@ function parseJsonLines(text: string): unknown[] {
   return out
 }
 
-const PROJECT1 = join('E:', 'Codebase', 'my-workspace', 'next-authjs-starterkit')
+// Use repository root as a safe cwd for dry-run CLI smoke tests
+const PROJECT1 = process.cwd()
 
 describe('CLI smoke', () => {
   it('up vercel dry-run NDJSON emits final summary', async () => {
