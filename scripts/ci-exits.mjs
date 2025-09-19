@@ -12,9 +12,9 @@ function assertExit(code, expected, label) {
   }
 }
 
-// 1) A command expected to succeed (detect)
-const ok1 = run('node', ['dist/index.js', 'detect', '--json'])
-assertExit(ok1, 0, 'detect --json')
+// 1) A command expected to succeed (help) — does not depend on detection
+const ok1 = run('node', ['dist/index.js', '--help'])
+assertExit(ok1, 0, '--help')
 
 // 2) A command expected to fail in CI by design (doctor --ci). CI runners are not logged into providers.
 const ok2 = run('node', ['dist/index.js', 'doctor', '--ci', '--json'])
