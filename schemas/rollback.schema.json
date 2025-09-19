@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "OpenDeploy Rollback Summary",
+  "type": "object",
+  "properties": {
+    "ok": { "type": "boolean" },
+    "provider": { "type": "string", "enum": ["vercel", "netlify"] },
+    "action": { "const": "rollback" },
+    "target": { "const": "prod" },
+    "to": { "type": "string" },
+    "url": { "type": "string" },
+    "alias": { "type": "string" },
+    "candidate": { "type": "string" },
+    "needsAlias": { "type": "boolean" },
+    "message": { "type": "string" },
+    "dashboard": { "type": "string" },
+    "deployId": { "type": "string" },
+    "final": { "const": true }
+  },
+  "required": ["provider", "action", "target", "final"],
+  "additionalProperties": true
+}

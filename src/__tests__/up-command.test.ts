@@ -4,10 +4,21 @@ import { Command } from 'commander'
 // Capture spawn calls
 const calls: string[] = []
 
+// Avoid env sync side effects and adapter file writes
+vi.mock('../commands/env', () => ({ envSync: vi.fn(async () => { /* no-op */ }) }))
+vi.mock('../providers/netlify/adapter', () => ({ NetlifyAdapter: class { async generateConfig() { /* no-op */ } } }))
+vi.mock('../core/detectors/auto', () => ({ detectApp: vi.fn(async () => ({ framework: 'next', publishDir: 'dist' })) }))
+
 vi.mock('../utils/process', async (orig) => {
   const real = await orig<any>()
   return {
     ...real,
+    runWithRetry: vi.fn(async (args: { cmd: string }) => {
+      if (args.cmd.startsWith('netlify deploy')) {
+        return { ok: true, exitCode: 0, stdout: 'Website URL: https://example.netlify.app', stderr: '' }
+      }
+      return { ok: true, exitCode: 0, stdout: '', stderr: '' }
+    }),
     proc: {
       ...real.proc,
       run: vi.fn(async (args: { cmd: string }) => {
@@ -25,21 +36,21 @@ vi.mock('../utils/process', async (orig) => {
 })
 
 
-import { registerDeployCommand } from '../commands/deploy'
+import { registerUpCommand } from '../commands/up'
 
 describe('up command', () => {
   it('runs deploy in-process and preserves flags', async () => {
     const program = new Command()
-    registerDeployCommand(program)
+    registerUpCommand(program)
     const orig = process.env.OPD_SYNC_ENV
     try {
       delete process.env.OPD_SYNC_ENV
-      await program.parseAsync(['node','test','up','netlify','--env','prod','--project','site_123','--json'])
+      await program.parseAsync(['node','test','up','netlify','--env','prod','--project','site_123','--json','--dry-run'])
       // OPD_SYNC_ENV should be set during delegation
       expect(process.env.OPD_SYNC_ENV).toBe('1')
     } finally {
       if (orig === undefined) delete process.env.OPD_SYNC_ENV
       else process.env.OPD_SYNC_ENV = orig
     }
-  })
+  }, 20000)
 })

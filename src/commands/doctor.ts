@@ -1,6 +1,6 @@
 import { Command } from 'commander'
-import { logger } from '../utils/logger'
-import { proc } from '../utils/process'
+import { logger, isJsonMode } from '../utils/logger'
+import { proc, runWithRetry } from '../utils/process'
 import { join } from 'node:path'
 import { readdir, stat as fsStat } from 'node:fs/promises'
 import { fsx } from '../utils/fs'
@@ -9,7 +9,7 @@ import { detectPackageManager } from '../core/detectors/package-manager'
 import { mapProviderError } from '../utils/errors'
 import { printDoctorSummary } from '../utils/summarize'
 
-interface DoctorOptions { readonly ci?: boolean; readonly json?: boolean; readonly verbose?: boolean }
+interface DoctorOptions { readonly ci?: boolean; readonly json?: boolean; readonly verbose?: boolean; readonly fix?: boolean; readonly path?: string; readonly project?: string; readonly org?: string; readonly site?: string; readonly printCmd?: boolean }
 
 interface CheckResult { readonly name: string; readonly ok: boolean; readonly message: string }
 
@@ -24,27 +24,33 @@ function parseNodeOk(): boolean {
   return false
 }
 
-async function checkCmdAny(cmds: readonly string[], label: string): Promise<CheckResult> {
+async function checkCmdAny(cmds: readonly string[], label: string, printCmd?: boolean): Promise<CheckResult> {
   for (const c of cmds) {
-    const out = await proc.run({ cmd: `${c} --version` })
+    const cmd = `${c} --version`
+    if (printCmd) logger.info(`$ ${cmd}`)
+    const out = await runWithRetry({ cmd })
     if (out.ok) return { name: `${label} --version`, ok: true, message: out.stdout.trim() }
   }
   return { name: `${label} --version`, ok: false, message: 'not installed or not on PATH' }
 }
 
-async function checkVercelAuth(): Promise<CheckResult> {
+async function checkVercelAuth(printCmd?: boolean): Promise<CheckResult> {
   const candidates: readonly string[] = process.platform === 'win32' ? ['vercel', 'vercel.cmd'] : ['vercel']
   for (const c of candidates) {
-    const out = await proc.run({ cmd: `${c} whoami` })
+    const cmd = `${c} whoami`
+    if (printCmd) logger.info(`$ ${cmd}`)
+    const out = await runWithRetry({ cmd })
     if (out.ok && out.stdout.trim().length > 0) return { name: 'vercel auth', ok: true, message: out.stdout.trim() }
   }
   return { name: 'vercel auth', ok: false, message: 'not logged in (run: vercel login)' }
 }
 
-async function checkNetlifyAuth(): Promise<CheckResult> {
+async function checkNetlifyAuth(printCmd?: boolean): Promise<CheckResult> {
   const candidates: readonly string[] = process.platform === 'win32' ? ['netlify', 'netlify.cmd'] : ['netlify']
   for (const c of candidates) {
-    const out = await proc.run({ cmd: `${c} status` })
+    const cmd = `${c} status`
+    if (printCmd) logger.info(`$ ${cmd}`)
+    const out = await runWithRetry({ cmd })
     if (out.ok && out.stdout.toLowerCase().includes('logged in')) return { name: 'netlify auth', ok: true, message: out.stdout.trim() }
   }
   return { name: 'netlify auth', ok: false, message: 'not logged in (run: netlify login)' }
@@ -60,45 +66,53 @@ export function registerDoctorCommand(program: Command): void {
     .option('--ci', 'CI mode (exit non-zero on warnings)')
     .option('--json', 'Output JSON')
     .option('--verbose', 'Verbose output')
+    .option('--fix', 'Attempt to fix common issues (linking)')
+    .option('--path <dir>', 'Working directory to check/fix (monorepos)')
+    .option('--project <id>', 'Vercel project ID (for linking)')
+    .option('--org <id>', 'Vercel org/team ID (for linking)')
+    .option('--site <siteId>', 'Netlify site ID (for linking)')
+    .option('--print-cmd', 'Print underlying provider commands that will be executed')
     .action(async (opts: DoctorOptions): Promise<void> => {
       try {
-        if (opts.json === true) logger.setJsonOnly(true)
+        const jsonMode: boolean = isJsonMode(opts.json)
+        if (jsonMode) logger.setJsonOnly(true)
         const results: CheckResult[] = []
         const suggestions: string[] = []
         const nodeOk: boolean = parseNodeOk()
         results.push({ name: 'node >= 18.17', ok: nodeOk, message: process.versions.node })
         const pnpmCandidates: readonly string[] = process.platform === 'win32' ? ['pnpm', 'pnpm.cmd', 'corepack pnpm'] : ['pnpm', 'corepack pnpm']
-        const pnpm = await checkCmdAny(pnpmCandidates, 'pnpm')
+        const pnpm = await checkCmdAny(pnpmCandidates, 'pnpm', opts.printCmd)
         results.push(pnpm)
         const bunCandidates: readonly string[] = process.platform === 'win32' ? ['bun', 'bun.exe', 'bun.cmd'] : ['bun']
-        const bunCli = await checkCmdAny(bunCandidates, 'bun')
+        const bunCli = await checkCmdAny(bunCandidates, 'bun', opts.printCmd)
         results.push(bunCli)
         const vercelCandidates: readonly string[] = process.platform === 'win32' ? ['vercel', 'vercel.cmd'] : ['vercel']
-        const vercelCli = await checkCmdAny(vercelCandidates, 'vercel')
+        const vercelCli = await checkCmdAny(vercelCandidates, 'vercel', opts.printCmd)
         results.push(vercelCli)
         const netlifyCandidates: readonly string[] = process.platform === 'win32' ? ['netlify', 'netlify.cmd'] : ['netlify']
-        const netlifyCli = await checkCmdAny(netlifyCandidates, 'netlify')
+        const netlifyCli = await checkCmdAny(netlifyCandidates, 'netlify', opts.printCmd)
         results.push(netlifyCli)
         // Optional toolchain checks
         const prismaCandidates: readonly string[] = process.platform === 'win32'
           ? ['pnpm exec prisma', 'npx prisma', 'prisma', 'prisma.cmd']
           : ['pnpm exec prisma', 'npx prisma', 'prisma']
-        const prismaCli = await checkCmdAny(prismaCandidates, 'prisma (optional)')
+        const prismaCli = await checkCmdAny(prismaCandidates, 'prisma (optional)', opts.printCmd)
         results.push(prismaCli)
         const drizzleCandidates: readonly string[] = process.platform === 'win32'
           ? ['pnpm exec drizzle-kit', 'npx drizzle-kit', 'drizzle-kit', 'drizzle-kit.cmd']
           : ['pnpm exec drizzle-kit', 'npx drizzle-kit', 'drizzle-kit']
-        const drizzleCli = await checkCmdAny(drizzleCandidates, 'drizzle-kit (optional)')
+        const drizzleCli = await checkCmdAny(drizzleCandidates, 'drizzle-kit (optional)', opts.printCmd)
         results.push(drizzleCli)
         const psqlCandidates: readonly string[] = process.platform === 'win32' ? ['psql', 'psql.exe'] : ['psql']
-        const psqlCli = await checkCmdAny(psqlCandidates, 'psql (optional)')
+        const psqlCli = await checkCmdAny(psqlCandidates, 'psql (optional)', opts.printCmd)
         results.push(psqlCli)
-        const vercelAuth = await checkVercelAuth()
+        const vercelAuth = await checkVercelAuth(opts.printCmd)
         results.push(vercelAuth)
-        const netlifyAuth = await checkNetlifyAuth()
+        const netlifyAuth = await checkNetlifyAuth(opts.printCmd)
         results.push(netlifyAuth)
         // Monorepo and workspace sanity
-        const cwd: string = process.cwd()
+        const cwdRoot: string = process.cwd()
+        const cwd: string = opts.path ? join(cwdRoot, opts.path) : cwdRoot
         const mono = await detectMonorepo({ cwd })
         results.push({ name: 'monorepo', ok: mono !== 'none', message: mono })
         if (mono !== 'none') {
@@ -107,6 +121,31 @@ export function registerDoctorCommand(program: Command): void {
             const hasLock = await fsx.exists(join(cwd, 'pnpm-lock.yaml'))
             results.push({ name: 'pnpm lockfile at root', ok: hasLock, message: hasLock ? 'found' : 'missing' })
           }
+        // Optional: best-effort fixes
+        if (opts.fix === true) {
+          try {
+            // Vercel link fix
+            const vercelLinked = await fsx.exists(join(cwd, '.vercel', 'project.json'))
+            if (!vercelLinked && opts.project) {
+              const flags: string[] = ['--yes', `--project ${opts.project}`]
+              if (opts.org) flags.push(`--org ${opts.org}`)
+              const linkVercel = `vercel link ${flags.join(' ')}`
+              if (opts.printCmd) logger.info(`$ ${linkVercel}`)
+              const res = await runWithRetry({ cmd: linkVercel, cwd })
+              if (!res.ok) suggestions.push('vercel link --yes --project <id> [--org <id>]')
+              else results.push({ name: 'vercel link (fix)', ok: true, message: 'linked' })
+            }
+            // Netlify link fix
+            const netlifyLinked = await fsx.exists(join(cwd, '.netlify', 'state.json'))
+            if (!netlifyLinked && opts.site) {
+              const linkNetlify = `netlify link --id ${opts.site}`
+              if (opts.printCmd) logger.info(`$ ${linkNetlify}`)
+              const res = await runWithRetry({ cmd: linkNetlify, cwd })
+              if (!res.ok) suggestions.push('netlify link --id <siteId>')
+              else results.push({ name: 'netlify link (fix)', ok: true, message: 'linked' })
+            }
+          } catch { /* ignore */ }
+        }
           // Vercel link file (optional but recommended for CLI ops)
           const projectJson = join(cwd, '.vercel', 'project.json')
           const linked = await fsx.exists(projectJson)
@@ -175,8 +214,8 @@ export function registerDoctorCommand(program: Command): void {
           }
         }
         const ok: boolean = results.every(r => r.ok)
-        if (opts.json === true) {
-          logger.json({ ok, results, suggestions })
+        if (jsonMode) {
+          logger.jsonPrint({ ok, action: 'doctor' as const, results, suggestions, final: true })
           process.exitCode = ok ? 0 : 1
           return
         }
@@ -208,8 +247,8 @@ export function registerDoctorCommand(program: Command): void {
       } catch (err) {
         const raw: string = err instanceof Error ? err.message : String(err)
         const info = mapProviderError('doctor', raw)
-        if (opts.json === true || process.env.OPD_JSON === '1' || process.env.OPD_NDJSON === '1') {
-          logger.json({ ok: false, command: 'doctor', code: info.code, message: info.message, remedy: info.remedy, error: raw, final: true })
+        if (isJsonMode(opts.json)) {
+          logger.jsonPrint({ ok: false, action: 'doctor' as const, code: info.code, message: info.message, remedy: info.remedy, error: raw, final: true })
         }
         logger.error(`${info.message} (${info.code})`)
         if (info.remedy) logger.info(`Try: ${info.remedy}`)

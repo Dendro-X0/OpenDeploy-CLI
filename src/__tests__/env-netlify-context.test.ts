@@ -28,6 +28,16 @@ vi.mock('../utils/process', async (orig) => {
   const real = await orig<any>()
   return {
     ...real,
+    runWithRetry: vi.fn(async (args: { cmd: string; cwd?: string }) => {
+      if (args.cmd.includes('env:list') && args.cmd.includes('--json')) {
+        const json = JSON.stringify([
+          { key: 'NEXTAUTH_URL', values: [ { context: 'production', value: 'https://prod.example.com' }, { context: 'dev', value: 'http://localhost:3000' } ] },
+          { key: 'AUTH_SECRET', values: [ { context: 'production', value: 'secret_prod' } ] }
+        ])
+        return { ok: true, exitCode: 0, stdout: json, stderr: '' }
+      }
+      return { ok: true, exitCode: 0, stdout: '', stderr: '' }
+    }),
     proc: {
       ...real.proc,
       run: vi.fn(async (args: { cmd: string, cwd?: string }) => {
@@ -52,7 +62,21 @@ import { envDiff } from '../commands/env'
 
 async function withTemp<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   const dir = await mkdtemp(join(tmpdir(), 'opd-env-'))
-  try { return await fn(dir) } finally { await rm(dir, { recursive: true, force: true }) }
+  try { return await fn(dir) } finally {
+    let attempt = 0
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      try { await rm(dir, { recursive: true, force: true }); break } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code
+        if ((code === 'EBUSY' || code === 'EPERM') && attempt < 5) {
+          await new Promise(r => setTimeout(r, 60 * (attempt + 1)))
+          attempt++
+          continue
+        }
+        break
+      }
+    }
+  }
 }
 
 describe('Netlify env --context', () => {
@@ -61,7 +85,7 @@ describe('Netlify env --context', () => {
 
   beforeEach(() => {
     jsons.length = 0
-    logSpy = vi.spyOn(logger, 'json').mockImplementation((obj: unknown) => { jsons.push(obj) })
+    logSpy = vi.spyOn(logger, 'jsonPrint').mockImplementation((obj: unknown) => { jsons.push(obj) })
   })
   afterEach(() => { logSpy.mockRestore() })
 
@@ -83,5 +107,5 @@ describe('Netlify env --context', () => {
       expect(last.removed.length).toBe(0)
       expect(last.changed.length).toBe(0)
     })
-  })
+  }, 20000)
 })

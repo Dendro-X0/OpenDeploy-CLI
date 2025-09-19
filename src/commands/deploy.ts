@@ -14,6 +14,7 @@ import { spinner } from '../utils/ui'
 import { mapProviderError } from '../utils/errors'
 import { printDeploySummary } from '../utils/summarize'
 import { envSync } from './env'
+import { computeRedactors } from '../utils/redaction'
 
 interface DeployOptions {
   readonly env?: 'prod' | 'preview'
@@ -63,6 +64,8 @@ export function registerDeployCommand(program: Command): void {
             logger.section('Environment')
             logger.note(`Syncing ${chosenFile} → ${provider}`)
             try {
+              // Strengthen redaction: load secrets from selected env file and process.env
+              try { const patterns = await computeRedactors({ cwd: targetCwd, envFiles: [chosenFile], includeProcessEnv: true }); if (patterns.length > 0) logger.setRedactors(patterns) } catch { /* ignore */ }
               await envSync({ provider: provider === 'netlify' ? 'netlify' : 'vercel', cwd: targetCwd, file: chosenFile, env: envTarget, yes: true, ci: Boolean(opts.ci), json: false, projectId: opts.project, orgId: opts.org, ignore: [], only: [] })
               logger.success('Environment sync complete')
             } catch (e) {
@@ -141,18 +144,10 @@ export function registerDeployCommand(program: Command): void {
             let finalLogsUrl: string | undefined = logsUrl
             if (!finalLogsUrl && url) {
               try {
-                const insp = await proc.run({ cmd: `vercel inspect ${url} --json`, cwd: runCwd })
-                if (insp.ok) {
-                  // Try to parse as JSON; otherwise regex from stdout
-                  try {
-                    const js = JSON.parse(insp.stdout) as Record<string, unknown>
-                    const maybeUrl = (js as { inspectUrl?: string }).inspectUrl
-                    if (typeof maybeUrl === 'string' && maybeUrl.length > 0) finalLogsUrl = maybeUrl
-                  } catch {
-                    const m = insp.stdout.match(inspectRe)
-                    if (m && m.length > 0) finalLogsUrl = m[0]
-                  }
-                }
+                const insp = await proc.run({ cmd: `vercel inspect ${url}`.trim(), cwd: runCwd })
+                const text: string = (insp.stdout || '') + '\n' + (insp.stderr || '')
+                const m = text.match(inspectRe)
+                if (m && m.length > 0) finalLogsUrl = m[0]
               } catch { /* ignore */ }
             }
             // Try to read projectId from chosen cwd
@@ -184,8 +179,8 @@ export function registerDeployCommand(program: Command): void {
           if (opts.dryRun === true) {
             const flags: string = opts.env === 'prod' ? '--prod --yes' : '--yes'
             logger.info(`[dry-run] vercel ${flags} (cwd=${targetCwd})`)
-            if (opts.json === true) {
-              logger.json({ provider: 'vercel', env: opts.env, cwd: targetCwd, mode: 'dry-run' })
+            if (opts.json === true || process.env.OPD_NDJSON === '1') {
+              logger.json({ provider: 'vercel', target: (opts.env === 'prod' ? 'prod' : 'preview'), mode: 'dry-run', final: true })
             }
             return
           }
@@ -208,18 +203,18 @@ export function registerDeployCommand(program: Command): void {
           return
         }
         if (provider === 'netlify') {
+          if (opts.dryRun === true) {
+            logger.info('[dry-run] netlify deploy --build (target inferred by --env)')
+            if (opts.json === true || process.env.OPD_NDJSON === '1') {
+              logger.json({ provider: 'netlify', target: (opts.env === 'prod' ? 'prod' : 'preview'), mode: 'dry-run', final: true })
+            }
+            return
+          }
           const adapter = new NetlifyAdapter()
           await adapter.validateAuth()
           // Ensure netlify.toml exists (idempotent)
           if (process.env.OPD_NDJSON === '1') logger.json({ event: 'phase', phase: 'generate-config', provider: 'netlify', path: targetCwd })
           await adapter.generateConfig({ detection, overwrite: false })
-          if (opts.dryRun === true) {
-            logger.info(`[dry-run] netlify deploy --build${opts.env === 'prod' ? ' --prod' : ''} (cwd=${targetCwd})`)
-            if (opts.json === true || process.env.OPD_NDJSON === '1') {
-              logger.json({ provider: 'netlify', env: opts.env, cwd: targetCwd, mode: 'dry-run', final: true })
-            }
-            return
-          }
           const siteFlag: string = opts.project ? ` --site ${opts.project}` : ''
           const prodFlag: string = (opts.env === 'prod' ? ' --prod' : '')
           const cmdNl: string = `netlify deploy --build${prodFlag}${siteFlag}`
@@ -363,6 +358,7 @@ export function registerDeployCommand(program: Command): void {
             // Poll deploy status until ready/error
             const start = Date.now()
             const spNl = (!isNdjson && process.env.OPD_JSON !== '1') ? spinner('Netlify: waiting for deploy') : null
+            let attempt = 0
             // eslint-disable-next-line no-constant-condition
             while (true) {
               const st = await proc.run({ cmd: `netlify api getDeploy --data '{"deploy_id":"${chosen.id}"}'`, cwd: runCwdNl })
@@ -393,7 +389,13 @@ export function registerDeployCommand(program: Command): void {
                   return
                 }
               } catch { /* ignore */ }
-              await new Promise(r => setTimeout(r, 3000))
+              // Exponential backoff with jitter (base 3s, grow 1.5x, cap 15s, ±20% jitter)
+              attempt += 1
+              const base = Math.min(15000, Math.round(3000 * Math.pow(1.5, attempt)))
+              const jitter = Math.round(base * (Math.random() * 0.4 - 0.2))
+              const sleep = Math.max(1000, base + jitter)
+              if (isNdjson) logger.json({ event: 'nl:backoff', ms: sleep })
+              await new Promise(r => setTimeout(r, sleep))
             }
             if (spNl) spNl.fail('Netlify: polling failed')
             if (isNdjson) logger.json({ event: 'logs:end', ok: false, final: true })
@@ -543,34 +545,5 @@ export function registerDeployCommand(program: Command): void {
         process.exitCode = 1
       }
     })
-
-  // Single-command deploy alias: `up` → `deploy --sync-env`
-  program
-    .command('up')
-    .description('Single-command deploy (sync env then deploy)')
-    .argument('<provider>', 'Target provider: vercel | netlify')
-    .option('--env <env>', 'Environment: prod | preview', 'preview')
-    .option('--project <id>', 'Provider project/site ID')
-    .option('--org <id>', 'Provider org/team ID')
-    .option('--dry-run', 'Do not execute actual deployment')
-    .option('--json', 'Output JSON result')
-    .option('--path <dir>', 'Path to app directory (for monorepos)')
-    .option('--ci', 'CI mode (non-interactive)')
-    .action(async (provider: string, opts: { env?: 'prod' | 'preview'; project?: string; org?: string; dryRun?: boolean; json?: boolean; path?: string; ci?: boolean }): Promise<void> => {
-      // In-process routing: set env flag and invoke deploy command on a fresh Command instance
-      process.env.OPD_SYNC_ENV = '1'
-      const tmp = new Command()
-      registerDeployCommand(tmp)
-      const argv: string[] = ['node', 'up-proxy', 'deploy', provider]
-      if (opts.env) { argv.push('--env', opts.env) }
-      if (opts.project) { argv.push('--project', opts.project) }
-      if (opts.org) { argv.push('--org', opts.org) }
-      if (opts.dryRun) { argv.push('--dry-run') }
-      if (opts.json) { argv.push('--json') }
-      if (opts.path) { argv.push('--path', opts.path) }
-      if (opts.ci) { argv.push('--ci') }
-      argv.push('--sync-env')
-      await tmp.parseAsync(argv)
-    })
-
+    
 }

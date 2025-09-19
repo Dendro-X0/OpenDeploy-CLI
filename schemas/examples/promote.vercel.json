@@ -1,0 +1,10 @@
+{
+  "ok": true,
+  "provider": "vercel",
+  "action": "promote",
+  "target": "prod",
+  "from": "https://my-preview.vercel.app",
+  "url": "https://my-app.com",
+  "alias": "https://my-app.com",
+  "final": true
+}

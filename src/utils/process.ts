@@ -91,3 +91,43 @@ async function runStream(args: RunStreamArgs): Promise<{ readonly ok: boolean; r
 }
 
 export const proc: ProcUtil = { run, runStream, spawnStream, has }
+
+// -------- General-purpose helpers (timeouts/retries) --------
+
+export async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  if (!Number.isFinite(ms) || ms <= 0) return await promise
+  return await new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`timeout after ${ms}ms`)), ms)
+    promise.then((v) => { clearTimeout(timer); resolve(v) }, (e) => { clearTimeout(timer); reject(e) })
+  })
+}
+
+function sleep(ms: number): Promise<void> { return new Promise(r => setTimeout(r, ms)) }
+
+export async function runWithTimeout(args: RunArgs, timeoutMs = 120_000): Promise<RunResult> {
+  return await withTimeout(run(args), timeoutMs)
+}
+
+export async function runWithRetry(args: RunArgs, opts?: { readonly retries?: number; readonly baseDelayMs?: number; readonly timeoutMs?: number }): Promise<RunResult> {
+  const envRetries = Number.isFinite(Number(process.env.OPD_RETRIES)) ? Number(process.env.OPD_RETRIES) : undefined
+  const envBase = Number.isFinite(Number(process.env.OPD_BASE_DELAY_MS)) ? Number(process.env.OPD_BASE_DELAY_MS) : undefined
+  const envTimeout = Number.isFinite(Number(process.env.OPD_TIMEOUT_MS)) ? Number(process.env.OPD_TIMEOUT_MS) : undefined
+  const retries = Math.max(0, opts?.retries ?? (envRetries ?? 2))
+  const base = Math.max(10, opts?.baseDelayMs ?? (envBase ?? 300))
+  const to = opts?.timeoutMs ?? (envTimeout ?? 120_000)
+  let attempt = 0
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    try {
+      const res = await runWithTimeout(args, to)
+      if (res.ok || attempt >= retries) return res
+      // fallthrough to retry on non-ok
+    } catch (e) {
+      if (attempt >= retries) throw e
+    }
+    const jitter = Math.floor(Math.random() * base)
+    const wait = base * Math.pow(2, attempt) + jitter
+    await sleep(wait)
+    attempt++
+  }
+}

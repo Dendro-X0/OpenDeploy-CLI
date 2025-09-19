@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "provider": "vercel",
+  "action": "rollback",
+  "target": "prod",
+  "candidate": "https://prev-prod.vercel.app",
+  "needsAlias": true,
+  "final": true
+}

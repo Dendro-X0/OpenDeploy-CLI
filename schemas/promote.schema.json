@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "OpenDeploy Promote Summary",
+  "type": "object",
+  "properties": {
+    "ok": { "type": "boolean" },
+    "provider": { "type": "string", "enum": ["vercel", "netlify"] },
+    "action": { "const": "promote" },
+    "target": { "const": "prod" },
+    "from": { "type": "string" },
+    "url": { "type": "string" },
+    "alias": { "type": "string" },
+    "logsUrl": { "type": "string" },
+    "projectId": { "type": "string" },
+    "siteId": { "type": "string" },
+    "deployId": { "type": "string" },
+    "final": { "const": true }
+  },
+  "required": ["provider", "action", "target", "final"],
+  "additionalProperties": true
+}

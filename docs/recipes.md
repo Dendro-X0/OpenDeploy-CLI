@@ -1,5 +1,40 @@
 # Recipes
 
+### Remix family deploys (React Router v7)
+
+This recipe shows how to deploy a React Router v7 app (Remix family) to Vercel and Netlify using OpenDeploy.
+
+Prerequisites:
+- Scripts include `react-router build`.
+- Output is `build/client` (static) and `build/server` (server build) after building.
+
+Steps:
+1. Detect and generate config (idempotent):
+   - `opendeploy detect`
+   - `opendeploy generate vercel` (writes `vercel.json` with `outputDirectory: build/client`)
+   - `opendeploy generate netlify` (writes `netlify.toml` with `publish = build/client`)
+
+2. Netlify prepare-only via wizard (recommended first run):
+   - `opendeploy start --provider netlify --framework remix`
+   - The wizard will preflight build and recommend:
+     - `netlify deploy --dir build/client`
+     - `netlify deploy --prod --dir build/client`
+
+3. Vercel deploy:
+   - Preview: `opendeploy up vercel --env preview`
+   - Production: `opendeploy up vercel --env prod`
+
+Notes:
+- For SPA routing on Netlify add:
+  ```toml
+  [[redirects]]
+    from = "/*"
+    to = "/index.html"
+    status = 200
+  ```
+- SSR requires a provider-specific adapter; static is supported out of the box.
+
+
 ## Single-command Deploy (Up)
 
 Use `opendeploy up` to sync env from a local file and deploy in one step.
@@ -66,6 +101,41 @@ jobs:
         if: always()
         with:
           name: opendeploy-up-netlify
+          path: ./.artifacts
+          if-no-files-found: ignore
+```
+
+### GitHub Actions Preset (`--gha`)
+
+Use the `--gha` preset to simplify CI configuration: it implies `--json --summary-only --timestamps`, sets default sinks under `./.artifacts/`, and enables annotations.
+
+```yaml
+name: Preview (Vercel)
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  up:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+      - run: corepack enable && corepack prepare pnpm@10.13.1 --activate
+      - run: pnpm install --frozen-lockfile
+      - name: Build OpenDeploy
+        run: pnpm --filter "OpenDeploy CLI" -C "OpenDeploy CLI" build
+      - name: Up (preview)
+        run: |
+          node "./OpenDeploy CLI/dist/index.js" --gha up vercel --env preview
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: opendeploy-artifacts
           path: ./.artifacts
           if-no-files-found: ignore
 ```

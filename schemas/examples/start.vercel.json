@@ -1,0 +1,16 @@
+{
+  "ok": true,
+  "action": "start",
+  "provider": "vercel",
+  "target": "preview",
+  "mode": "deploy",
+  "url": "https://example-preview.vercel.app",
+  "logsUrl": "https://vercel.com/acme/app/inspect/deploy_abc123",
+  "cmd": "opendeploy up vercel --env preview",
+  "ciChecklist": {
+    "buildCommand": "pnpm build",
+    "envFile": ".env",
+    "exampleKeys": ["NEXT_PUBLIC_APP_URL", "DATABASE_URL"]
+  },
+  "final": true
+}

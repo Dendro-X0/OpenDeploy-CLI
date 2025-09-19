@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "OpenDeploy Up Summary",
+  "type": "object",
+  "properties": {
+    "ok": { "type": "boolean" },
+    "provider": { "type": "string", "enum": ["vercel", "netlify"] },
+    "target": { "type": "string", "enum": ["prod", "preview"] },
+    "url": { "type": "string" },
+    "logsUrl": { "type": "string" },
+    "projectId": { "type": "string" },
+    "siteId": { "type": "string" },
+    "durationMs": { "type": "number" },
+    "final": { "const": true }
+  },
+  "required": ["provider", "target", "final"],
+  "additionalProperties": true
+}

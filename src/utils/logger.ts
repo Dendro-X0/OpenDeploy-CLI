@@ -9,6 +9,7 @@ interface Logger {
   readonly section: (title: string) => void
   readonly highlight: (msg: string, color: 'red' | 'green' | 'blue' | 'cyan' | 'yellow' | 'dim' | 'bold') => string
   readonly json: (val: unknown) => void
+  readonly jsonPrint: (val: unknown) => void
   readonly setLevel: (lvl: LogLevel) => void
   readonly setJsonOnly: (on: boolean) => void
   readonly setNoEmoji: (on: boolean) => void
@@ -104,7 +105,9 @@ export const logger: Logger = {
       const isSummary: boolean = typeof v === 'object' && v !== null && (v as Record<string, unknown>).final === true
       if (!isSummary) return
     }
-    const line: string = ndjson || jsonCompact ? JSON.stringify(v) : JSON.stringify(v, null, 2)
+    // Stringify and then apply redaction to avoid leaking secrets in machine-readable logs
+    const rawLine: string = ndjson || jsonCompact ? JSON.stringify(v) : JSON.stringify(v, null, 2)
+    const line: string = applyRedaction(rawLine)
     // console output
     // eslint-disable-next-line no-console
     console.log(line)
@@ -112,9 +115,19 @@ export const logger: Logger = {
     if (ndjsonFilePath) void safeAppend(ndjsonFilePath, line + "\n")
     if (jsonFilePath) {
       // For json-file, write pretty when not ndjson/compact
-      const jl: string = ndjson ? JSON.stringify(v) : (jsonCompact ? JSON.stringify(v) : JSON.stringify(v, null, 2))
+      const jlRaw: string = ndjson ? JSON.stringify(v) : (jsonCompact ? JSON.stringify(v) : JSON.stringify(v, null, 2))
+      const jl: string = applyRedaction(jlRaw)
       void safeAppend(jsonFilePath, jl + "\n")
     }
+  },
+  jsonPrint: (val: unknown): void => {
+    // First, go through logger.json to honor sinks, redaction, and flags
+    logger.json(val)
+    // Then, emit a raw compact JSON line to stdout for robustness
+    try {
+      // eslint-disable-next-line no-console
+      console.log(JSON.stringify(val))
+    } catch { /* ignore */ }
   },
   setLevel: (lvl: LogLevel): void => { level = lvl },
   setJsonOnly: (on: boolean): void => { jsonOnly = on },
@@ -133,4 +146,8 @@ export const logger: Logger = {
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+export function isJsonMode(flag?: boolean): boolean {
+  return flag === true || process.env.OPD_JSON === '1' || process.env.OPD_NDJSON === '1'
 }

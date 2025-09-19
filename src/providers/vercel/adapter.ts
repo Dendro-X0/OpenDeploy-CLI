@@ -22,15 +22,19 @@ export class VercelAdapter implements ProviderAdapter {
     const root: string = args.detection.rootDir
     const path: string = join(root, 'vercel.json')
     if (args.overwrite !== true) {
-      try { const s = await stat(path); if (s.isFile()) throw new Error('vercel.json already exists. Use --overwrite to replace.') } catch { /* file not found, continue */ }
+      try { const s = await stat(path); if (s.isFile()) return path } catch { /* file not found, continue */ }
     }
-    const config = {
+    const config: Record<string, unknown> = {
       $schema: 'https://openapi.vercel.sh/vercel.json',
       version: 2,
       // Next.js is auto-detected by Vercel. Keep minimal config for portability.
       // Optionally, we include buildCommand if a custom build is provided.
       buildCommand: args.detection.buildCommand
-    } as const
+    }
+    // For static builds (e.g., Astro, SvelteKit static, Remix family static), include outputDirectory
+    if (args.detection.publishDir) {
+      config.outputDirectory = args.detection.publishDir
+    }
     const content: string = `${JSON.stringify(config, null, 2)}\n`
     await writeFile(path, content, 'utf8')
     return path

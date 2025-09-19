@@ -1,0 +1,7 @@
+{
+  "provider": "netlify",
+  "target": "prod",
+  "url": "https://my-site.netlify.app",
+  "logsUrl": "https://app.netlify.com/sites/my-site/deploys/dep_abc123",
+  "final": true
+}

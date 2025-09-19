@@ -1,0 +1,47 @@
+name: CI Matrix
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-test:
+    name: Build and Test (Node ${{ matrix.node }} / ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-2022]
+        node: [18.x, 20.x]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Enable corepack and pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9 --activate
+      - name: Install dependencies
+        run: pnpm install
+      - name: Build
+        run: pnpm build
+      - name: Run unit tests
+        run: pnpm test
+      - name: Exit code consistency checks
+        run: pnpm run ci:exit-codes
+      - name: Validate JSON schemas against examples
+        run: pnpm run ci:validate-schemas
+      - name: Capture real outputs and validate against schemas
+        run: pnpm run ci:capture-validate
+      - name: Upload JSON/NDJSON artifacts (if present)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: opd-artifacts-${{ matrix.os }}-${{ matrix.node }}
+          path: |
+            ./.artifacts/**/*.json
+            ./.artifacts/**/*.ndjson
+          if-no-files-found: ignore

@@ -1,6 +1,19 @@
 # Overview
 
-OpenDeploy CLI is a Next.js‑first, cross‑provider deployment assistant for Vercel and Netlify. It focuses on reliable, repeatable workflows with great local/CI ergonomics.
+OpenDeploy CLI is a Next.js‑first, cross‑provider deployment assistant for Vercel and Netlify. It focuses on reliable, repeatable workflows with great local/CI ergonomics. In addition to Next.js, the CLI supports Astro and SvelteKit, with early (beta) support for Remix and Expo.
+
+## Status
+
+The 1.0.0 Beta milestone is complete (provider parity, CI ergonomics, extensibility). For post‑Beta 1.0.x plans (advanced backoff strategies, opt‑in telemetry/allowlist), see the project roadmap at `../ROADMAP.md`.
+
+## Release Notes (1.0.0‑beta)
+
+- Provider parity for Netlify and Vercel (env pull/diff/sync, deploy) with consistent JSON/NDJSON outputs and exit codes
+- Upgrades for CI ergonomics: `--gha` preset, default JSON/NDJSON sinks, GitHub annotations, deterministic final summaries (`final: true`)
+- `up` command with NDJSON progress streaming and retries/timeouts knobs
+- Env validation with rules schema (regex/allowed/oneOf/requireIf) and profile builtins (blogkit, ecommercekit)
+- Promote and rollback commands; logs/open routed through provider adapters
+- Secure redaction across human logs, JSON/NDJSON, and file sinks
 
 ## Key Features
 
@@ -13,16 +26,41 @@ OpenDeploy CLI is a Next.js‑first, cross‑provider deployment assistant for V
 - Guided setup: `opendeploy init` (generate configs, set env policy)
 - Monorepo support (workspace‑aware flows, chosen deploy cwd advisories)
 
+## Config Generation (Quick Table)
+
+| Command                              | Writes         | Summary |
+|--------------------------------------|----------------|---------|
+| `opendeploy generate vercel`         | `vercel.json`  | Minimal config with `version`, optional `buildCommand`, and `outputDirectory` when a `publishDir` is detected. |
+| `opendeploy generate netlify`        | `netlify.toml` | Next.js: uses Netlify Next Runtime if present, else falls back to `@netlify/plugin-nextjs` and `publish = ".next"`. Nuxt: `command = "npx nuxi build"`, `publish = ".output/public"`. Others (Astro, SvelteKit static, Remix static): detection-driven `buildCommand` + `publishDir`. |
+| `opendeploy generate turbo`          | `turbo.json`   | Minimal cache config: `tasks.build.dependsOn = ['^build']`, `outputs = ['.next/**', '!.next/cache/**', 'dist/**']`. |
+
 ## Quick Start
 
 ```bash
-# 1) Initialize in your repo
+# 1) Guided start (detect framework/provider, optional env sync)
+# Note: start deploys on Vercel. Netlify is prepare-only (wizard prints recommended commands).
+opendeploy start
+
+# (Alternative) Initialize in your repo
 opendeploy init
 
-# 2) One‑command deploy (sync env then deploy)
+# 2) Preview: one‑command deploy (sync env then deploy)
+# Tip: running `opendeploy up` without a provider opens the wizard.
 opendeploy up vercel --env preview
-# or
-opendeploy up netlify --env prod --project <SITE_ID>
+# or (Netlify)
+# For Netlify, use `up` or run the recommended commands printed by `start`.
+opendeploy up netlify --env preview --project <SITE_ID>
+
+# 3) Promote to production
+# Vercel: point your prod domain to the preview
+opendeploy promote vercel --alias your-domain.com
+# Netlify: best‑effort promote by deploying to prod
+opendeploy promote netlify --project <SITE_ID>
+
+# (Optional) Explain plan before executing
+opendeploy explain vercel --env preview --json
+# (Optional) Auto‑fix common linking issues
+opendeploy doctor --fix --project <VERCEL_PROJECT_ID> --org <ORG_ID>
 ```
 
 See `docs/commands.md` for all flags and examples.
@@ -55,6 +93,7 @@ opendeploy run --all --env preview --sync-env --concurrency 3 --json
 
 ## CI at a Glance
 
+- Use `--gha` for GitHub Actions‑friendly defaults (implies `--json --summary-only --timestamps`, sets artifact sinks and annotation defaults).
 - `--json-file`/`--ndjson-file` persist outputs for artifacts.
 - GitHub annotations: doctor and env diff emit `::warning`/`::error` appropriately in CI.
 - Recipes: see `docs/recipes.md` for Up (Netlify), Env Diff, Matrix CI, and more.
@@ -63,6 +102,27 @@ opendeploy run --all --env preview --sync-env --concurrency 3 --json
 
 - `--quiet`, `--no-emoji`, `--compact-json`
 - `--json`, `--ndjson`, `--timestamps`, `--summary-only`
+ - CI sink flags: `--json-file`, `--ndjson-file`; CI preset: `--gha`
+
+## Promote & Rollback
+
+- Vercel promote: `opendeploy promote vercel --alias <prod-domain> [--from <preview-url-or-sha>]`
+- Netlify promote: `opendeploy promote netlify --project <SITE_ID> [--from <deployId>]`
+- Vercel rollback: `opendeploy rollback vercel --alias <prod-domain> [--to <url|sha>]`
+- Netlify rollback: `opendeploy rollback netlify --project <SITE_ID>`
+
+Notes:
+
+- With `--from`, Vercel promotion targets a specific preview (URL/SHA). On Netlify, `--from` requests a direct `restoreDeploy` (no rebuild).
+- Outputs are standardized JSON with `final: true`; `up` emits NDJSON progress events when `--ndjson` is used.
+
+## Reliability Knobs
+
+Fine‑tune provider subprocess calls:
+
+- `--retries <n>` (env: `OPD_RETRIES`, default 2)
+- `--timeout-ms <ms>` (env: `OPD_TIMEOUT_MS`, default 120000)
+- `--base-delay-ms <ms>` (env: `OPD_BASE_DELAY_MS`, default 300)
 
 ## Where to Next
 

@@ -1,0 +1,10 @@
+{
+  "ok": true,
+  "provider": "netlify",
+  "action": "promote",
+  "target": "prod",
+  "url": "https://my-site.netlify.app",
+  "logsUrl": "https://app.netlify.com/sites/my-site/deploys/dep_ghi789",
+  "siteId": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "final": true
+}

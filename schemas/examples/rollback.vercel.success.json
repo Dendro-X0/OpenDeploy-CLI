@@ -1,0 +1,10 @@
+{
+  "ok": true,
+  "provider": "vercel",
+  "action": "rollback",
+  "target": "prod",
+  "to": "https://prev-prod.vercel.app",
+  "url": "https://my-app.com",
+  "alias": "https://my-app.com",
+  "final": true
+}

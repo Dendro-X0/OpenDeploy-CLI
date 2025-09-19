@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { logger } from '../utils/logger'
+import { tmpdir } from 'node:os'
+import { readFile, rm, stat } from 'node:fs/promises'
+import { join } from 'node:path'
 
 const SECRET = 'secret123'
 
@@ -38,12 +41,57 @@ describe('logger redaction vs JSON', () => {
     expect(lines.join('\n')).toContain('******')
   })
 
-  it('does not redact JSON output', () => {
+  it('redacts JSON console output', () => {
     const lines: string[] = []
     console.log = ((...args: unknown[]) => { lines.push(String(args[0])) }) as any
-    // Emit JSON directly
+    logger.setRedactors([SECRET])
     logger.json({ token: SECRET })
     const out = lines.join('\n')
-    expect(out).toContain(SECRET)
+    expect(out).not.toContain(SECRET)
+    expect(out).toContain('******')
   })
+
+  it('redacts NDJSON file sink', async () => {
+    const lines: string[] = []
+    console.log = ((...args: unknown[]) => { lines.push(String(args[0])) }) as any
+    const p = join(tmpdir(), `opendeploy-test-${Date.now()}.ndjson`)
+    try {
+      logger.setRedactors([SECRET])
+      logger.setNdjson(true)
+      logger.setNdjsonFile(p)
+      logger.json({ token: SECRET, final: true })
+      // wait for async file sink
+      await waitForFile(p)
+      const content = await readFile(p, 'utf8')
+      expect(content).not.toContain(SECRET)
+      expect(content).toContain('******')
+    } finally {
+      await rm(p, { force: true })
+      logger.setNdjson(false)
+      logger.setNdjsonFile('')
+    }
+  })
+
+  it('redacts JSON file sink', async () => {
+    const p = join(tmpdir(), `opendeploy-test-${Date.now()}.json`)
+    try {
+      logger.setRedactors([SECRET])
+      logger.setJsonFile(p)
+      logger.json({ token: SECRET, final: true })
+      await waitForFile(p)
+      const content = await readFile(p, 'utf8')
+      expect(content).not.toContain(SECRET)
+      expect(content).toContain('******')
+    } finally {
+      await rm(p, { force: true })
+      logger.setJsonFile('')
+    }
+  })
+
+async function waitForFile(path: string, tries = 10, delayMs = 50): Promise<void> {
+  for (let i = 0; i < tries; i++) {
+    try { await stat(path); return } catch { /* ignore */ }
+    await new Promise(r => setTimeout(r, delayMs))
+  }
+}
 })

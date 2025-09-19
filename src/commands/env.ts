@@ -7,9 +7,10 @@ import { logger } from '../utils/logger'
 import { formatDiffHuman } from '../utils/format'
 import { spinner } from '../utils/ui'
 import { mapProviderError } from '../utils/errors'
+import { isJsonMode } from '../utils/logger'
 import { printEnvPullSummary, printEnvSyncSummary, printEnvDiffSummary } from '../utils/summarize'
 import { confirm } from '../utils/prompt'
-import { proc } from '../utils/process'
+import { proc, runWithRetry } from '../utils/process'
 import { fsx } from '../utils/fs'
 import { getCached, setCached } from '../utils/cache'
 
@@ -30,6 +31,10 @@ interface SyncOptions {
   readonly failOnRemove?: boolean
   readonly optimizeWrites?: boolean
   readonly map?: string
+  readonly printCmd?: boolean
+  readonly retries?: string
+  readonly timeoutMs?: string
+  readonly baseDelayMs?: string
 }
 
 // ---------------- Netlify parity ----------------
@@ -42,46 +47,61 @@ async function getNetlifySiteId(cwd: string, projectId?: string): Promise<string
   return undefined
 }
 
-async function fetchNetlifyEnvMap(args: { readonly cwd: string; readonly projectId?: string; readonly context?: string }): Promise<Record<string, string>> {
-  const siteId: string | undefined = await getNetlifySiteId(args.cwd, args.projectId)
-  const siteFlag: string = siteId ? ` --site ${siteId}` : ''
-  const out = await proc.run({ cmd: `netlify env:list --json${siteFlag}`, cwd: args.cwd })
-  if (!out.ok) throw new Error(out.stderr.trim() || out.stdout.trim() || 'Failed to list Netlify environment variables')
+async function fetchNetlifyEnvMap(args: { readonly cwd: string; readonly projectId?: string; readonly context?: string; readonly printCmd?: boolean }): Promise<Record<string, string>> {
   try {
-    const data = JSON.parse(out.stdout) as Array<{ key: string; values?: Array<{ context?: string; value?: string }> }>
+    const siteId: string | undefined = await getNetlifySiteId(args.cwd, args.projectId)
+    const siteFlag: string = siteId ? ` --site ${siteId}` : ''
+    // Prefer JSON output when supported
+    const listJsonCmd = `netlify env:list --json${siteFlag}`.trim()
+    if (args.printCmd) logger.info(`$ ${listJsonCmd}`)
+    const jsonRes = await runWithRetry({ cmd: listJsonCmd, cwd: args.cwd })
+    if (jsonRes.ok) {
+      try {
+        const data = JSON.parse(jsonRes.stdout) as Array<{ key: string; values?: Array<{ context?: string; value?: string }> }>
+        const map: Record<string, string> = {}
+        for (const item of data) {
+          const v = (args.context
+            ? item.values?.find(x => (x.context ?? '').toLowerCase() === args.context?.toLowerCase() && typeof x.value === 'string')?.value
+            : undefined) ?? item.values?.find(x => typeof x.value === 'string')?.value
+          if (typeof v === 'string') map[item.key] = v
+        }
+        return map
+      } catch { /* fallthrough to plain parsing */ }
+    }
+    // Fallback: parse plain list output
+    const listCmd = `netlify env:list${siteFlag}`.trim()
+    if (args.printCmd) logger.info(`$ ${listCmd}`)
+    const out = await runWithRetry({ cmd: listCmd, cwd: args.cwd })
+    if (!out.ok) return {}
     const map: Record<string, string> = {}
-    for (const item of data) {
-      const v = (args.context
-        ? item.values?.find(x => (x.context ?? '').toLowerCase() === args.context?.toLowerCase() && typeof x.value === 'string')?.value
-        : undefined) ?? item.values?.find(x => typeof x.value === 'string')?.value
-      if (typeof v === 'string') map[item.key] = v
+    for (const line of out.stdout.split(/\r?\n/)) {
+      const mEq = line.match(/^([A-Z0-9_]+)\s*=\s*(.*)$/)
+      const mSp = !mEq ? line.match(/^([A-Z0-9_]+)\s+(.+)$/) : null
+      const k = mEq?.[1] ?? mSp?.[1]
+      const v = mEq?.[2] ?? mSp?.[2]
+      if (k && typeof v === 'string' && v.length > 0) map[k] = v.trim()
     }
     return map
   } catch {
-    const map: Record<string, string> = {}
-    for (const line of out.stdout.split(/\r?\n/)) {
-      const m = line.match(/^([A-Z0-9_]+)\s*=\s*(.*)$/)
-      if (m) map[m[1]] = m[2]
-    }
-    return map
+    return {}
   }
 }
 
-async function pullNetlify(args: { readonly cwd: string; readonly out?: string; readonly json: boolean; readonly projectId?: string; readonly context?: string }): Promise<void> {
+async function pullNetlify(args: { readonly cwd: string; readonly out?: string; readonly json: boolean; readonly projectId?: string; readonly context?: string; readonly printCmd?: boolean }): Promise<void> {
   const sp = spinner('Netlify: pulling env')
   try {
     const siteId = await getNetlifySiteId(args.cwd, args.projectId)
-    await ensureNetlifyLinked({ cwd: args.cwd, projectId: siteId })
+    await ensureNetlifyLinked({ cwd: args.cwd, projectId: siteId, printCmd: args.printCmd })
     const outFile: string = args.out ?? '.env.local'
-    const remote = await fetchNetlifyEnvMap({ cwd: args.cwd, projectId: siteId, context: args.context })
+    const remote = await fetchNetlifyEnvMap({ cwd: args.cwd, projectId: siteId, context: args.context, printCmd: args.printCmd })
     const content: string = Object.entries(remote).map(([k, v]) => `${k}=${v}`).join('\n') + '\n'
     await writeFile(join(args.cwd, outFile), content, 'utf8')
-    if (args.json === true) logger.json({ provider: 'netlify', out: outFile, final: true })
+    if (args.json === true) logger.jsonPrint({ ok: true, action: 'env' as const, subcommand: 'pull' as const, provider: 'netlify' as const, out: outFile, count: Object.keys(remote).length, final: true })
     else { sp.succeed(`Netlify: pulled to ${outFile}`); logger.success(`Pulled Netlify env to ${outFile}`); printEnvPullSummary({ provider: 'netlify', out: outFile, count: Object.keys(remote).length }) }
   } finally { sp.stop() }
 }
 
-async function syncNetlify(args: { readonly cwd: string; readonly file: string; readonly yes: boolean; readonly dryRun: boolean; readonly json: boolean; readonly ci: boolean; readonly projectId?: string; readonly ignore?: readonly string[]; readonly only?: readonly string[]; readonly optimizeWrites?: boolean; readonly mapFile?: string }): Promise<void> {
+async function syncNetlify(args: { readonly cwd: string; readonly file: string; readonly yes: boolean; readonly dryRun: boolean; readonly json: boolean; readonly ci: boolean; readonly projectId?: string; readonly ignore?: readonly string[]; readonly only?: readonly string[]; readonly optimizeWrites?: boolean; readonly mapFile?: string; readonly printCmd?: boolean }): Promise<void> {
   const envPath: string = join(args.cwd, args.file)
   const original = await parseEnvFile({ path: envPath })
   const kv = await applyEnvMapping({ cwd: args.cwd, kv: original, mapFile: args.mapFile })
@@ -89,11 +109,11 @@ async function syncNetlify(args: { readonly cwd: string; readonly file: string; 
   const entries = entriesAll.filter(([k]) => allowKey(k, args.only ?? [], args.ignore ?? []))
   if (entries.length === 0) { logger.warn(`No variables found in ${args.file}. Nothing to sync.`); return }
   const siteId: string | undefined = await getNetlifySiteId(args.cwd, args.projectId)
-  await ensureNetlifyLinked({ cwd: args.cwd, projectId: siteId })
+  await ensureNetlifyLinked({ cwd: args.cwd, projectId: siteId, printCmd: args.printCmd })
   // Optimize writes by reading remote once
   let remoteMap: Record<string, string> | undefined
   if (args.optimizeWrites === true && !args.dryRun) {
-    try { remoteMap = await fetchNetlifyEnvMap({ cwd: args.cwd, projectId: siteId }) } catch { /* ignore */ }
+    try { remoteMap = await fetchNetlifyEnvMap({ cwd: args.cwd, projectId: siteId, printCmd: args.printCmd }) } catch { /* ignore */ }
   }
   const results: Array<{ key: string; status: 'set' | 'skipped' | 'failed'; error?: string }> = []
   for (const [key, value] of entries) {
@@ -105,12 +125,17 @@ async function syncNetlify(args: { readonly cwd: string; readonly file: string; 
       results.push({ key, status: 'skipped' })
       continue
     }
-    const siteFlag: string = siteId ? ` --site ${siteId}` : ''
-    const res = await proc.run({ cmd: `netlify env:set ${key} ${JSON.stringify(value)}${siteFlag}`, cwd: args.cwd })
+    // Avoid passing --site as older/newer Netlify CLIs may not support it for env:set
+    const setCmd = `netlify env:set ${key} ${JSON.stringify(value)}`.trim()
+    if (args.printCmd) logger.info(`$ ${setCmd}`)
+    const res = await runWithRetry({ cmd: setCmd, cwd: args.cwd })
     if (res.ok) { logger.success(`Set ${key}`); results.push({ key, status: 'set' }) }
     else { const errMsg: string = res.stderr.trim() || res.stdout.trim(); logger.warn(`Failed to set ${key}: ${errMsg}`); results.push({ key, status: 'failed', error: errMsg }) }
   }
-  if (args.json === true) logger.json({ provider: 'netlify', file: args.file, envs: results, final: true })
+  if (args.json === true) {
+    const ok = results.every(r => r.status !== 'failed')
+    logger.jsonPrint({ ok, action: 'env' as const, subcommand: 'sync' as const, provider: 'netlify' as const, file: args.file, envs: results, final: true })
+  }
   else {
     const setCount = results.filter(r => r.status === 'set').length
     const skippedCount = results.filter(r => r.status === 'skipped').length
@@ -119,15 +144,15 @@ async function syncNetlify(args: { readonly cwd: string; readonly file: string; 
   }
 }
 
-async function diffNetlify(args: { readonly cwd: string; readonly file: string; readonly json: boolean; readonly ci: boolean; readonly projectId?: string; readonly context?: string; readonly ignore?: readonly string[]; readonly only?: readonly string[]; readonly failOnAdd?: boolean; readonly failOnRemove?: boolean }): Promise<void> {
+async function diffNetlify(args: { readonly cwd: string; readonly file: string; readonly json: boolean; readonly ci: boolean; readonly projectId?: string; readonly context?: string; readonly ignore?: readonly string[]; readonly only?: readonly string[]; readonly failOnAdd?: boolean; readonly failOnRemove?: boolean; readonly printCmd?: boolean }): Promise<void> {
   const sp = spinner('Netlify: diffing env')
   const localPath: string = join(args.cwd, args.file)
   const allLocal = await parseEnvFile({ path: localPath })
   const local: Record<string, string> = {}
   for (const [k, v] of Object.entries(allLocal)) if (allowKey(k, args.only ?? [], args.ignore ?? [])) local[k] = v
   const siteId: string | undefined = await getNetlifySiteId(args.cwd, args.projectId)
-  await ensureNetlifyLinked({ cwd: args.cwd, projectId: siteId })
-  const remote = await fetchNetlifyEnvMap({ cwd: args.cwd, projectId: siteId, context: args.context })
+  await ensureNetlifyLinked({ cwd: args.cwd, projectId: siteId, printCmd: args.printCmd })
+  const remote = await fetchNetlifyEnvMap({ cwd: args.cwd, projectId: siteId, context: args.context, printCmd: args.printCmd })
   const keys = Array.from(new Set([...Object.keys(local), ...Object.keys(remote)])).sort()
   const added: string[] = []
   const removed: string[] = []
@@ -140,7 +165,7 @@ async function diffNetlify(args: { readonly cwd: string; readonly file: string; 
     else if (l !== undefined && r !== undefined && l !== r) changed.push({ key: k, local: l, remote: r })
   }
   const ok: boolean = added.length === 0 && removed.length === 0 && changed.length === 0
-  if (args.json === true) logger.json({ provider: 'netlify', ok, added, removed, changed, final: true })
+  if (args.json === true) logger.jsonPrint({ ok, action: 'env' as const, subcommand: 'diff' as const, provider: 'netlify' as const, added, removed, changed, final: true })
   else {
     sp.stop()
     if (ok) logger.success('No differences between local file and Netlify environment.')
@@ -175,10 +200,12 @@ async function diffNetlify(args: { readonly cwd: string; readonly file: string; 
   }
 }
 
-async function ensureNetlifyLinked(args: { readonly cwd: string; readonly projectId?: string }): Promise<void> {
+async function ensureNetlifyLinked(args: { readonly cwd: string; readonly projectId?: string; readonly printCmd?: boolean }): Promise<void> {
   // Netlify: link the directory to a site id when provided
   if (!args.projectId) return
-  const res = await proc.run({ cmd: `netlify link --id ${args.projectId}`, cwd: args.cwd })
+  const linkCmd = `netlify link --id ${args.projectId}`
+  if (args.printCmd) logger.info(`$ ${linkCmd}`)
+  const res = await runWithRetry({ cmd: linkCmd, cwd: args.cwd })
   if (!res.ok && !res.stdout.toLowerCase().includes('already linked')) {
     throw new Error('Directory not linked to Netlify site. Run: netlify link --id <siteId>')
   }
@@ -281,25 +308,29 @@ export async function envDiff(opts: {
   })
 }
 
-async function ensureLinked(args: { readonly cwd: string; readonly projectId?: string; readonly orgId?: string }): Promise<void> {
+async function ensureLinked(args: { readonly cwd: string; readonly projectId?: string; readonly orgId?: string; readonly printCmd?: boolean }): Promise<void> {
   const flags: string[] = ['--yes']
   if (args.projectId) flags.push(`--project ${args.projectId}`)
   if (args.orgId) flags.push(`--org ${args.orgId}`)
-  const res = await proc.run({ cmd: `vercel link ${flags.join(' ')}`.trim(), cwd: args.cwd })
+  const linkCmd = `vercel link ${flags.join(' ')}`.trim()
+  if (args.printCmd) logger.info(`$ ${linkCmd}`)
+  const res = await runWithRetry({ cmd: linkCmd, cwd: args.cwd })
   if (!res.ok && !res.stdout.toLowerCase().includes('already linked')) {
     throw new Error('Project not linked to Vercel. Run: vercel link')
   }
 }
 
-async function pullVercel(args: { readonly cwd: string; readonly env: EnvTarget; readonly out?: string; readonly json: boolean; readonly ci: boolean; readonly projectId?: string; readonly orgId?: string }): Promise<void> {
+async function pullVercel(args: { readonly cwd: string; readonly env: EnvTarget; readonly out?: string; readonly json: boolean; readonly ci: boolean; readonly projectId?: string; readonly orgId?: string; readonly printCmd?: boolean }): Promise<void> {
   const sp = spinner('Vercel: pulling env')
   const vercelEnv: 'production' | 'preview' | 'development' = (args.env === 'prod' ? 'production' : args.env === 'preview' ? 'preview' : 'development')
   const outFile: string = args.out ?? defaultOutFile(args.env)
   // Ensure linked project (non-dry operation by nature)
-  await ensureLinked({ cwd: args.cwd, projectId: args.projectId, orgId: args.orgId })
-  const res = await proc.run({ cmd: `vercel env pull ${outFile} --environment ${vercelEnv}`, cwd: args.cwd })
+  await ensureLinked({ cwd: args.cwd, projectId: args.projectId, orgId: args.orgId, printCmd: args.printCmd })
+  const pullCmd = `vercel env pull ${outFile} --environment ${vercelEnv}`
+  if (args.printCmd) logger.info(`$ ${pullCmd}`)
+  const res = await runWithRetry({ cmd: pullCmd, cwd: args.cwd })
   if (!res.ok) throw new Error(res.stderr.trim() || res.stdout.trim() || 'Failed to pull env from Vercel')
-  if (args.json === true) logger.json({ provider: 'vercel', environment: vercelEnv, out: outFile, final: true })
+  if (args.json === true) logger.jsonPrint({ ok: true, action: 'env' as const, subcommand: 'pull' as const, provider: 'vercel' as const, environment: vercelEnv, out: outFile, final: true })
   else {
     sp.succeed(`Vercel: pulled to ${outFile}`)
     logger.success(`Pulled ${vercelEnv} env to ${outFile}`)
@@ -377,7 +408,7 @@ function applyTransform(val: string, kind: 'base64' | 'trim' | 'upper' | 'lower'
   return val
 }
 
-async function syncVercel(args: { readonly cwd: string; readonly file: string; readonly env: EnvTarget; readonly yes: boolean; readonly dryRun: boolean; readonly json: boolean; readonly ci: boolean; readonly projectId?: string; readonly orgId?: string; readonly ignore?: readonly string[]; readonly only?: readonly string[]; readonly failOnAdd?: boolean; readonly failOnRemove?: boolean; readonly optimizeWrites?: boolean; readonly mapFile?: string }): Promise<void> {
+async function syncVercel(args: { readonly cwd: string; readonly file: string; readonly env: EnvTarget; readonly yes: boolean; readonly dryRun: boolean; readonly json: boolean; readonly ci: boolean; readonly projectId?: string; readonly orgId?: string; readonly ignore?: readonly string[]; readonly only?: readonly string[]; readonly failOnAdd?: boolean; readonly failOnRemove?: boolean; readonly optimizeWrites?: boolean; readonly mapFile?: string; readonly printCmd?: boolean }): Promise<void> {
   const envPath: string = join(args.cwd, args.file)
   const original = await parseEnvFile({ path: envPath })
   const kv = await applyEnvMapping({ cwd: args.cwd, kv: original, mapFile: args.mapFile })
@@ -389,14 +420,16 @@ async function syncVercel(args: { readonly cwd: string; readonly file: string; r
   }
   // Ensure linked project (vercel link) unless dry-run
   if (!args.dryRun) {
-    try { await ensureLinked({ cwd: args.cwd, projectId: args.projectId, orgId: args.orgId }) } catch (e) { logger.warn('Project may not be linked. Run `vercel link` if sync fails.') }
+    try { await ensureLinked({ cwd: args.cwd, projectId: args.projectId, orgId: args.orgId, printCmd: args.printCmd }) } catch (e) { logger.warn('Project may not be linked. Run `vercel link` if sync fails.') }
   }
   // If strict flags are present, compute diff against remote and set exit code when violated
   if ((args.failOnAdd || args.failOnRemove) && !args.dryRun) {
     const vercelEnv: 'production' | 'preview' | 'development' = (args.env === 'prod' ? 'production' : args.env === 'preview' ? 'preview' : 'development')
     const tmpDir: string = await mkdtemp(join(tmpdir(), 'opendeploy-'))
     const tmpFile: string = join(tmpDir, `.env.remote.${vercelEnv}`)
-    const pulled = await proc.run({ cmd: `vercel env pull ${tmpFile} --environment ${vercelEnv}`, cwd: args.cwd })
+    const pullCmd = `vercel env pull ${tmpFile} --environment ${vercelEnv}`
+  if (args.printCmd) logger.info(`$ ${pullCmd}`)
+  const pulled = await runWithRetry({ cmd: pullCmd, cwd: args.cwd })
     if (pulled.ok) {
       const remote = await parseEnvFile({ path: tmpFile })
       await rm(tmpDir, { recursive: true, force: true })
@@ -425,7 +458,9 @@ async function syncVercel(args: { readonly cwd: string; readonly file: string; r
         if (cached) { remoteByEnv[t] = cached; continue }
         const tmpDir: string = await mkdtemp(join(tmpdir(), 'opendeploy-remote-'))
         const tmpFile: string = join(tmpDir, `.env.remote.${t}`)
-        const pulled = await proc.run({ cmd: `vercel env pull ${tmpFile} --environment ${t}`, cwd: args.cwd })
+        const pullCmd = `vercel env pull ${tmpFile} --environment ${t}`
+        if (args.printCmd) logger.info(`$ ${pullCmd}`)
+        const pulled = await runWithRetry({ cmd: pullCmd, cwd: args.cwd })
         if (pulled.ok) {
           const m = await parseEnvFile({ path: tmpFile })
           remoteByEnv[t] = m
@@ -455,8 +490,12 @@ async function syncVercel(args: { readonly cwd: string; readonly file: string; r
         continue
       }
       // Remove existing value (if any) to ensure clean update.
-      await proc.run({ cmd: `vercel env rm ${key} ${t} -y`, cwd: args.cwd })
-      const res = await proc.run({ cmd: `vercel env add ${key} ${t}`, cwd: args.cwd, stdin: `${value}` })
+      const rmCmd = `vercel env rm ${key} ${t} -y`
+      if (args.printCmd) logger.info(`$ ${rmCmd}`)
+      await runWithRetry({ cmd: rmCmd, cwd: args.cwd })
+      const addCmd = `vercel env add ${key} ${t}`
+      if (args.printCmd) logger.info(`$ ${addCmd}`)
+      const res = await runWithRetry({ cmd: addCmd, cwd: args.cwd, stdin: `${value}` })
       if (res.ok) { logger.success(`Set ${key} in ${t}`); touched.push(t) }
       else {
         const errMsg: string = res.stderr.trim() || res.stdout.trim()
@@ -465,7 +504,10 @@ async function syncVercel(args: { readonly cwd: string; readonly file: string; r
     }
     results.push({ key, environments: touched, status: touched.length > 0 ? (args.dryRun ? 'skipped' : 'set') : 'failed' })
   }
-  if (args.json === true) logger.json({ provider: 'vercel', file: args.file, envs: results, final: true })
+  if (args.json === true) {
+    const ok = results.every(r => r.status !== 'failed')
+    logger.jsonPrint({ ok, action: 'env' as const, subcommand: 'sync' as const, provider: 'vercel' as const, file: args.file, envs: results, final: true })
+  }
   else {
     const setCount = results.filter(r => r.status === 'set').length
     const skippedCount = results.filter(r => r.status === 'skipped').length
@@ -474,7 +516,7 @@ async function syncVercel(args: { readonly cwd: string; readonly file: string; r
   }
 }
 
-async function diffVercel(args: { readonly cwd: string; readonly file: string; readonly env: EnvTarget; readonly json: boolean; readonly ci: boolean; readonly projectId?: string; readonly orgId?: string; readonly ignore?: readonly string[]; readonly only?: readonly string[]; readonly failOnAdd?: boolean; readonly failOnRemove?: boolean }): Promise<void> {
+async function diffVercel(args: { readonly cwd: string; readonly file: string; readonly env: EnvTarget; readonly json: boolean; readonly ci: boolean; readonly projectId?: string; readonly orgId?: string; readonly ignore?: readonly string[]; readonly only?: readonly string[]; readonly failOnAdd?: boolean; readonly failOnRemove?: boolean; readonly printCmd?: boolean }): Promise<void> {
   const sp = spinner('Vercel: diffing env')
   const localPath: string = join(args.cwd, args.file)
   const allLocal = await parseEnvFile({ path: localPath })
@@ -506,7 +548,7 @@ async function diffVercel(args: { readonly cwd: string; readonly file: string; r
   }
   const ok: boolean = added.length === 0 && removed.length === 0 && changed.length === 0
   if (args.json === true) {
-    logger.json({ provider: 'vercel', env: vercelEnv, ok, added, removed, changed, final: true })
+    logger.jsonPrint({ ok, action: 'env' as const, subcommand: 'diff' as const, provider: 'vercel' as const, env: vercelEnv, added, removed, changed, final: true })
   } else {
     sp.stop()
     if (ok) logger.success('No differences between local file and remote environment.')
@@ -557,6 +599,7 @@ export function registerEnvCommand(program: Command): void {
     .option('--yes', 'Accept all prompts')
     .option('--dry-run', 'Print changes without applying them')
     .option('--json', 'Output JSON summary')
+    .option('--print-cmd', 'Print underlying provider commands that will be executed')
     .option('--ci', 'CI mode (non-interactive, fail fast)')
     .option('--project-id <id>', 'Provider project ID for non-interactive link')
     .option('--org-id <id>', 'Provider org ID for non-interactive link')
@@ -566,24 +609,31 @@ export function registerEnvCommand(program: Command): void {
     .option('--fail-on-remove', 'Exit non-zero if keys are missing remotely')
     .option('--optimize-writes', 'Only update keys that differ remotely (reduces API calls)')
     .option('--map <file>', 'Mapping file for key rename and value transforms')
+    .option('--retries <n>', 'Retries for provider commands (default 2)')
+    .option('--timeout-ms <ms>', 'Timeout per provider command in milliseconds (default 120000)')
+    .option('--base-delay-ms <ms>', 'Base delay for exponential backoff with jitter (default 300)')
     .action(async (provider: string, opts: SyncOptions): Promise<void> => {
       const cwd: string = process.cwd()
       try {
-        if (opts.json === true) logger.setJsonOnly(true)
+        if (opts.retries) process.env.OPD_RETRIES = String(Math.max(0, Number(opts.retries) || 0))
+        if (opts.timeoutMs) process.env.OPD_TIMEOUT_MS = String(Math.max(0, Number(opts.timeoutMs) || 0))
+        if (opts.baseDelayMs) process.env.OPD_BASE_DELAY_MS = String(Math.max(0, Number(opts.baseDelayMs) || 0))
+        const jsonMode: boolean = isJsonMode(opts.json)
+        if (jsonMode) logger.setJsonOnly(true)
         const envTarget = (opts.env ?? 'preview') as EnvTarget
         const prov = provider === 'netlify' ? 'netlify' : provider === 'vercel' ? 'vercel' : undefined
         if (!prov) { logger.error(`Unknown provider: ${provider}`); process.exitCode = 1; return }
         if (prov === 'vercel') {
-          await syncVercel({ cwd, file: opts.file ?? '.env', env: envTarget, yes: opts.yes === true, dryRun: opts.dryRun === true, json: opts.json === true, ci: opts.ci === true, projectId: opts.projectId, orgId: opts.orgId, ignore: toPatterns(opts.ignore), only: toPatterns(opts.only), failOnAdd: opts.failOnAdd === true, failOnRemove: opts.failOnRemove === true, optimizeWrites: opts.optimizeWrites === true, mapFile: opts.map })
+          await syncVercel({ cwd, file: opts.file ?? '.env', env: envTarget, yes: opts.yes === true, dryRun: opts.dryRun === true, json: jsonMode, ci: opts.ci === true, projectId: opts.projectId, orgId: opts.orgId, ignore: toPatterns(opts.ignore), only: toPatterns(opts.only), failOnAdd: opts.failOnAdd === true, failOnRemove: opts.failOnRemove === true, optimizeWrites: opts.optimizeWrites === true, mapFile: opts.map, printCmd: opts.printCmd === true })
         } else {
-          await syncNetlify({ cwd, file: opts.file ?? '.env', yes: opts.yes === true, dryRun: opts.dryRun === true, json: opts.json === true, ci: opts.ci === true, projectId: opts.projectId, ignore: toPatterns(opts.ignore), only: toPatterns(opts.only), optimizeWrites: opts.optimizeWrites === true, mapFile: opts.map })
+          await syncNetlify({ cwd, file: opts.file ?? '.env', yes: opts.yes === true, dryRun: opts.dryRun === true, json: jsonMode, ci: opts.ci === true, projectId: opts.projectId, ignore: toPatterns(opts.ignore), only: toPatterns(opts.only), optimizeWrites: opts.optimizeWrites === true, mapFile: opts.map, printCmd: opts.printCmd === true })
         }
       } catch (err) {
         const raw: string = err instanceof Error ? err.message : String(err)
         const prov = provider === 'netlify' ? 'netlify' : provider === 'vercel' ? 'vercel' : provider
         const info = mapProviderError(prov, raw)
-        if (process.env.OPD_JSON === '1' || process.env.OPD_NDJSON === '1' || opts.json === true) {
-          logger.json({ ok: false, command: 'env', subcommand: 'sync', provider: prov, code: info.code, message: info.message, remedy: info.remedy, error: raw, final: true })
+        if (isJsonMode(opts.json)) {
+          logger.jsonPrint({ ok: false, action: 'env' as const, subcommand: 'sync' as const, provider: prov, code: info.code, message: info.message, remedy: info.remedy, error: raw, final: true })
         }
         logger.error(`${info.message} (${info.code})`)
         if (info.remedy) logger.info(`Try: ${info.remedy}`)
@@ -604,24 +654,31 @@ export function registerEnvCommand(program: Command): void {
     .option('--ignore <patterns>', 'Comma-separated glob patterns to ignore (e.g. NEXT_PUBLIC_*)')
     .option('--only <patterns>', 'Comma-separated glob patterns to include')
     .option('--context <name>', 'Netlify context: production|deploy-preview|branch|dev')
-    .action(async (provider: string, opts: { env?: EnvTarget; out?: string; json?: boolean; ci?: boolean; projectId?: string; orgId?: string; ignore?: string; only?: string; context?: string }): Promise<void> => {
+    .option('--retries <n>', 'Retries for provider commands (default 2)')
+    .option('--timeout-ms <ms>', 'Timeout per provider command in milliseconds (default 120000)')
+    .option('--base-delay-ms <ms>', 'Base delay for exponential backoff with jitter (default 300)')
+    .action(async (provider: string, opts: { env?: EnvTarget; out?: string; json?: boolean; ci?: boolean; projectId?: string; orgId?: string; ignore?: string; only?: string; context?: string; printCmd?: boolean; retries?: string; timeoutMs?: string; baseDelayMs?: string }): Promise<void> => {
       const cwd: string = process.cwd()
       try {
-        if (opts.json === true) logger.setJsonOnly(true)
+        if (opts.retries) process.env.OPD_RETRIES = String(Math.max(0, Number(opts.retries) || 0))
+        if (opts.timeoutMs) process.env.OPD_TIMEOUT_MS = String(Math.max(0, Number(opts.timeoutMs) || 0))
+        if (opts.baseDelayMs) process.env.OPD_BASE_DELAY_MS = String(Math.max(0, Number(opts.baseDelayMs) || 0))
+        const jsonMode: boolean = isJsonMode(opts.json)
+        if (jsonMode) logger.setJsonOnly(true)
         const prov = provider === 'netlify' ? 'netlify' : provider === 'vercel' ? 'vercel' : undefined
         if (!prov) { logger.error(`Unknown provider: ${provider}`); process.exitCode = 1; return }
         if (prov === 'vercel') {
           const envTarget = (opts.env ?? 'preview') as EnvTarget
-          await pullVercel({ cwd, env: envTarget, out: opts.out, json: opts.json === true, ci: opts.ci === true, projectId: opts.projectId, orgId: opts.orgId })
+          await pullVercel({ cwd, env: envTarget, out: opts.out, json: jsonMode, ci: opts.ci === true, projectId: opts.projectId, orgId: opts.orgId, printCmd: opts.printCmd === true })
         } else {
-          await pullNetlify({ cwd, out: opts.out, json: opts.json === true, projectId: opts.projectId, context: opts.context })
+          await pullNetlify({ cwd, out: opts.out, json: jsonMode, projectId: opts.projectId, context: opts.context, printCmd: opts.printCmd === true })
         }
       } catch (err) {
         const raw: string = err instanceof Error ? err.message : String(err)
         const provName = provider === 'netlify' ? 'netlify' : provider === 'vercel' ? 'vercel' : provider
         const info = mapProviderError(provName, raw)
-        if (process.env.OPD_JSON === '1' || process.env.OPD_NDJSON === '1' || opts.json === true) {
-          logger.json({ ok: false, command: 'env', subcommand: 'pull', provider: provName, code: info.code, message: info.message, remedy: info.remedy, error: raw, final: true })
+        if (isJsonMode(opts.json)) {
+          logger.jsonPrint({ ok: false, action: 'env' as const, subcommand: 'pull' as const, provider: provName, code: info.code, message: info.message, remedy: info.remedy, error: raw, final: true })
         }
         logger.error(`${info.message} (${info.code})`)
         if (info.remedy) logger.info(`Try: ${info.remedy}`)
@@ -636,6 +693,7 @@ export function registerEnvCommand(program: Command): void {
     .option('--file <path>', 'Path to local .env file', '.env')
     .option('--env <target>', 'Environment: prod|preview|development', 'preview')
     .option('--json', 'Output JSON diff')
+    .option('--print-cmd', 'Print underlying provider commands that will be executed')
     .option('--ci', 'CI mode (exit non-zero on differences)')
     .option('--project-id <id>', 'Provider project ID for non-interactive link')
     .option('--org-id <id>', 'Provider org ID for non-interactive link')
@@ -644,17 +702,24 @@ export function registerEnvCommand(program: Command): void {
     .option('--fail-on-add', 'Exit non-zero if new keys would be added')
     .option('--fail-on-remove', 'Exit non-zero if keys are missing remotely')
     .option('--context <name>', 'Netlify context: production|deploy-preview|branch|dev')
-    .action(async (provider: string, opts: { file?: string; env?: EnvTarget; json?: boolean; ci?: boolean; projectId?: string; orgId?: string; ignore?: string; only?: string; failOnAdd?: boolean; failOnRemove?: boolean; context?: string }): Promise<void> => {
+    .option('--retries <n>', 'Retries for provider commands (default 2)')
+    .option('--timeout-ms <ms>', 'Timeout per provider command in milliseconds (default 120000)')
+    .option('--base-delay-ms <ms>', 'Base delay for exponential backoff with jitter (default 300)')
+    .action(async (provider: string, opts: { file?: string; env?: EnvTarget; json?: boolean; ci?: boolean; projectId?: string; orgId?: string; ignore?: string; only?: string; failOnAdd?: boolean; failOnRemove?: boolean; context?: string; printCmd?: boolean; retries?: string; timeoutMs?: string; baseDelayMs?: string }): Promise<void> => {
       const cwd: string = process.cwd()
       try {
-        if (opts.json === true) logger.setJsonOnly(true)
+        if (opts.retries) process.env.OPD_RETRIES = String(Math.max(0, Number(opts.retries) || 0))
+        if (opts.timeoutMs) process.env.OPD_TIMEOUT_MS = String(Math.max(0, Number(opts.timeoutMs) || 0))
+        if (opts.baseDelayMs) process.env.OPD_BASE_DELAY_MS = String(Math.max(0, Number(opts.baseDelayMs) || 0))
+        const jsonMode: boolean = isJsonMode(opts.json)
+        if (jsonMode) logger.setJsonOnly(true)
         const prov = provider === 'netlify' ? 'netlify' : provider === 'vercel' ? 'vercel' : undefined
         if (!prov) { logger.error(`Unknown provider: ${provider}`); process.exitCode = 1; return }
         if (prov === 'vercel') {
           const envTarget = (opts.env ?? 'preview') as EnvTarget
-          await diffVercel({ cwd, file: opts.file ?? '.env', env: envTarget, json: opts.json === true, ci: opts.ci === true, projectId: opts.projectId, orgId: opts.orgId, ignore: toPatterns(opts.ignore), only: toPatterns(opts.only), failOnAdd: opts.failOnAdd === true, failOnRemove: opts.failOnRemove === true })
+          await diffVercel({ cwd, file: opts.file ?? '.env', env: envTarget, json: jsonMode, ci: opts.ci === true, projectId: opts.projectId, orgId: opts.orgId, ignore: toPatterns(opts.ignore), only: toPatterns(opts.only), failOnAdd: opts.failOnAdd === true, failOnRemove: opts.failOnRemove === true, printCmd: opts.printCmd === true })
         } else {
-          await diffNetlify({ cwd, file: opts.file ?? '.env', json: opts.json === true, ci: opts.ci === true, projectId: opts.projectId, context: opts.context, ignore: toPatterns(opts.ignore), only: toPatterns(opts.only), failOnAdd: opts.failOnAdd === true, failOnRemove: opts.failOnRemove === true })
+          await diffNetlify({ cwd, file: opts.file ?? '.env', json: jsonMode, ci: opts.ci === true, projectId: opts.projectId, ignore: toPatterns(opts.ignore), only: toPatterns(opts.only), failOnAdd: opts.failOnAdd === true, failOnRemove: opts.failOnRemove === true, context: opts.context, printCmd: opts.printCmd === true })
         }
       } catch (err) {
         const message: string = err instanceof Error ? err.message : String(err)
@@ -687,7 +752,7 @@ export function registerEnvCommand(program: Command): void {
         const raw: string = err instanceof Error ? err.message : String(err)
         const info = mapProviderError('env', raw)
         if (process.env.OPD_JSON === '1' || process.env.OPD_NDJSON === '1' || opts.json === true) {
-          logger.json({ ok: false, command: 'env', subcommand: 'validate', code: info.code, message: info.message, remedy: info.remedy, error: raw, final: true })
+          logger.jsonPrint({ ok: false, action: 'env' as const, subcommand: 'validate' as const, provider: 'env', code: info.code, message: info.message, remedy: info.remedy, error: raw, final: true })
         }
         logger.error(`${info.message} (${info.code})`)
         if (info.remedy) logger.info(`Try: ${info.remedy}`)

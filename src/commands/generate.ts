@@ -1,7 +1,10 @@
 import { Command } from 'commander'
-import { logger } from '../utils/logger'
-import { detectNextApp } from '../core/detectors/next'
+import { stat, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { logger, isJsonMode } from '../utils/logger'
+import { detectApp } from '../core/detectors/auto'
 import { VercelAdapter } from '../providers/vercel/adapter'
+import { NetlifyAdapter } from '../providers/netlify/adapter'
 
 interface GenerateOptions { readonly overwrite?: boolean; readonly json?: boolean }
 
@@ -11,26 +14,57 @@ interface GenerateOptions { readonly overwrite?: boolean; readonly json?: boolea
 export function registerGenerateCommand(program: Command): void {
   program
     .command('generate')
-    .description('Generate provider configuration files for the detected app')
-    .argument('<provider>', 'Target provider: vercel | netlify')
+    .description('Generate configuration files for the detected app (Vercel, Netlify) or turborepo pipeline')
+    .argument('<provider>', 'Target: vercel | netlify | turbo')
     .option('--overwrite', 'Overwrite existing files')
     .option('--json', 'Output JSON with generated file path')
     .action(async (provider: string, opts: GenerateOptions): Promise<void> => {
       const cwd: string = process.cwd()
       try {
-        const detection = await detectNextApp({ cwd })
+        const jsonMode: boolean = isJsonMode(opts.json)
+        if (jsonMode) logger.setJsonOnly(true)
+        const detection = await detectApp({ cwd })
         if (provider === 'vercel') {
           const adapter = new VercelAdapter()
           const writtenPath: string = await adapter.generateConfig({ detection, overwrite: opts.overwrite === true })
-          if (opts.json === true) {
-            logger.json({ provider: 'vercel', path: writtenPath })
+          if (jsonMode) {
+            const summary = { ok: true, action: 'generate' as const, provider: 'vercel' as const, path: writtenPath, final: true }
+            logger.jsonPrint(summary)
             return
           }
           logger.success(`Generated Vercel config at ${writtenPath}`)
           return
         }
         if (provider === 'netlify') {
-          logger.warn('Netlify generator is not implemented yet for Next.js in the MVP')
+          const adapter = new NetlifyAdapter()
+          const writtenPath: string = await adapter.generateConfig({ detection, overwrite: opts.overwrite === true })
+          if (jsonMode) {
+            const summary = { ok: true, action: 'generate' as const, provider: 'netlify' as const, path: writtenPath, final: true }
+            logger.jsonPrint(summary)
+            return
+          }
+          logger.success(`Generated Netlify config at ${writtenPath}`)
+          return
+        }
+        if (provider === 'turbo') {
+          const path: string = join(cwd, 'turbo.json')
+          const exists = async (): Promise<boolean> => { try { const s = await stat(path); return s.isFile() } catch { return false } }
+          if (opts.overwrite === true || !(await exists())) {
+            const turbo = {
+              tasks: {
+                build: {
+                  dependsOn: ['^build'],
+                  outputs: ['.next/**', '!.next/cache/**', 'dist/**']
+                }
+              }
+            }
+            await writeFile(path, `${JSON.stringify(turbo, null, 2)}\n`, 'utf8')
+          }
+          if (jsonMode) {
+            logger.jsonPrint({ ok: true, action: 'generate' as const, provider: 'turbo' as const, path, final: true })
+            return
+          }
+          logger.success(`Generated Turborepo config at ${path}`)
           return
         }
         logger.error(`Unknown provider: ${provider}`)

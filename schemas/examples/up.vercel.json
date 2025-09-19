@@ -1,0 +1,8 @@
+{
+  "provider": "vercel",
+  "target": "preview",
+  "url": "https://my-app-abc.vercel.app",
+  "logsUrl": "https://vercel.com/acme/my-app/inspect/dep_123",
+  "durationMs": 3210,
+  "final": true
+}

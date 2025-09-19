@@ -1,0 +1,42 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "OpenDeploy Start (Netlify Prepare-Only) Summary",
+  "type": "object",
+  "properties": {
+    "ok": { "type": "boolean" },
+    "provider": { "type": "string", "enum": ["netlify", "vercel"] },
+    "action": { "const": "start" },
+    "target": { "type": "string", "enum": ["prod", "preview"] },
+    "mode": { "type": "string", "enum": ["prepare-only", "deploy"] },
+    "projectId": { "type": "string" },
+    "siteId": { "type": "string" },
+    "siteName": { "type": "string" },
+    "publishDir": { "type": "string" },
+    "recommend": {
+      "type": "object",
+      "properties": {
+        "previewCmd": { "type": "string" },
+        "prodCmd": { "type": "string" }
+      },
+      "required": ["previewCmd", "prodCmd"],
+      "additionalProperties": true
+    },
+    "ciChecklist": {
+      "type": "object",
+      "properties": {
+        "buildCommand": { "type": "string" },
+        "publishDir": { "type": "string" },
+        "envFile": { "type": "string" },
+        "exampleKeys": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["buildCommand"],
+      "additionalProperties": true
+    },
+    "final": { "const": true }
+  },
+  "required": ["provider", "action", "target", "mode", "final"],
+  "additionalProperties": true
+}

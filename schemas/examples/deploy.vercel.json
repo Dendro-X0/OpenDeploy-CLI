@@ -1,0 +1,9 @@
+{
+  "provider": "vercel",
+  "target": "preview",
+  "url": "https://my-app-xyz.vercel.app",
+  "logsUrl": "https://vercel.com/acme/my-app/inspect/dep_456",
+  "aliasUrl": "https://staging.my-app.com",
+  "durationMs": 4021,
+  "final": true
+}

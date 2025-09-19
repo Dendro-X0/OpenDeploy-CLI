@@ -10,6 +10,12 @@ import { setColorMode, type ColorMode } from './utils/colors'
 import { registerRunCommand } from './commands/run'
 import { registerInitCommand } from './commands/init'
 import { registerCompletionCommand } from './commands/completion'
+import { registerPromoteCommand } from './commands/promote'
+import { registerExplainCommand } from './commands/explain'
+import { registerRollbackCommand } from './commands/rollback'
+import { registerUpCommand } from './commands/up'
+import { registerStartCommand } from './commands/start'
+import { computeRedactors } from './utils/redaction'
 
 const VERSION: string = '0.1.0'
 
@@ -31,6 +37,7 @@ function main(): void {
   program.option('--json-file [path]', 'Also write JSON output lines to file (appends)')
   program.option('--ndjson-file [path]', 'Also write NDJSON output lines to file (appends)')
   program.option('--gha-annotations <mode>', 'GitHub annotations: error|warning|off', 'warning')
+  program.option('--gha', 'GitHub Actions-friendly defaults (implies --json --summary-only --timestamps, sets annotation/file sinks)')
   // Pre-parse lightweight check to set verbose level for early output
   if (process.argv.includes('--verbose')) {
     logger.setLevel('debug')
@@ -63,6 +70,26 @@ function main(): void {
   if (process.argv.includes('--summary-only')) {
     logger.setSummaryOnly(true)
     process.env.OPD_SUMMARY = '1'
+  }
+  // GitHub Actions convenience
+  if (process.argv.includes('--gha')) {
+    // JSON summary with timestamps
+    logger.setJsonOnly(true); process.env.OPD_JSON = '1'
+    logger.setSummaryOnly(true); process.env.OPD_SUMMARY = '1'
+    logger.setTimestamps(true); process.env.OPD_TS = '1'
+    // Default files if none provided
+    if (!process.env.OPD_JSON_FILE) {
+      const ts = new Date().toISOString().replace(/[:.]/g, '-')
+      const p = `./.artifacts/opendeploy-${ts}.json`
+      logger.setJsonFile(p); process.env.OPD_JSON_FILE = p
+    }
+    if (!process.env.OPD_NDJSON_FILE) {
+      const ts2 = new Date().toISOString().replace(/[:.]/g, '-')
+      const p2 = `./.artifacts/opendeploy-${ts2}.ndjson`
+      logger.setNdjsonFile(p2); process.env.OPD_NDJSON_FILE = p2
+    }
+    if (!process.env.OPD_GHA_ANN) process.env.OPD_GHA_ANN = 'warning'
+    process.env.OPD_GHA = '1'
   }
   // Parse json-file and ndjson-file
   const jsonFileIx = process.argv.findIndex((a) => a === '--json-file')
@@ -101,6 +128,10 @@ function main(): void {
     setColorMode('auto')
     process.env.OPD_COLOR = 'auto'
   }
+  // Initialize redaction patterns from local env files and process.env (best-effort, non-blocking)
+  void computeRedactors({ cwd: process.cwd(), envFiles: ['.env', '.env.local', '.env.production.local'], includeProcessEnv: true })
+    .then((patterns) => { if (Array.isArray(patterns) && patterns.length > 0) logger.setRedactors(patterns) })
+    .catch(() => { /* ignore redactor init errors */ })
   registerDetectCommand(program)
   registerDoctorCommand(program)
   registerGenerateCommand(program)
@@ -110,6 +141,11 @@ function main(): void {
   registerRunCommand(program)
   registerInitCommand(program)
   registerCompletionCommand(program)
+  registerPromoteCommand(program)
+  registerExplainCommand(program)
+  registerRollbackCommand(program)
+  registerUpCommand(program)
+  registerStartCommand(program)
   program.parseAsync(process.argv)
     .then(() => {})
     .catch((err: unknown) => {

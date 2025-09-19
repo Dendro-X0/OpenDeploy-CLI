@@ -1,0 +1,22 @@
+{
+  "ok": true,
+  "action": "start",
+  "provider": "netlify",
+  "target": "preview",
+  "mode": "prepare-only",
+  "projectId": "site_123",
+  "siteId": "site_123",
+  "siteName": "my-site-123",
+  "publishDir": "dist",
+  "recommend": {
+    "previewCmd": "netlify deploy --dir dist --site site_123",
+    "prodCmd": "netlify deploy --prod --dir dist --site site_123"
+  },
+  "ciChecklist": {
+    "buildCommand": "pnpm build",
+    "publishDir": "dist",
+    "envFile": ".env",
+    "exampleKeys": ["PUBLIC_BASE_URL", "DATABASE_URL"]
+  },
+  "final": true
+}

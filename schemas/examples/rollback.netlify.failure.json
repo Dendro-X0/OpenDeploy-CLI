@@ -1,0 +1,9 @@
+{
+  "ok": false,
+  "provider": "netlify",
+  "action": "rollback",
+  "target": "prod",
+  "message": "Restore failed. Use dashboard to restore.",
+  "dashboard": "https://app.netlify.com/sites/my-site/deploys/dep_abc123",
+  "final": true
+}
