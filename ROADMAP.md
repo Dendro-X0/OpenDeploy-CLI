@@ -86,92 +86,53 @@ Beta Acceptance Criteria
   - CI templates published and referenced in docs. [Achieved]
   - Provider adapter API documented. [Achieved]
 
-### Post‑Beta 1.0.x Plan (Execution)
+## 1.0.0 GA (Release)
 
-Goals: validate real‑world flows on Remix, Expo, and Nuxt; polish wizard and docs based on findings; ensure stable JSON outputs and CI ergonomics.
+Status: Ready
 
-### Next Plan: Wizard CLI — Full Vercel & Netlify Support
+What’s done (highlights)
 
-Focus: Make the `start` wizard fully support both providers end-to-end.
+- Wizard: Vercel deploy end‑to‑end; Netlify prepare‑only by default with optional `--deploy` and `--no-build`; both emit `ciChecklist` and stable summaries.
+- Logs: NDJSON progress with cross‑provider `event:"logs"` and provider‑specific `logsUrl`.
+- Config generation: idempotent `vercel.json` / `netlify.toml` based on detection.
+- Env: pull/diff/sync/validate with strict flags and profile builtins.
+- CI ergonomics: `--gha`, sinks, timestamps, annotations, and deterministic `{ final: true }` summaries.
+- Docs: repo docs updated; Docs Site content aligned (Overview, Commands → start, Recipes → Wizard Quick Examples, Response Shapes → start).
+- Tests: unit + integration coverage for wizard outputs and NDJSON; Windows/Linux matrix.
 
-- Scope
-  - Vercel: end-to-end deploy in-wizard (detect/link, env plan + sync, config generation, NDJSON streaming, final JSON with `url`/`logsUrl`, optional `--alias`).
-  - Netlify: end-to-end support including site creation/linking, env plan + sync, idempotent `netlify.toml`, publishDir inference, `--no-build` respected, NDJSON logs with `logsUrl`. Consider `--deploy` opt-in for true deploy; default remains prepare-only when safer.
-  - Monorepo path inference and chosen deploy cwd advisories.
-  - Include `ciChecklist` in wizard JSON for both providers; `--gha` parity (summary-only, timestamps, sinks, annotations).
+Release checklist
 
-- Tests
-  - E2E wizard tests (dry-run and human/JSON/NDJSON modes) across providers.
-  - Schema validation for wizard summaries (including `ciChecklist`).
+1) Schemas: add optional wizard fields (`logsUrl`, `cwd`, `alias`, `siteId`, `siteName`) to `schemas/start.schema.json`.
+2) Docs Site: deploy to GitHub Pages (or Vercel) and link from README.
+3) Version: bump to `1.0.0` and tag release with concise notes (features, known limits, next plan).
+4) Changelog: include NDJSON parity, start flags (`--deploy`, `--no-build`, `--alias`).
+5) Smoke pass on real projects (Next, one Remix static, one Nuxt static) using `start` and `up`.
 
-- Docs
-  - Update `commands.md` (start), add examples for both providers, and wizard recipe notes.
+Known limitations (kept short in release notes)
 
-- Acceptance Criteria
-  - Single-run wizard paths succeed for Vercel and Netlify with stable JSON/NDJSON.
-  - `ciChecklist` and `cmdPlan` present and validated by schemas.
-  - Monorepo `--path` and chosen cwd guidance surfaced.
-  - Docs updated and CI green across Windows/Linux.
+- Remix/React Router v7 SSR requires adapters; static deploys are first‑class.
+- Expo deploys are out‑of‑scope for 1.0; env workflows are supported.
 
-1) Test Matrix (Real Projects)
+## 1.1.0 Plan (Next)
 
-- [ ] Remix on Vercel
-  - Sample: create with `npx create-remix@latest` (Vite), or use `remix-run/remix` templates.
-  - Validate: `detect`, `start`, `up --dry-run/--json`, `up --env preview`, `up --env prod`.
-  - Ensure: logsUrl emits; inline `vercel link` works with `--project/--org`; env sync keys trimmed; final JSON has `final: true`.
-- [ ] Remix on Netlify
-  - Validate same as above; ensure dashboard logsUrl; check Netlify build output config.
-- [ ] Expo (Env management focus)
-  - Sample: `npx create-expo-app`.
-  - Validate: `detect` → `expo`; `start` env plan preview; `env sync netlify|vercel` for preview/prod; document deploy limitations/out of scope for 1.0.
-- [ ] Nuxt on Vercel
-  - Sample: `npx nuxi init nuxt-app`.
-  - Validate: detection (nuxt) — add detector if needed; generate minimal `vercel.json`; `up --dry-run` and preview deploy.
-- [ ] Nuxt on Netlify
-  - Validate: generate minimal `netlify.toml`; confirm logsUrl; env sync path.
+Scope: 2–3 week cycle, small and focused.
 
-Artifacts to capture per project:
+- Detection & UX
+  - React Router v7 detector + static fallback heuristics; clarify SPA redirects.
+  - Monorepo chosen‑cwd advisories (doctor + wizard hints).
+- Schemas & CI
+  - Publish `start.schema.json` with the optional fields above; add schema validation test.
+  - Minimal matrix smoke workflow (`up --dry-run --json`) on templates.
+- Docs & DX
+  - “When to use start vs up” callouts; more compact Quick Start on the site.
+  - One short video tutorial (2–3 min) showcasing wizard + up.
 
-- [ ] Human logs (redacted)
-- [ ] NDJSON logs (with timestamps)
-- [ ] Final JSON summaries (up/deploy)
-- [ ] Any provider dashboard links and production URLs
-- [ ] Notes on required config files (vercel.json/netlify.toml) and linking steps
+## Backlog (Not committed to a release)
 
-2) Wizard & UX Polish
-
-- [x] Defaults loaded banner (done) — confirm copy and frequency
-- [x] Copy logs URL prompt (done) — confirm in both providers
-- [x] Copy command prompt (done)
-- [x] Inline `vercel link` / `netlify link` with stderr/stdout surfaced (done)
-- [x] Env plan preview (keys only) before sync (done)
-- [x] `--no-save-defaults` flag (done) — ensure docs show usage
-
-3) Detection & Config
-
-- [x] Add Nuxt detector and wire into wizard, docs
-- [x] Remix: confirm build/outputDir heuristics; ensure adapter config minimalism
-- [x] Netlify Remix: confirm plugin/runtime expectations and document
-
-4) CI & Automation
-
-- [ ] Add sample GitHub Actions for Remix/Nuxt (preview + promote or deploy)
-- [ ] Add a matrix smoke test workflow running `up --dry-run --json` against template repos
-- [x] Validate JSON schemas against captured outputs (CI step)
-
-5) Docs
-
-- [x] Framework notes pages (Remix, Expo beta, Nuxt) under docs with quick start snippets
-- [x] Update overview with support grid and beta labels
-- [x] Add troubleshooting entries for common Remix/Nuxt pitfalls
-
-6) Acceptance Criteria for Beta 1.0.0
-
-- [x] All test matrix items complete with captured artifacts
-- [x] No P0/critical issues for `start`, `up`, `deploy`, and `env` flows
-- [x] Deterministic JSON outputs validated by schemas (CI)
-- [x] Docs updated (commands, overview, recipes, troubleshooting)
-- [x] Release notes drafted (features, known limitations, next steps)
+- Recipes scaffolding (`opendeploy recipe apply ...`) for Astro/SvelteKit/Remix/Expo.
+- Additional providers (Cloudflare Pages, Render, Fly.io) behind feature flags.
+- Secret manager integrations (GitHub Environments, 1Password Connect, AWS SSM).
+- Opt‑in telemetry/allowlist and richer audit logs.
 
 ### Next.js Deployment Experience (Foundation)
 

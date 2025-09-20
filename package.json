@@ -1,6 +1,6 @@
 {
   "name": "opendeploy-cli",
-  "version": "1.0.0-alpha",
+  "version": "1.0.0",
   "description": "OpenDeploy CLI — cross-provider deployment tool focused on Next.js first.",
   "type": "module",
   "bin": {

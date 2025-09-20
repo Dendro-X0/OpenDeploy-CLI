@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "OpenDeploy Start (Netlify Prepare-Only) Summary",
+  "title": "OpenDeploy Start Summary",
   "type": "object",
   "properties": {
     "ok": { "type": "boolean" },
@@ -8,10 +8,14 @@
     "action": { "const": "start" },
     "target": { "type": "string", "enum": ["prod", "preview"] },
     "mode": { "type": "string", "enum": ["prepare-only", "deploy"] },
+    "url": { "type": "string" },
+    "logsUrl": { "type": "string" },
+    "alias": { "type": "string" },
     "projectId": { "type": "string" },
     "siteId": { "type": "string" },
     "siteName": { "type": "string" },
     "publishDir": { "type": "string" },
+    "cwd": { "type": "string" },
     "recommend": {
       "type": "object",
       "properties": {
