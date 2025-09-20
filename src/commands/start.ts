@@ -252,6 +252,9 @@ async function runDeploy(args: { readonly provider: Provider; readonly env: 'pro
     const res = await controller.done
     sp.stop()
     if (!res.ok) throw new Error('Vercel deploy failed')
+    if (process.env.OPD_NDJSON === '1' && capturedInspect) {
+      logger.json({ action: 'start', provider: 'vercel', target: envTarget, event: 'logs', logsUrl: capturedInspect })
+    }
     // Optional aliasing
     let aliased: string | undefined
     if (args.alias && capturedUrl) {
