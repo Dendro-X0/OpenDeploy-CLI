@@ -123,6 +123,18 @@ Behavior:
 - With `--json`, prints a final summary. For Netlify, `{ ok, provider, target, mode: 'prepare-only'|'deploy', projectId?, siteId?, siteName?, publishDir?, logsUrl?, recommend?, final: true }`.
 - With `--dry-run`, prints `{ ok: true, mode: 'dry-run', cmd, final: true }` and exits before syncing/deploying.
 
+NDJSON events:
+
+When `--ndjson` is active (or `OPD_NDJSON=1`), the wizard emits compact one-line JSON events before the final summary. A cross-provider logs event is emitted when a dashboard/inspect URL is available:
+
+```json
+{"action":"start","provider":"vercel","target":"preview","event":"logs","logsUrl":"https://vercel.com/acme/app/inspections/dep_123"}
+```
+
+```json
+{"action":"start","provider":"netlify","target":"preview","event":"logs","logsUrl":"https://app.netlify.com/sites/mysite/deploys"}
+```
+
 Examples:
 
 ```bash

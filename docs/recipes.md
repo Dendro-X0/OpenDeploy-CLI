@@ -1,6 +1,30 @@
 # Recipes
 
-### Remix family deploys (React Router v7)
+## Wizard (start) — Quick Examples
+
+Use the guided wizard to prepare or deploy with consistent JSON/NDJSON outputs.
+
+```bash
+# Vercel: preview deploy and alias
+opendeploy start --provider vercel --env preview \
+  --alias preview.example.com --json
+
+# Vercel: NDJSON progress (human suppressed)
+OPD_NDJSON=1 opendeploy start --provider vercel --env preview --ci
+
+# Netlify: prepare-only (JSON summary with recommend + logsUrl)
+opendeploy start --provider netlify --env preview \
+  --project <SITE_ID> --json
+
+# Netlify: deploy prebuilt artifacts (no build)
+opendeploy start --provider netlify --env preview \
+  --project <SITE_ID> --deploy --no-build --json --print-cmd
+
+# Monorepo: choose app directory for deploy
+opendeploy start --provider vercel --path apps/web --env preview --json
+```
+
+## Remix family deploys (React Router v7)
 
 This recipe shows how to deploy a React Router v7 app (Remix family) to Vercel and Netlify using OpenDeploy.
 
