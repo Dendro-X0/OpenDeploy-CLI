@@ -106,7 +106,8 @@ Usage:
 opendeploy start [--framework <next|astro|sveltekit|remix|expo>] \
   [--provider <vercel|netlify>] [--env <prod|preview>] \
   [--path <dir>] [--project <id>] [--org <id>] \
-  [--sync-env] [--dry-run] [--json] [--ci] [--no-save-defaults]
+  [--sync-env] [--dry-run] [--json] [--ci] [--no-save-defaults] \
+  [--deploy] [--no-build] [--alias <domain>] [--print-cmd]
 ```
 
 Behavior:
@@ -116,11 +117,27 @@ Behavior:
 - Env sync is optional; when enabled, the wizard chooses a sensible `.env` file per target.
 - Config generation: ensures minimal `vercel.json` (Vercel) and a safe `netlify.toml` when applicable. For Next.js on Netlify, the adapter applies the official Next runtime/plugin.
 - Preflight: optionally runs a local build (skipped in `--ci`) and validates that Netlify publishDir contains output for non‑Next frameworks.
-- Vercel: performs the deploy (preview/prod) and prints `url`/`logsUrl`.
-- Netlify: prepare‑only. The wizard generates config and prints recommended `netlify deploy` commands (preview/prod) with an inferred `--dir`. It does not run `netlify deploy` for you.
+- Vercel: performs the deploy (preview/prod) and prints `url`/`logsUrl`. When `--alias` is provided, the wizard attempts to alias the deployment to the given domain.
+- Netlify: prepare‑only by default. The wizard generates config and prints recommended `netlify deploy` commands (preview/prod) with an inferred `--dir`. Optionally, pass `--deploy` to execute a real deploy inside the wizard. With `--no-build`, the wizard deploys prebuilt artifacts from `--dir`.
 - After Vercel deploy (only), the wizard prints a copyable non‑interactive command and offers to copy the logs URL.
-- With `--json`, prints a final summary. For Netlify, `{ ok, provider, target, mode: 'prepare-only', projectId?, publishDir, recommend: { previewCmd, prodCmd }, final: true }`.
+- With `--json`, prints a final summary. For Netlify, `{ ok, provider, target, mode: 'prepare-only'|'deploy', projectId?, siteId?, siteName?, publishDir?, logsUrl?, recommend?, final: true }`.
 - With `--dry-run`, prints `{ ok: true, mode: 'dry-run', cmd, final: true }` and exits before syncing/deploying.
+
+Examples:
+
+```bash
+# Vercel preview deploy with alias
+opendeploy start --provider vercel --env preview --alias preview.example.com --json
+
+# Netlify prepare-only (print recommended commands)
+opendeploy start --provider netlify --env preview --project <SITE_ID> --json
+
+# Netlify deploy without building (use prebuilt artifacts in publishDir)
+opendeploy start --provider netlify --env preview --project <SITE_ID> --deploy --no-build --json --print-cmd
+
+# Monorepo: deploy from apps/web
+opendeploy start --provider vercel --path apps/web --env preview --json
+```
 
 Notes:
 - Use `--no-save-defaults` to suppress the prompt to persist your selections to `opendeploy.config.json` under `startDefaults`.

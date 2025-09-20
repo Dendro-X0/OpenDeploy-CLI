@@ -21,6 +21,7 @@ vi.mock('../utils/process', async (orig) => {
         // Simulate provider auth and login commands
         if (args.cmd.startsWith('vercel whoami')) return failVercelWhoami ? { ok: false, exitCode: 1, stdout: '', stderr: 'not logged in' } : { ok: true, exitCode: 0, stdout: 'you@vercel', stderr: '' }
         if (args.cmd.startsWith('vercel login')) return failVercelLogin ? { ok: false, exitCode: 1, stdout: '', stderr: 'login failed' } : { ok: true, exitCode: 0, stdout: 'ok', stderr: '' }
+        if (args.cmd.startsWith('netlify api getSite')) return { ok: true, exitCode: 0, stdout: '{"name":"mysite","admin_url":"https://app.netlify.com/sites/mysite"}', stderr: '' }
         if (args.cmd.startsWith('netlify --version')) return { ok: true, exitCode: 0, stdout: 'netlify-cli/0.0.0', stderr: '' }
         if (args.cmd.startsWith('netlify status')) return { ok: false, exitCode: 1, stdout: 'Not logged in', stderr: '' }
         if (args.cmd.startsWith('netlify login')) return failNetlifyLogin ? { ok: false, exitCode: 1, stdout: '', stderr: 'login failed' } : { ok: true, exitCode: 0, stdout: 'ok', stderr: '' }
@@ -189,6 +190,9 @@ describe('start wizard', () => {
     expect(obj.ciChecklist).toHaveProperty('publishDir')
     // recommend commands present
     expect(obj).toHaveProperty('recommend')
+    // logsUrl present from admin_url
+    expect(obj).toHaveProperty('logsUrl')
+    expect(String(obj.logsUrl)).toContain('app.netlify.com')
   })
 
   it('vercel JSON summary includes ciChecklist (deploy mode)', async () => {
@@ -199,6 +203,32 @@ describe('start wizard', () => {
     expect(obj).toHaveProperty('ciChecklist')
     expect(obj.ciChecklist).toHaveProperty('buildCommand')
   })
+
+  it('netlify deploy JSON includes logsUrl (deploy mode)', async () => {
+    await runStartWizard({ framework: 'next', provider: 'netlify', project: 'site_123', env: 'preview', json: true, ci: true, syncEnv: false, deploy: true, noBuild: true })
+    const obj = getLastStartJson()
+    expect(obj).toHaveProperty('provider', 'netlify')
+    expect(obj).toHaveProperty('mode', 'deploy')
+    expect(obj).toHaveProperty('logsUrl')
+    expect(String(obj.logsUrl)).toContain('app.netlify.com')
+  })
+
+  it('emits NDJSON logs event for Netlify (prepare-only)', async () => {
+    const prev = process.env.OPD_NDJSON
+    process.env.OPD_NDJSON = '1'
+    try {
+      await runStartWizard({ framework: 'next', provider: 'netlify', project: 'site_123', env: 'preview', ci: true, syncEnv: false })
+    } finally {
+      if (prev === undefined) delete process.env.OPD_NDJSON; else process.env.OPD_NDJSON = prev
+    }
+    const logsEventLine = [...logs].reverse().find((l) => {
+      try { const o = JSON.parse(l); return o && o.action === 'start' && o.event === 'logs' && typeof o.logsUrl === 'string' } catch { return false }
+    }) ?? '{}'
+    const evt = JSON.parse(logsEventLine)
+    expect(evt).toHaveProperty('event', 'logs')
+    expect(evt).toHaveProperty('logsUrl')
+    expect(String(evt.logsUrl)).toContain('app.netlify.com')
+  })
 })
 
 describe('up auto-wizard', () => {
@@ -206,8 +236,7 @@ describe('up auto-wizard', () => {
     const program = new Command()
     registerUpCommand(program)
     await program.parseAsync(['node', 'test', 'up', '--dry-run', '--json'])
-    const line = logs.find((l) => l.includes('"final": true')) ?? '{}'
-    const obj = JSON.parse(line)
+    const obj = getLastStartJson()
     expect(obj).toHaveProperty('final', true)
   })
 
@@ -218,8 +247,7 @@ describe('up auto-wizard', () => {
       await runStartWizard({ provider: 'netlify', project: 'site_123', env: 'preview', json: true, syncEnv: false })
     } catch { /* swallow */ }
     failNetlifyLink = false
-    const line = logs.find((l) => l.includes('"final": true')) ?? '{}'
-    const obj = JSON.parse(line)
+    const obj = getLastStartJson()
     expect(obj).toMatchObject({ ok: false, final: true })
   })
 })

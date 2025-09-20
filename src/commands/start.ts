@@ -41,6 +41,9 @@ export interface StartOptions {
   readonly dryRun?: boolean
   readonly saveDefaults?: boolean
   readonly printCmd?: boolean
+  readonly deploy?: boolean
+  readonly noBuild?: boolean
+  readonly alias?: string
 }
 
 async function detectForFramework(framework: Framework, cwd: string): Promise<DetectionResult> {
@@ -214,7 +217,7 @@ async function ensureProviderAuth(p: Provider): Promise<void> {
 /**
  * Deploy using the existing low-level logic (similar to `up`).
  */
-async function runDeploy(args: { readonly provider: Provider; readonly env: 'prod' | 'preview'; readonly cwd: string; readonly json: boolean; readonly project?: string; readonly org?: string; readonly printCmd?: boolean }): Promise<{ readonly url?: string; readonly logsUrl?: string }> {
+async function runDeploy(args: { readonly provider: Provider; readonly env: 'prod' | 'preview'; readonly cwd: string; readonly json: boolean; readonly project?: string; readonly org?: string; readonly printCmd?: boolean; readonly publishDir?: string; readonly noBuild?: boolean; readonly alias?: string }): Promise<{ readonly url?: string; readonly logsUrl?: string; readonly alias?: string }> {
   const envTarget = args.env
   if (args.provider === 'vercel') {
     // Ensure linked when IDs provided
@@ -249,16 +252,27 @@ async function runDeploy(args: { readonly provider: Provider; readonly env: 'pro
     const res = await controller.done
     sp.stop()
     if (!res.ok) throw new Error('Vercel deploy failed')
-    return { url: capturedUrl, logsUrl: capturedInspect }
+    // Optional aliasing
+    let aliased: string | undefined
+    if (args.alias && capturedUrl) {
+      const aliasCmd = `vercel alias set ${capturedUrl} ${args.alias}`
+      if (args.printCmd) logger.info(`$ ${aliasCmd}`)
+      const aliasRes = await proc.run({ cmd: aliasCmd, cwd: args.cwd })
+      if (aliasRes.ok) aliased = args.alias
+    }
+    return { url: capturedUrl, logsUrl: capturedInspect, alias: aliased }
   }
   // Netlify
   const sp = spinner(`Netlify: deploying (${envTarget === 'prod' ? 'production' : 'preview'})`)
   const siteFlag: string = args.project ? ` --site ${args.project}` : ''
+  const dirFlag: string = args.publishDir ? ` --dir ${args.publishDir}` : ''
   let capturedUrl: string | undefined
   const urlRe = /https?:\/\/[^\s]+\.netlify\.app\b/g
-  if (args.printCmd) logger.info(`$ netlify deploy --build${envTarget === 'prod' ? ' --prod' : ''}${siteFlag}`.trim())
+  const buildPart = args.noBuild === true ? '' : ' --build'
+  const cmd = `netlify deploy${buildPart}${envTarget === 'prod' ? ' --prod' : ''}${dirFlag}${siteFlag}`.trim()
+  if (args.printCmd) logger.info(`$ ${cmd}`)
   const controller = proc.spawnStream({
-    cmd: `netlify deploy --build${envTarget === 'prod' ? ' --prod' : ''}${siteFlag}`.trim(),
+    cmd,
     cwd: args.cwd,
     onStdout: (chunk: string): void => {
       const m = chunk.match(urlRe)
@@ -284,7 +298,8 @@ async function runDeploy(args: { readonly provider: Provider; readonly env: 'pro
 export async function runStartWizard(opts: StartOptions): Promise<void> {
   try {
     const rootCwd: string = process.cwd()
-    if (opts.json === true) logger.setJsonOnly(true)
+    if (process.env.OPD_NDJSON === '1') { logger.setNdjson(true) }
+    else if (opts.json === true) { logger.setJsonOnly(true) }
     intro('OpenDeploy • Start')
     // Load saved defaults
     let saved: Partial<StartOptions> = {}
@@ -326,7 +341,7 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
     if (opts.dryRun === true) {
       const provEarly: Provider = (opts.provider as Provider) ?? (saved.provider as Provider) ?? 'vercel'
       const cmdEarly = buildNonInteractiveCmd({ provider: provEarly, envTarget: envTargetEarly, path: opts.path, project: opts.project, org: opts.org, syncEnv: Boolean(opts.syncEnv) })
-      const summaryEarly = { ok: true, action: 'start' as const, provider: provEarly, target: envTargetEarly, mode: 'dry-run', cmd: cmdEarly, final: true }
+      const summaryEarly = { ok: true, action: 'start' as const, provider: provEarly, target: envTargetEarly, mode: 'dry-run', cmd: cmdEarly, cwd: rootCwd, final: true }
       logger.json(summaryEarly)
       // eslint-disable-next-line no-console
       console.log(JSON.stringify(summaryEarly))
@@ -355,6 +370,9 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
     // Path
     const targetPath: string | undefined = opts.path ?? saved.path
     const targetCwd: string = targetPath ? join(rootCwd, targetPath) : rootCwd
+    if (!opts.json) {
+      note(`Deploying from: ${targetCwd}\nTip: For monorepos, pass --path to target an app directory.`, 'Path')
+    }
 
     // Track a created Netlify site id (if we create one) so we can pass it to deploy
     let createdSiteId: string | undefined
@@ -502,14 +520,18 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
     if (provider === 'netlify') {
       // Prepare-only: detect publish dir and print recommended commands.
       const publishDir: string = detection.publishDir ?? inferNetlifyPublishDir({ framework: framework!, cwd: targetCwd })
-      // Resolve site name for enriched JSON summaries
+      // Resolve site name and admin URL for enriched JSON summaries
       let siteName: string | undefined
+      let adminUrl: string | undefined
       try {
         const siteId: string | undefined = effectiveProject
         if (siteId) {
           const siteRes = await proc.run({ cmd: `netlify api getSite --data '{"site_id":"${siteId}"}'`, cwd: targetCwd })
           if (siteRes.ok) {
-            try { const js = JSON.parse(siteRes.stdout) as { name?: string }; if (typeof js.name === 'string') siteName = js.name } catch { /* ignore */ }
+            try { const js = JSON.parse(siteRes.stdout) as { name?: string; admin_url?: string }
+              if (typeof js.name === 'string') siteName = js.name
+              if (typeof js.admin_url === 'string') adminUrl = js.admin_url
+            } catch { /* ignore */ }
           }
         }
       } catch { /* ignore */ }
@@ -531,6 +553,27 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
         logger.info(`$ ${previewCmd}`)
         logger.info(`$ ${prodCmd}`)
       }
+      if (opts.deploy === true) {
+        // Execute a real deploy via Netlify CLI (optional path)
+        const { url } = await runDeploy({ provider: provider!, env: envTarget, cwd: targetCwd, json: Boolean(opts.json), project: effectiveProject, printCmd: opts.printCmd === true, publishDir, noBuild: opts.noBuild === true })
+        // NDJSON parity: emit a logs event if available
+        if (process.env.OPD_NDJSON === '1' && adminUrl) {
+          logger.json({ action: 'start', provider, target: envTarget, event: 'logs', logsUrl: `${adminUrl}/deploys` })
+        }
+        if (opts.json === true) {
+          const summary = { ok: true, action: 'start' as const, provider, target: envTarget, mode: 'deploy' as const, projectId: effectiveProject, siteId: effectiveProject, siteName, url, logsUrl: adminUrl ? `${adminUrl}/deploys` : undefined, ciChecklist: { buildCommand, publishDir, envFile: ciEnvFile, exampleKeys: envKeysExample }, cwd: targetCwd, final: true }
+          logger.jsonPrint(summary)
+          outro('Deployed')
+          return
+        }
+        if (url) logger.success(`${envTarget === 'prod' ? 'Production' : 'Preview'}: ${url}`)
+        outro('Deployment complete')
+        return
+      }
+      // NDJSON parity: emit a logs event if available
+      if (process.env.OPD_NDJSON === '1' && adminUrl) {
+        logger.json({ action: 'start', provider, target: envTarget, event: 'logs', logsUrl: `${adminUrl}/deploys` })
+      }
       if (opts.json === true) {
         const summary = {
           ok: true,
@@ -544,6 +587,8 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
           publishDir,
           recommend: { previewCmd, prodCmd },
           ciChecklist: { buildCommand, publishDir, envFile: ciEnvFile, exampleKeys: envKeysExample },
+          logsUrl: adminUrl ? `${adminUrl}/deploys` : undefined,
+          cwd: targetCwd,
           final: true
         }
         logger.jsonPrint(summary)
@@ -571,7 +616,7 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
     } catch { /* ignore if exists */ }
 
     // Vercel deploy path (unchanged)
-    const { url, logsUrl } = await runDeploy({ provider: provider!, env: envTarget, cwd: targetCwd, json: Boolean(opts.json), project: effectiveProject, org: opts.org ?? saved.org, printCmd: opts.printCmd === true })
+    const { url, logsUrl, alias } = await runDeploy({ provider: provider!, env: envTarget, cwd: targetCwd, json: Boolean(opts.json), project: effectiveProject, org: opts.org ?? saved.org, printCmd: opts.printCmd === true, alias: opts.alias })
     const cmd = buildNonInteractiveCmd({ provider: provider!, envTarget, path: targetPath, project: effectiveProject, org: opts.org ?? saved.org, syncEnv: doSync })
     // Build a small CI checklist for Vercel as well
     const buildCommand: string = detection.buildCommand
@@ -586,7 +631,7 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
       }
     } catch { /* ignore */ }
     if (opts.json === true) {
-      logger.json({ ok: true, action: 'start', provider, target: envTarget, mode: 'deploy', url, logsUrl, cmd, ciChecklist: { buildCommand, envFile: ciEnvFile, exampleKeys: envKeysExample }, final: true })
+      logger.json({ ok: true, action: 'start', provider, target: envTarget, mode: 'deploy', url, logsUrl, alias, cmd, ciChecklist: { buildCommand, envFile: ciEnvFile, exampleKeys: envKeysExample }, cwd: targetCwd, final: true })
       outro('Done');
       return
     }
@@ -686,6 +731,9 @@ export function registerStartCommand(program: Command): void {
     .option('--ci', 'CI mode (non-interactive)')
     .option('--dry-run', 'Plan only; skip deploy')
     .option('--no-save-defaults', 'Do not prompt to save defaults')
+    .option('--deploy', 'Execute a real deploy inside the wizard (Netlify optional; Vercel default path)')
+    .option('--no-build', 'Netlify only: deploy prebuilt artifacts from publishDir without building')
+    .option('--alias <domain>', 'Vercel only: set an alias (domain) after deploy')
     .action(async (opts: StartOptions): Promise<void> => {
       try { await runStartWizard(opts) } catch (err) {
         const message: string = err instanceof Error ? err.message : String(err)
