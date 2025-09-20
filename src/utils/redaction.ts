@@ -25,6 +25,9 @@ function valueToPatterns(val: string): RegExp[] {
   const patterns: RegExp[] = []
   if (typeof val !== 'string') return patterns
   if (val.length < 4) return patterns
+  // Avoid trivial literals that commonly appear in logs/JSON and are not secrets
+  const trivial = new Set(['true', 'false', 'null', 'undefined', 'on', 'off', 'yes', 'no'])
+  if (trivial.has(val.toLowerCase())) return patterns
   // Exact literal redaction
   patterns.push(new RegExp(escapeRegExp(val), 'g'))
   // Base64 form (best-effort)
@@ -50,7 +53,8 @@ export async function computeRedactors(args: { cwd: string; envFiles?: readonly 
       const content = await readFile(p, 'utf8')
       const kv = parseDotenv(content)
       for (const [k, v] of Object.entries(kv)) {
-        if (!k || k.startsWith('PUBLIC_')) continue
+        if (!k) continue
+        if (k.startsWith('PUBLIC_') || k.startsWith('NEXT_PUBLIC_')) continue
         for (const re of valueToPatterns(v)) patterns.push(re)
       }
     } catch { /* ignore */ }
@@ -83,7 +87,8 @@ export async function computeRedactors(args: { cwd: string; envFiles?: readonly 
   } catch { /* ignore malformed config */ }
   if (args.includeProcessEnv === true) {
     for (const [k, v] of Object.entries(process.env)) {
-      if (!k || k.startsWith('PUBLIC_')) continue
+      if (!k) continue
+      if (k.startsWith('PUBLIC_') || k.startsWith('NEXT_PUBLIC_')) continue
       if (typeof v === 'string' && v.length >= 4) {
         for (const re of valueToPatterns(v)) patterns.push(re)
       }
