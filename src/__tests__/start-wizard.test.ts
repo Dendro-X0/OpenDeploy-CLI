@@ -28,9 +28,16 @@ vi.mock('../utils/process', async (orig) => {
         if (args.cmd.startsWith('netlify link')) return failNetlifyLink ? { ok: false, exitCode: 1, stdout: '', stderr: 'link failed' } : { ok: true, exitCode: 0, stdout: 'linked', stderr: '' }
         return { ok: true, exitCode: 0, stdout: '', stderr: '' }
       }),
-      spawnStream: vi.fn((args: { cmd: string }) => {
-        if (args.cmd.includes('vercel deploy') && failDeploy) {
-          return { done: Promise.resolve({ ok: false, exitCode: 1 }) }
+      spawnStream: vi.fn((args: any) => {
+        if (typeof args?.cmd === 'string' && args.cmd.includes('vercel deploy')) {
+          // Simulate an Inspect line on stderr so wizard can capture logsUrl
+          if (typeof args.onStderr === 'function') {
+            args.onStderr('Inspect: https://vercel.com/acme/app/inspections/deploy_123')
+          }
+          if (failDeploy) {
+            return { done: Promise.resolve({ ok: false, exitCode: 1 }) }
+          }
+          return { done: Promise.resolve({ ok: true, exitCode: 0 }) }
         }
         return { done: Promise.resolve({ ok: true, exitCode: 0 }) }
       })
@@ -228,6 +235,23 @@ describe('start wizard', () => {
     expect(evt).toHaveProperty('event', 'logs')
     expect(evt).toHaveProperty('logsUrl')
     expect(String(evt.logsUrl)).toContain('app.netlify.com')
+  })
+
+  it('emits NDJSON logs event for Vercel (deploy)', async () => {
+    const prev = process.env.OPD_NDJSON
+    process.env.OPD_NDJSON = '1'
+    try {
+      await runStartWizard({ framework: 'next', provider: 'vercel', env: 'preview', ci: true, syncEnv: false })
+    } finally {
+      if (prev === undefined) delete process.env.OPD_NDJSON; else process.env.OPD_NDJSON = prev
+    }
+    const logsEventLine = [...logs].reverse().find((l) => {
+      try { const o = JSON.parse(l); return o && o.action === 'start' && o.event === 'logs' && typeof o.logsUrl === 'string' } catch { return false }
+    }) ?? '{}'
+    const evt = JSON.parse(logsEventLine)
+    expect(evt).toHaveProperty('event', 'logs')
+    expect(evt).toHaveProperty('logsUrl')
+    expect(String(evt.logsUrl)).toContain('vercel.com')
   })
 })
 
