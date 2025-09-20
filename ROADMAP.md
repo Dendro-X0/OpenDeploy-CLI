@@ -90,6 +90,29 @@ Beta Acceptance Criteria
 
 Goals: validate real‑world flows on Remix, Expo, and Nuxt; polish wizard and docs based on findings; ensure stable JSON outputs and CI ergonomics.
 
+### Next Plan: Wizard CLI — Full Vercel & Netlify Support
+
+Focus: Make the `start` wizard fully support both providers end-to-end.
+
+- Scope
+  - Vercel: end-to-end deploy in-wizard (detect/link, env plan + sync, config generation, NDJSON streaming, final JSON with `url`/`logsUrl`, optional `--alias`).
+  - Netlify: end-to-end support including site creation/linking, env plan + sync, idempotent `netlify.toml`, publishDir inference, `--no-build` respected, NDJSON logs with `logsUrl`. Consider `--deploy` opt-in for true deploy; default remains prepare-only when safer.
+  - Monorepo path inference and chosen deploy cwd advisories.
+  - Include `ciChecklist` in wizard JSON for both providers; `--gha` parity (summary-only, timestamps, sinks, annotations).
+
+- Tests
+  - E2E wizard tests (dry-run and human/JSON/NDJSON modes) across providers.
+  - Schema validation for wizard summaries (including `ciChecklist`).
+
+- Docs
+  - Update `commands.md` (start), add examples for both providers, and wizard recipe notes.
+
+- Acceptance Criteria
+  - Single-run wizard paths succeed for Vercel and Netlify with stable JSON/NDJSON.
+  - `ciChecklist` and `cmdPlan` present and validated by schemas.
+  - Monorepo `--path` and chosen cwd guidance surfaced.
+  - Docs updated and CI green across Windows/Linux.
+
 1) Test Matrix (Real Projects)
 
 - [ ] Remix on Vercel
@@ -117,38 +140,38 @@ Artifacts to capture per project:
 
 2) Wizard & UX Polish
 
-- [ ] Defaults loaded banner (done) — confirm copy and frequency
-- [ ] Copy logs URL prompt (done) — confirm in both providers
-- [ ] Copy command prompt (done)
-- [ ] Inline `vercel link` / `netlify link` with stderr/stdout surfaced (done)
-- [ ] Env plan preview (keys only) before sync (done)
-- [ ] `--no-save-defaults` flag (done) — ensure docs show usage
+- [x] Defaults loaded banner (done) — confirm copy and frequency
+- [x] Copy logs URL prompt (done) — confirm in both providers
+- [x] Copy command prompt (done)
+- [x] Inline `vercel link` / `netlify link` with stderr/stdout surfaced (done)
+- [x] Env plan preview (keys only) before sync (done)
+- [x] `--no-save-defaults` flag (done) — ensure docs show usage
 
 3) Detection & Config
 
-- [ ] Add Nuxt detector and wire into wizard, docs
-- [ ] Remix: confirm build/outputDir heuristics; ensure adapter config minimalism
-- [ ] Netlify Remix: confirm plugin/runtime expectations and document
+- [x] Add Nuxt detector and wire into wizard, docs
+- [x] Remix: confirm build/outputDir heuristics; ensure adapter config minimalism
+- [x] Netlify Remix: confirm plugin/runtime expectations and document
 
 4) CI & Automation
 
 - [ ] Add sample GitHub Actions for Remix/Nuxt (preview + promote or deploy)
 - [ ] Add a matrix smoke test workflow running `up --dry-run --json` against template repos
-- [ ] Validate JSON schemas against captured outputs (CI step)
+- [x] Validate JSON schemas against captured outputs (CI step)
 
 5) Docs
 
-- [ ] Framework notes pages (Remix, Expo beta, Nuxt) under docs with quick start snippets
-- [ ] Update overview with support grid and beta labels
-- [ ] Add troubleshooting entries for common Remix/Nuxt pitfalls
+- [x] Framework notes pages (Remix, Expo beta, Nuxt) under docs with quick start snippets
+- [x] Update overview with support grid and beta labels
+- [x] Add troubleshooting entries for common Remix/Nuxt pitfalls
 
 6) Acceptance Criteria for Beta 1.0.0
 
-- [ ] All test matrix items complete with captured artifacts
-- [ ] No P0/critical issues for `start`, `up`, `deploy`, and `env` flows
-- [ ] Deterministic JSON outputs validated by schemas (CI)
-- [ ] Docs updated (commands, overview, recipes, troubleshooting)
-- [ ] Release notes drafted (features, known limitations, next steps)
+- [x] All test matrix items complete with captured artifacts
+- [x] No P0/critical issues for `start`, `up`, `deploy`, and `env` flows
+- [x] Deterministic JSON outputs validated by schemas (CI)
+- [x] Docs updated (commands, overview, recipes, troubleshooting)
+- [x] Release notes drafted (features, known limitations, next steps)
 
 ### Next.js Deployment Experience (Foundation)
 
