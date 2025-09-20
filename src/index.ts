@@ -129,9 +129,11 @@ function main(): void {
     process.env.OPD_COLOR = 'auto'
   }
   // Initialize redaction patterns from local env files and process.env (best-effort, non-blocking)
-  void computeRedactors({ cwd: process.cwd(), envFiles: ['.env', '.env.local', '.env.production.local'], includeProcessEnv: true })
-    .then((patterns) => { if (Array.isArray(patterns) && patterns.length > 0) logger.setRedactors(patterns) })
-    .catch(() => { /* ignore redactor init errors */ })
+  if (process.env.OPD_NO_REDACT !== '1') {
+    void computeRedactors({ cwd: process.cwd(), envFiles: ['.env', '.env.local', '.env.production.local'], includeProcessEnv: true })
+      .then((patterns) => { if (Array.isArray(patterns) && patterns.length > 0) logger.setRedactors(patterns) })
+      .catch(() => { /* ignore redactor init errors */ })
+  }
   registerDetectCommand(program)
   registerDoctorCommand(program)
   registerGenerateCommand(program)

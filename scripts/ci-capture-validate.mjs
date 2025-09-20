@@ -8,7 +8,7 @@ const artifacts = join(root, '.artifacts')
 await mkdir(artifacts, { recursive: true })
 
 function run(cmd, args, label) {
-  const res = spawnSync(cmd, args, { stdio: 'inherit', shell: false })
+  const res = spawnSync(cmd, args, { stdio: 'inherit', shell: false, env: { ...process.env, OPD_NO_REDACT: '1' } })
   const code = res.status ?? 1
   if (code !== 0) {
     console.error(`[ci:capture] ${label} failed with exit ${code}`)
