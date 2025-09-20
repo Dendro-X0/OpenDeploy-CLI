@@ -52,11 +52,81 @@ vi.mock('@clack/prompts', () => ({
   note: () => {}
 }))
 
+// Mock fsx.exists to force Netlify link path by pretending `.netlify/state.json` is absent
+vi.mock('../utils/fs', async (orig) => {
+  const real = await orig<any>()
+  return {
+    ...real,
+    fsx: {
+      ...(real.fsx ?? {}),
+      exists: vi.fn(async (p: string) => {
+        try { if (String(p).endsWith('.netlify/state.json')) return false } catch {}
+        return false
+      }),
+      readJson: vi.fn(async () => { throw new Error('not found') })
+    }
+  }
+})
+
+// Mock next detector to avoid touching real filesystem
+vi.mock('../core/detectors/next', () => ({
+  detectNextApp: async () => ({
+    framework: 'next',
+    renderMode: 'ssr',
+    rootDir: '.',
+    appDir: '.',
+    hasAppRouter: false,
+    packageManager: 'pnpm',
+    monorepo: 'none',
+    buildCommand: 'echo build',
+    outputDir: '.next',
+    publishDir: '.next',
+    confidence: 0.95,
+    environmentFiles: []
+  })
+}))
+
+// Hoisted flags to control adapter auth behavior
+const { mockFailVercelAuth, mockFailNetlifyAuth } = vi.hoisted(() => ({
+  mockFailVercelAuth: { value: false },
+  mockFailNetlifyAuth: { value: false }
+}))
+
+// Mock provider adapters; validateAuth throws when flags set
+vi.mock('../providers/vercel/adapter', () => ({
+  VercelAdapter: class {
+    async validateAuth() { if (mockFailVercelAuth.value) throw new Error('not logged in') }
+    async generateConfig() { return }
+    async open() { return }
+  }
+}))
+vi.mock('../providers/netlify/adapter', () => ({
+  NetlifyAdapter: class {
+    async validateAuth() { if (mockFailNetlifyAuth.value) throw new Error('not logged in') }
+    async generateConfig() { return }
+    async open() { return }
+  }
+}))
+
 import { runStartWizard } from '../commands/start'
 import { registerUpCommand } from '../commands/up'
 
-beforeEach(() => { logs.length = 0; vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => { logs.push(String(args[0] ?? '')); return undefined as any }) })
+beforeEach(() => { logs.length = 0; mockFailVercelAuth.value = false; mockFailNetlifyAuth.value = false; vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => { logs.push(String(args[0] ?? '')); return undefined as any }) })
 afterEach(() => { (console.log as any) = origLog })
+
+function getLastStartJson(): any {
+  // Scan from the end for the last start summary
+  for (let i = logs.length - 1; i >= 0; i--) {
+    const l = logs[i]
+    try { const obj = JSON.parse(l); if (obj && obj.action === 'start' && obj.final === true) return obj } catch {}
+  }
+  // Fallback: any final JSON
+  for (let i = logs.length - 1; i >= 0; i--) {
+    const l = logs[i]
+    try { const obj = JSON.parse(l); if (obj && obj.final === true) return obj } catch {}
+  }
+  return {}
+}
 
 describe('start wizard', () => {
   it('emits deterministic dry-run JSON summary (preview, vercel)', async () => {
@@ -67,11 +137,8 @@ describe('start wizard', () => {
   })
 
   it('performs one-click login when provider not logged in (netlify)', async () => {
-    // Make select return framework then provider
-    selectMock.mockResolvedValueOnce({ value: 'next' }).mockResolvedValueOnce({ value: 'netlify' })
-    await runStartWizard({ env: 'preview', dryRun: true, json: true })
-    const line = logs.find((l) => l.includes('"final": true')) ?? '{}'
-    const obj = JSON.parse(line)
+    await runStartWizard({ framework: 'next', provider: 'netlify', env: 'preview', dryRun: true, json: true })
+    const obj = getLastStartJson()
     expect(obj).toHaveProperty('final', true)
     expect([ 'netlify', 'vercel' ]).toContain(obj.provider)
   })
@@ -82,33 +149,55 @@ describe('start wizard', () => {
       await runStartWizard({ framework: 'next', provider: 'vercel', env: 'preview', json: true, ci: true, syncEnv: false })
     } catch { /* wizard sets exitCode; swallow */ }
     failDeploy = false
-    const line = logs.find((l) => l.includes('"final": true')) ?? '{}'
-    const obj = JSON.parse(line)
+    const obj = getLastStartJson()
     expect(obj).toMatchObject({ ok: false, final: true })
   })
 
-  it('emits ok:false JSON summary when vercel auth fails (whoami+login)', async () => {
-    failVercelWhoami = true
+  it('emits ok:false JSON summary when vercel auth fails (validateAuth+login)', async () => {
+    mockFailVercelAuth.value = true
     failVercelLogin = true
     try {
       await runStartWizard({ framework: 'next', provider: 'vercel', env: 'preview', json: true })
     } catch { /* swallow */ }
-    failVercelWhoami = false
+    mockFailVercelAuth.value = false
     failVercelLogin = false
+    const obj = getLastStartJson()
+    expect(obj).toMatchObject({ ok: false, final: true })
+  })
+
+  it('emits ok:false JSON summary when netlify login fails', async () => {
+    mockFailNetlifyAuth.value = true
+    failNetlifyLogin = true
+    try {
+      await runStartWizard({ provider: 'netlify', env: 'preview', json: true })
+    } catch { /* swallow */ }
+    mockFailNetlifyAuth.value = false
+    failNetlifyLogin = false
     const line = logs.find((l) => l.includes('"final": true')) ?? '{}'
     const obj = JSON.parse(line)
     expect(obj).toMatchObject({ ok: false, final: true })
   })
 
-  it('emits ok:false JSON summary when netlify login fails', async () => {
-    failNetlifyLogin = true
-    try {
-      await runStartWizard({ provider: 'netlify', env: 'preview', json: true })
-    } catch { /* swallow */ }
-    failNetlifyLogin = false
-    const line = logs.find((l) => l.includes('"final": true')) ?? '{}'
-    const obj = JSON.parse(line)
-    expect(obj).toMatchObject({ ok: false, final: true })
+  it('netlify JSON summary includes ciChecklist and recommend (prepare-only)', async () => {
+    await runStartWizard({ framework: 'next', provider: 'netlify', project: 'site_123', env: 'preview', json: true, ci: true, syncEnv: false })
+    const obj = getLastStartJson()
+    expect(obj).toHaveProperty('provider', 'netlify')
+    expect(obj).toHaveProperty('mode', 'prepare-only')
+    expect(obj).toHaveProperty('ciChecklist')
+    expect(obj.ciChecklist).toHaveProperty('buildCommand')
+    // publishDir is present for Netlify
+    expect(obj.ciChecklist).toHaveProperty('publishDir')
+    // recommend commands present
+    expect(obj).toHaveProperty('recommend')
+  })
+
+  it('vercel JSON summary includes ciChecklist (deploy mode)', async () => {
+    await runStartWizard({ framework: 'next', provider: 'vercel', env: 'preview', json: true, ci: true, syncEnv: false })
+    const obj = getLastStartJson()
+    expect(obj).toHaveProperty('provider', 'vercel')
+    expect(obj).toHaveProperty('mode', 'deploy')
+    expect(obj).toHaveProperty('ciChecklist')
+    expect(obj.ciChecklist).toHaveProperty('buildCommand')
   })
 })
 

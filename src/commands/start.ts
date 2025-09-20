@@ -326,7 +326,7 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
     if (opts.dryRun === true) {
       const provEarly: Provider = (opts.provider as Provider) ?? (saved.provider as Provider) ?? 'vercel'
       const cmdEarly = buildNonInteractiveCmd({ provider: provEarly, envTarget: envTargetEarly, path: opts.path, project: opts.project, org: opts.org, syncEnv: Boolean(opts.syncEnv) })
-      const summaryEarly = { ok: true, provider: provEarly, target: envTargetEarly, mode: 'dry-run', cmd: cmdEarly, final: true }
+      const summaryEarly = { ok: true, action: 'start' as const, provider: provEarly, target: envTargetEarly, mode: 'dry-run', cmd: cmdEarly, final: true }
       logger.json(summaryEarly)
       // eslint-disable-next-line no-console
       console.log(JSON.stringify(summaryEarly))
@@ -654,7 +654,7 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
     outro('Deployment complete')
   } catch (err) {
     const message: string = err instanceof Error ? err.message : String(err)
-    if (opts.json === true) logger.json({ ok: false, message, final: true })
+    if (opts.json === true) logger.json({ ok: false, action: 'start' as const, message, final: true })
     process.exitCode = 1
     return
   }
