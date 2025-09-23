@@ -1,4 +1,4 @@
-# OpenDeploy CLI
+# OpenDeploy CLI (opd)
 
 [![CI](https://github.com/Dendro-X0/OpenDeploy-CLI/actions/workflows/ci.yml/badge.svg)](https://github.com/Dendro-X0/OpenDeploy-CLI/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -6,49 +6,40 @@
 
 ## Introduction
 
-OpenDeploy is a Next.js‑first, cross‑provider deployment CLI for Vercel and Netlify. It detects your stack, validates env, manages secrets, seeds databases, and deploys with readable logs and CI‑friendly JSON/NDJSON output. Supports Astro and SvelteKit; Remix is in beta; Nuxt config generation is included.
+> Important: This project is undergoing a major architecture refactor and is currently reference‑only. The legacy design is no longer supported. A new, extensible provider system will land in the next version, enabling first‑class multi‑provider support.
+
+OpenDeploy is a web‑focused, cross‑provider deployment CLI. It detects your stack, validates env, and deploys with readable logs and CI‑friendly JSON/NDJSON. The short command is `opd` (preferred via GitHub Releases). Compatibility aliases `opendeploy` and `opendeploy-cli` are available.
 
 ## Features
 
-- Stack detection (Next.js, router, package manager, monorepo)
-- Environment management: sync, pull, diff, validate (`--dry-run`, `--json`, `--ci`)
-- Secure secret handling with redaction across human logs, JSON/NDJSON, and file sinks
-- Providers: Vercel and Netlify (deploy streaming, Inspect/logsUrl capture)
-- Single‑command deploy: `opendeploy up <provider>` (auto env sync + deploy)
-- Guided setup: `opendeploy init` (choose providers, generate configs, set env policy)
+- Stack detection (framework, router, package manager, monorepo)
+- Environment management: sync, pull, diff, validate (strict flags, dry‑run, JSON/NDJSON)
+- Deploy streaming with Inspect/logsUrl capture (Vercel, Netlify)
+- Monorepo‑aware flows and doctor checks
+- CI ergonomics: deterministic summaries, sinks, timestamps, annotations
 
 ## Quick Start
 
 ```bash
-# Install dependencies
-pnpm install
+# Linux/macOS — install from GitHub Releases (recommended)
+curl -fsSL https://raw.githubusercontent.com/Dendro-X0/OpenDeploy-CLI/main/OpenDeploy%20CLI/scripts/install/install.sh | bash
+opd start
 
-# Build the CLI
-pnpm build
+# Windows PowerShell — install from GitHub Releases
+iwr https://raw.githubusercontent.com/Dendro-X0/OpenDeploy-CLI/main/OpenDeploy%20CLI/scripts/install/install.ps1 -UseBasicParsing | iex
+opd start
 
-# Guided start (detect framework/provider, optional env sync)
-node dist/index.js start --provider vercel --env preview --json
-
-# Netlify prepare-only (prints recommended commands; add --deploy to execute)
-node dist/index.js start --provider netlify --env preview --project <SITE_ID> --json
-
-# Single‑command deploy (env sync + deploy)
-node dist/index.js up vercel --env preview
-# Netlify: use `up`, the commands printed by `start`, or run inside the wizard with --deploy:
-node dist/index.js up netlify --env prod --project <SITE_ID>
+# Package manager alternatives (no registry account required)
+# npm:    npx opendeploy-cli start
+# pnpm:   pnpm dlx opendeploy-cli start
+# yarn:   yarn dlx opendeploy-cli start
+# bun:    bunx opendeploy-cli start
 ```
 
 ## Documentation
 
-Primary Docs (site):
-- OpenDeploy CLI Docs: https://dendro-x0.github.io/opendeploy-cli-docs-site/
-
-Repo Docs (reference):
-- Overview: [docs/overview.md](docs/overview.md)
-- Commands: [docs/commands.md](docs/commands.md)
-- Response Shapes (CI): [docs/response-shapes.md](docs/response-shapes.md)
-- Recipes: [docs/recipes.md](docs/recipes.md)
-- Troubleshooting: [docs/troubleshooting.md](docs/troubleshooting.md)
+- Docs site: https://dendro-x0.github.io/opendeploy-cli-docs-site/
+- Provider architecture (WIP): `docs/architecture/provider-system.md`
 
 ## License
 
