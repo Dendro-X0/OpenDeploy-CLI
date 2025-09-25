@@ -1,6 +1,6 @@
 # Getting Started
 
-OpenDeploy CLI helps you detect your stack, manage environment variables, and deploy to Vercel and Netlify with CI-friendly output.
+OpenDeploy CLI helps you detect your stack, manage environment variables, and deploy to Vercel and Netlify with CI-friendly output. The CLI uses provider plugins (Vercel, Netlify, Cloudflare Pages, GitHub Pages) for provider-specific behavior.
 
 ## Prerequisites
 
@@ -17,16 +17,16 @@ pnpm install
 pnpm build
 ```
 
-The CLI entrypoint is `dist/index.js`.
+Prefer the `opd` command when available (installed from Releases). For local development, the CLI entrypoint is `dist/index.js`.
 
 ## First Run
 
 ```bash
 # Guided setup: choose provider(s), generate minimal configs, and set env policy
-node dist/index.js init
+opd init
 
 # Or jump straight into the wizard
-node dist/index.js start
+opd start
 ```
 
 Notes:
@@ -40,16 +40,16 @@ Preview deploy with environment sync and structured output:
 
 ```bash
 # Vercel preview
-node dist/index.js up vercel --env preview
+opd up vercel --env preview
 
 # Netlify production (requires linked site or --project <SITE_ID>)
-node dist/index.js up netlify --env prod --project <SITE_ID>
+opd up netlify --env prod --project <SITE_ID>
 ```
 
 Stream progress as NDJSON (great for CI/log pipelines):
 
 ```bash
-node dist/index.js up vercel --env preview --ndjson --timestamps \
+opd up vercel --env preview --ndjson --timestamps \
   --ndjson-file ./.artifacts/up.ndjson
 ```
 
@@ -57,17 +57,17 @@ node dist/index.js up vercel --env preview --ndjson --timestamps \
 
 ```bash
 # Vercel: promote a specific preview to your production alias
-node dist/index.js promote vercel --alias your-domain.com \
+opd promote vercel --alias your-domain.com \
   --from https://your-preview.vercel.app
 
 # Netlify: restore a specific production deploy (skips rebuild)
-node dist/index.js promote netlify --project <SITE_ID> --from <DEPLOY_ID>
+opd promote netlify --project <SITE_ID> --from <DEPLOY_ID>
 
 # Vercel: rollback production alias to a previous successful prod URL (or SHA)
-node dist/index.js rollback vercel --alias your-domain.com --to <url|sha>
+opd rollback vercel --alias your-domain.com --to <url|sha>
 
 # Netlify: suggest or request a restore to a previous prod deploy
-node dist/index.js rollback netlify --project <SITE_ID>
+opd rollback netlify --project <SITE_ID>
 ```
 
 ## CI Quick Start
@@ -75,7 +75,7 @@ node dist/index.js rollback netlify --project <SITE_ID>
 Use the `--gha` preset for GitHub Actions:
 
 ```bash
-node dist/index.js --gha up vercel --env preview
+opd --gha up vercel --env preview
 ```
 
 `--gha` implies `--json --summary-only --timestamps`, sets default file sinks under `./.artifacts/`, and enables GitHub annotations where applicable.

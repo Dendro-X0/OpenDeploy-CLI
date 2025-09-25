@@ -129,3 +129,7 @@ Fine‑tune provider subprocess calls:
 - Commands reference: `docs/commands.md`
 - Troubleshooting (error codes and remedies): `docs/troubleshooting.md`
 - CI and usage recipes: `docs/recipes.md`
+
+## For Contributors
+
+- Migration from adapters/shims to provider plugins: `docs/migration-notes.md`

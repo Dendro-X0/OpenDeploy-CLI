@@ -1,0 +1,132 @@
+name: OpenDeploy Smoke E2E
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 8 * * 1' # Weekly (Mon 08:00 UTC)
+
+jobs:
+  next-vercel-dryrun:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+      - name: Enable corepack & install
+        run: |
+          corepack enable && corepack prepare pnpm@10.13.1 --activate
+          pnpm install --frozen-lockfile
+        working-directory: OpenDeploy CLI
+      - name: Build CLI
+        run: pnpm build
+        working-directory: OpenDeploy CLI
+      - name: Scaffold Next.js app
+        run: |
+          npx create-next-app@latest smoke-next --ts --eslint --src-dir --app --tailwind --use-pnpm --no-git --import-alias @/*
+          cd smoke-next
+          pnpm build
+      - name: Wizard dry-run (vercel)
+        run: |
+          node "OpenDeploy CLI/dist/index.js" start --provider vercel --env preview --json --dry-run --summary-only
+      - name: Up dry-run (vercel)
+        run: |
+          node "OpenDeploy CLI/dist/index.js" up vercel --env preview --json --summary-only --dry-run
+
+  astro-netlify-dryrun:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+      - name: Enable corepack & install
+        run: |
+          corepack enable && corepack prepare pnpm@10.13.1 --activate
+          pnpm install --frozen-lockfile
+        working-directory: OpenDeploy CLI
+      - name: Build CLI
+        run: pnpm build
+        working-directory: OpenDeploy CLI
+      - name: Scaffold Astro app
+        run: |
+          npm create astro@latest -- --template basics --skip-install --git false --yes
+          cd basics
+          pnpm install
+          pnpm build
+      - name: Generate netlify config (idempotent)
+        run: |
+          node "OpenDeploy CLI/dist/index.js" generate netlify --json --summary-only
+      - name: Wizard dry-run (netlify)
+        run: |
+          node "OpenDeploy CLI/dist/index.js" start --provider netlify --env preview --json --dry-run --summary-only
+      - name: Up dry-run (netlify)
+        run: |
+          node "OpenDeploy CLI/dist/index.js" up netlify --env preview --json --summary-only --dry-run
+
+  vercel-preview-optional:
+    if: ${{ secrets.VERCEL_TOKEN && secrets.VERCEL_PROJECT_ID && secrets.VERCEL_ORG_ID }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+      - name: Enable corepack & install
+        run: |
+          corepack enable && corepack prepare pnpm@10.13.1 --activate
+          pnpm install --frozen-lockfile
+        working-directory: OpenDeploy CLI
+      - name: Build CLI
+        run: pnpm build
+        working-directory: OpenDeploy CLI
+      - name: Scaffold Next.js app
+        run: |
+          npx create-next-app@latest smoke-next --ts --eslint --src-dir --app --tailwind --use-pnpm --no-git --import-alias @/*
+          cd smoke-next
+          pnpm build
+      - name: Up vercel preview
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          node "OpenDeploy CLI/dist/index.js" up vercel \
+            --env preview \
+            --project-id "${{ secrets.VERCEL_PROJECT_ID }}" \
+            --org-id "${{ secrets.VERCEL_ORG_ID }}" \
+            --json --summary-only
+
+  netlify-preview-optional:
+    if: ${{ secrets.NETLIFY_AUTH_TOKEN && secrets.NETLIFY_SITE_ID }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+      - name: Enable corepack & install
+        run: |
+          corepack enable && corepack prepare pnpm@10.13.1 --activate
+          pnpm install --frozen-lockfile
+        working-directory: OpenDeploy CLI
+      - name: Build CLI
+        run: pnpm build
+        working-directory: OpenDeploy CLI
+      - name: Scaffold Astro app
+        run: |
+          npm create astro@latest -- --template basics --skip-install --git false --yes
+          cd basics
+          pnpm install
+          pnpm build
+      - name: Up netlify preview (no-build)
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+        run: |
+          node "OpenDeploy CLI/dist/index.js" up netlify \
+            --env preview \
+            --project "${{ secrets.NETLIFY_SITE_ID }}" \
+            --no-build \
+            --json --summary-only
