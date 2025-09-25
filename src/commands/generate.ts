@@ -3,8 +3,7 @@ import { stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { logger, isJsonMode } from '../utils/logger'
 import { detectApp } from '../core/detectors/auto'
-import { VercelAdapter } from '../providers/vercel/adapter'
-import { NetlifyAdapter } from '../providers/netlify/adapter'
+import { loadProvider } from '../core/provider-system/provider'
 
 interface GenerateOptions { readonly overwrite?: boolean; readonly json?: boolean }
 
@@ -25,8 +24,8 @@ export function registerGenerateCommand(program: Command): void {
         if (jsonMode) logger.setJsonOnly(true)
         const detection = await detectApp({ cwd })
         if (provider === 'vercel') {
-          const adapter = new VercelAdapter()
-          const writtenPath: string = await adapter.generateConfig({ detection, overwrite: opts.overwrite === true })
+          const plugin = await loadProvider('vercel')
+          const writtenPath: string = await plugin.generateConfig({ detection, cwd, overwrite: opts.overwrite === true })
           if (jsonMode) {
             const summary = { ok: true, action: 'generate' as const, provider: 'vercel' as const, path: writtenPath, final: true }
             logger.jsonPrint(summary)
@@ -36,8 +35,8 @@ export function registerGenerateCommand(program: Command): void {
           return
         }
         if (provider === 'netlify') {
-          const adapter = new NetlifyAdapter()
-          const writtenPath: string = await adapter.generateConfig({ detection, overwrite: opts.overwrite === true })
+          const plugin = await loadProvider('netlify')
+          const writtenPath: string = await plugin.generateConfig({ detection, cwd, overwrite: opts.overwrite === true })
           if (jsonMode) {
             const summary = { ok: true, action: 'generate' as const, provider: 'netlify' as const, path: writtenPath, final: true }
             logger.jsonPrint(summary)

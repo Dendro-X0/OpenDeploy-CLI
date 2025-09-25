@@ -4,9 +4,17 @@ import { Command } from 'commander'
 // Capture spawn calls
 const calls: string[] = []
 
-// Avoid env sync side effects and adapter file writes
+// Avoid env sync side effects and provider file writes
 vi.mock('../commands/env', () => ({ envSync: vi.fn(async () => { /* no-op */ }) }))
-vi.mock('../providers/netlify/adapter', () => ({ NetlifyAdapter: class { async generateConfig() { /* no-op */ } } }))
+vi.mock('../core/provider-system/provider', () => ({
+  loadProvider: async (name: string) => ({
+    id: name,
+    async validateAuth() { /* no-op */ },
+    async generateConfig() { return 'noop' },
+    async open() { /* no-op */ },
+    getCapabilities: () => ({ name, supportsLocalBuild: true, supportsRemoteBuild: true, supportsStaticDeploy: true, supportsServerless: true, supportsEdgeFunctions: true, supportsSsr: true, hasProjectLinking: true, envContexts: ['preview','production'], supportsLogsFollow: true, supportsAliasDomains: true, supportsRollback: false })
+  })
+}))
 vi.mock('../core/detectors/auto', () => ({ detectApp: vi.fn(async () => ({ framework: 'next', publishDir: 'dist' })) }))
 
 vi.mock('../utils/process', async (orig) => {

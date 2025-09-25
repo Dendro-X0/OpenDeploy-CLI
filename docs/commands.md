@@ -4,7 +4,7 @@ Generate configuration files for the detected app (Vercel, Netlify) or a Turbore
 
 Usage:
 ```bash
-opendeploy generate <vercel|netlify|turbo> [--overwrite] [--json]
+opd generate <vercel|netlify|turbo> [--overwrite] [--json]
 ```
 
 Behavior:
@@ -28,13 +28,13 @@ Interactive setup to choose provider(s), generate provider config files, and set
 
 Usage:
 ```bash
-opendeploy init [--json]
+opd init [--json]
 ```
 
 Behavior:
 - Prompts to select Vercel and/or Netlify.
 - Generates `vercel.json`/`netlify.toml` (idempotent) via adapters.
-- Writes `opendeploy.config.json` with your env policy (auto‑sync on/off, filters).
+- Writes `opd.config.json` with your env policy (auto‑sync on/off, filters).
 
 Use these flags with any command to tailor output for CI or local use:
 
@@ -69,7 +69,7 @@ Generate shell completion scripts for bash, zsh, or PowerShell.
 
 Usage:
 ```bash
-opendeploy completion --shell <bash|zsh|pwsh>
+opd completion --shell <bash|zsh|pwsh>
 ```
 
 Install (user-local examples):
@@ -77,24 +77,24 @@ Install (user-local examples):
 - Bash (Linux/macOS):
 ```bash
 # macOS (Homebrew bash-completion):
-opendeploy completion --shell bash > $(brew --prefix)/etc/bash_completion.d/opendeploy
+opd completion --shell bash > $(brew --prefix)/etc/bash_completion.d/opd
 # Generic (user):
-opendeploy completion --shell bash > ~/.opendeploy-completion.bash
-echo 'source ~/.opendeploy-completion.bash' >> ~/.bashrc
+opd completion --shell bash > ~/.opd-completion.bash
+echo 'source ~/.opd-completion.bash' >> ~/.bashrc
 ```
 
 - Zsh:
 ```bash
-opendeploy completion --shell zsh > ~/.opendeploy-completion.zsh
+opd completion --shell zsh > ~/.opd-completion.zsh
 echo 'fpath=(~/.zfunc $fpath)' >> ~/.zshrc
 mkdir -p ~/.zfunc
-mv ~/.opendeploy-completion.zsh ~/.zfunc/_opendeploy
+mv ~/.opd-completion.zsh ~/.zfunc/_opd
 echo 'autoload -U compinit && compinit' >> ~/.zshrc
 ```
 
 - PowerShell (Windows/macOS/Linux):
 ```powershell
-opendeploy completion --shell pwsh | Out-File -FilePath $PROFILE -Append -Encoding utf8
+opd completion --shell pwsh | Out-File -FilePath $PROFILE -Append -Encoding utf8
 # Restart PowerShell
 ```
 
@@ -103,7 +103,7 @@ Guided wizard for selecting framework, provider, environment, optional env sync,
 
 Usage:
 ```bash
-opendeploy start [--framework <next|astro|sveltekit|remix|expo>] \
+opd start [--framework <next|astro|sveltekit|remix|expo>] \
   [--provider <vercel|netlify>] [--env <prod|preview>] \
   [--path <dir>] [--project <id>] [--org <id>] \
   [--sync-env] [--dry-run] [--json] [--ci] [--no-save-defaults] \
@@ -123,6 +123,41 @@ Behavior:
 - With `--json`, prints a final summary. For Netlify, `{ ok, provider, target, mode: 'prepare-only'|'deploy', projectId?, siteId?, siteName?, publishDir?, logsUrl?, recommend?, final: true }`.
 - With `--dry-run`, prints `{ ok: true, mode: 'dry-run', cmd, final: true }` and exits before syncing/deploying.
 
+### Troubleshooting and Logs
+
+Use these options to ensure reliable logs and summaries in both success and failure cases:
+
+- `--capture`
+  - Writes JSON and NDJSON outputs to `./.artifacts/` by default.
+  - In `--ci`, capture is enabled automatically if sinks are not already configured.
+- `--ndjson`
+  - Streams provider output and events as one-line JSON objects. Events include:
+  - `stdout` and `stderr`: provider output (truncated per-line to keep logs compact)
+  - `logs`: dashboard/inspect URL (`logsUrl`) as soon as it’s detected
+  - `done`: emitted at the end with `{ ok: true|false }`
+- `--summary-only`
+  - Suppresses intermediate JSON and prints only final summary objects (`{ final: true }`).
+- `--show-logs`
+  - Also echoes provider stdout/stderr lines during the run in human mode (non‑JSON).
+- `--timeout <seconds>`
+  - Aborts the provider subprocess after N seconds and emits a final summary (with a reason).
+  - Defaults to no timeout locally; in `--ci` the default is 900 seconds unless you override it.
+- Soft‑fail behavior in automation
+  - In `--ci` or `--json`, failures exit with code 0 by default so orchestrators don’t drop logs.
+  - A final JSON summary is still emitted with `ok: false` and `final: true`.
+  - Use `--soft-fail` locally to adopt the same behavior outside CI.
+- Failure summaries include helpful context
+  - `errorLogTail`: last lines of provider output to quickly surface root cause
+  - `logsUrl`: dashboard/inspect URL for the failing deploy
+  - `ciChecklist`: minimal checklist (e.g., `buildCommand`) to validate before re‑running
+
+Artifacts
+
+When `--capture` (or `--ci` with no sinks) is used, the wizard writes:
+
+- `.artifacts/opd-start-<timestamp>.json` — final JSON summaries
+- `.artifacts/opd-start-<timestamp>.ndjson` — streaming events (`stdout`, `stderr`, `logs`, `done`)
+
 NDJSON events:
 
 When `--ndjson` is active (or `OPD_NDJSON=1`), the wizard emits compact one-line JSON events before the final summary. A cross-provider logs event is emitted when a dashboard/inspect URL is available:
@@ -139,31 +174,31 @@ Examples:
 
 ```bash
 # Vercel preview deploy with alias
-opendeploy start --provider vercel --env preview --alias preview.example.com --json
+opd start --provider vercel --env preview --alias preview.example.com --json
 
 # Netlify prepare-only (print recommended commands)
-opendeploy start --provider netlify --env preview --project <SITE_ID> --json
+opd start --provider netlify --env preview --project <SITE_ID> --json
 
 # Netlify deploy without building (use prebuilt artifacts in publishDir)
-opendeploy start --provider netlify --env preview --project <SITE_ID> --deploy --no-build --json --print-cmd
+opd start --provider netlify --env preview --project <SITE_ID> --deploy --no-build --json --print-cmd
 
 # Monorepo: deploy from apps/web
-opendeploy start --provider vercel --path apps/web --env preview --json
+opd start --provider vercel --path apps/web --env preview --json
 ```
 
 Notes:
-- Use `--no-save-defaults` to suppress the prompt to persist your selections to `opendeploy.config.json` under `startDefaults`.
- - To clear saved defaults, delete `opendeploy.config.json` at the project root or remove the `startDefaults` property from it.
+- Use `--no-save-defaults` to suppress the prompt to persist your selections to `opd.config.json` under `startDefaults`.
+ - To clear saved defaults, delete `opd.config.json` at the project root or remove the `startDefaults` property from it.
 - Netlify support in `start` is intentionally limited to preparation for now. To deploy on Netlify, either:
   - Run the recommended commands the wizard prints (e.g., `netlify deploy --dir <publish_dir> --site <SITE_ID>`), or
-  - Use `opendeploy up netlify --env <preview|prod> --project <SITE_ID>`
+  - Use `opd up netlify --env <preview|prod> --project <SITE_ID>`
 
 ## detect
 Detect your app and its configuration (supports Next.js, Astro, SvelteKit, Remix, Nuxt; Expo when `OPD_EXPERIMENTAL=1`).
 
 Usage:
 ```bash
-opendeploy detect [--json]
+opd detect [--json]
 ```
 Output fields:
 - framework, rootDir, appDir, hasAppRouter
@@ -200,7 +235,7 @@ Promote a preview to production.
 Usage (Vercel):
 
 ```bash
-opendeploy promote vercel --alias <prod-domain> [--from <preview-url-or-sha>] [--print-cmd] [--json] [--dry-run]
+opd promote vercel --alias <prod-domain> [--from <preview-url-or-sha>] [--print-cmd] [--json] [--dry-run]
 ```
 
 Notes:
@@ -211,7 +246,7 @@ Notes:
 Usage (Netlify):
 
 ```bash
-opendeploy promote netlify --project <SITE_ID> [--from <deployId>] [--print-cmd] [--json] [--dry-run]
+opd promote netlify --project <SITE_ID> [--from <deployId>] [--print-cmd] [--json] [--dry-run]
 ```
 
 Notes:
@@ -230,7 +265,7 @@ Rollback to a previous production deployment (provider-specific strategies).
 Usage (Vercel):
 
 ```bash
-opendeploy rollback vercel --alias <prod-domain> [--to <url|sha>] [--print-cmd] [--json] [--dry-run]
+opd rollback vercel --alias <prod-domain> [--to <url|sha>] [--print-cmd] [--json] [--dry-run]
 ```
 
 Notes:
@@ -241,7 +276,7 @@ Notes:
 Usage (Netlify):
 
 ```bash
-opendeploy rollback netlify --project <SITE_ID> [--print-cmd] [--json] [--dry-run]
+opd rollback netlify --project <SITE_ID> [--print-cmd] [--json] [--dry-run]
 ```
 
 Notes:
@@ -276,7 +311,7 @@ Show what will happen for a deploy without executing anything. Useful for PR com
 Usage:
 
 ```bash
-opendeploy explain <vercel|netlify> [--env <prod|preview>] [--path <dir>] [--project <id>] [--org <id>] [--sync-env] [--json]
+opd explain <vercel|netlify> [--env <prod|preview>] [--path <dir>] [--project <id>] [--org <id>] [--sync-env] [--json]
 ```
 
 Behavior:
@@ -291,7 +326,7 @@ Orchestrate env operations and seeding across multiple projects with concurrency
 Usage:
 
 ```bash
-opendeploy run --projects <csv> | --all \
+opd run --projects <csv> | --all \
   --env <prod|preview> \
   [--diff-env] [--sync-env] \
   [--concurrency <n>] [--json]
@@ -299,7 +334,7 @@ opendeploy run --projects <csv> | --all \
 
 Notes:
 
-- Uses `opendeploy.config.json` to resolve project defaults and policies.
+- Uses `opd.config.json` to resolve project defaults and policies.
 - Respects strict diff flags in `--ci`.
 
 ## seed
@@ -309,7 +344,7 @@ Run database seed or migration steps in a provider-agnostic way.
 Usage:
 
 ```bash
-opendeploy seed --schema <sql|prisma|script> [--script <npm-script>] [--json]
+opd seed --schema <sql|prisma|script> [--script <npm-script>] [--json]
 ```
 
 Behavior:
@@ -323,7 +358,7 @@ Validate local environment and provider CLIs.
 
 Usage:
 ```bash
-opendeploy doctor [--ci] [--json] [--verbose] [--fix] [--path <dir>] [--project <vercelProjectId>] [--org <orgId>] [--site <netlifySiteId>]
+opd doctor [--ci] [--json] [--verbose] [--fix] [--path <dir>] [--project <vercelProjectId>] [--org <orgId>] [--site <netlifySiteId>]
 ```
 Checks:
 - Node version
@@ -342,10 +377,10 @@ Examples:
 
 ```bash
 # Fix Vercel linking in a monorepo app directory
-opendeploy doctor --fix --path apps/web --project <VERCEL_PROJECT_ID> --org <ORG_ID>
+opd doctor --fix --path apps/web --project <VERCEL_PROJECT_ID> --org <ORG_ID>
 
 # Fix Netlify linking for a site
-opendeploy doctor --fix --path apps/web --site <NETLIFY_SITE_ID>
+opd doctor --fix --path apps/web --site <NETLIFY_SITE_ID>
 ```
 
 ### JSON output (schema)
@@ -366,7 +401,7 @@ Open or tail provider logs for the last deployment.
 Usage:
 
 ```bash
-opendeploy logs <vercel|netlify> \
+opd logs <vercel|netlify> \
   [--env <prod|preview>] \
   [--follow] [--since <duration>] \
   [--path <dir>] \
@@ -388,7 +423,7 @@ Sync variables from a .env file to provider environments.
 
 Usage (Vercel):
 ```bash
-opendeploy env sync vercel --file <path> --env <prod|preview|development|all> \
+opd env sync vercel --file <path> --env <prod|preview|development|all> \
   [--yes] [--dry-run] [--json] [--ci] \
   [--project-id <id>] [--org-id <id>] \
   [--ignore <glob,glob>] [--only <glob,glob>] \
@@ -399,7 +434,7 @@ opendeploy env sync vercel --file <path> --env <prod|preview|development|all> \
 ```
 Usage (Netlify):
 ```bash
-opendeploy env sync netlify --file <path> \
+opd env sync netlify --file <path> \
   [--yes] [--dry-run] [--json] [--ci] \
   [--project-id <siteId>] \
   [--ignore <glob,glob>] [--only <glob,glob>] \
@@ -430,11 +465,11 @@ Examples:
 
 ```bash
 # Rename and base64 a secret before syncing to Vercel
-opendeploy env sync vercel --file .env --env preview \
+opd env sync vercel --file .env --env preview \
   --map ./env.map.json --optimize-writes --yes
 
 # Apply same mapping on Netlify
-opendeploy env sync netlify --file .env \
+opd env sync netlify --file .env \
   --map ./env.map.json --yes
 ```
 
@@ -443,13 +478,13 @@ Pull provider environment variables into a local .env file.
 
 Usage (Vercel):
 ```bash
-opendeploy env pull vercel --env <prod|preview|development> \
+opd env pull vercel --env <prod|preview|development> \
   [--out <path>] [--json] [--ci] [--project-id <id>] [--org-id <id>] \
   [--retries <n>] [--timeout-ms <ms>] [--base-delay-ms <ms>]
 ```
 Usage (Netlify):
 ```bash
-opendeploy env pull netlify \
+opd env pull netlify \
   [--out <path>] [--json] [--project-id <siteId>] [--context <ctx>] \
   [--retries <n>] [--timeout-ms <ms>] [--base-delay-ms <ms>]
 ```
@@ -462,21 +497,21 @@ Behavior:
 - Include only public keys and the DB URL when syncing to preview:
 
 ```bash
-opendeploy env sync vercel --file .env.local --env preview \
+opd env sync vercel --file .env.local --env preview \
   --only NEXT_PUBLIC_*,DATABASE_URL --yes
 ```
 
 - Ignore public keys and fail if remote is missing any required secrets (CI guard):
 
 ```bash
-opendeploy env diff vercel --file .env.production.local --env prod \
+opd env diff vercel --file .env.production.local --env prod \
   --ignore NEXT_PUBLIC_* --fail-on-remove --json --ci
 ```
 
 - Fail if local introduces unexpected new keys (e.g., drift):
 
 ```bash
-opendeploy env diff vercel --file .env.production.local --env prod \
+opd env diff vercel --file .env.production.local --env prod \
   --fail-on-add --json --ci
 ```
 
@@ -485,7 +520,7 @@ Compare local `.env` values to remote provider environment (no changes made).
 
 Usage (Vercel):
 ```bash
-opendeploy env diff vercel --file <path> --env <prod|preview|development> \
+opd env diff vercel --file <path> --env <prod|preview|development> \
   [--json] [--ci] [--project-id <id>] [--org-id <id>] \
   [--ignore <glob,glob>] [--only <glob,glob>] \
   [--fail-on-add] [--fail-on-remove] \
@@ -493,7 +528,7 @@ opendeploy env diff vercel --file <path> --env <prod|preview|development> \
 ```
 Usage (Netlify):
 ```bash
-opendeploy env diff netlify --file <path> \
+opd env diff netlify --file <path> \
   [--json] [--ci] [--project-id <siteId>] [--context <ctx>] \
   [--ignore <glob,glob>] [--only <glob,glob>] \
   [--fail-on-add] [--fail-on-remove] \
@@ -536,7 +571,7 @@ Generate provider configuration files based on the detected framework.
 
 Usage:
 ```bash
-opendeploy generate <vercel|netlify> [--overwrite] [--json]
+opd generate <vercel|netlify> [--overwrite] [--json]
 ```
 
 Behavior:
@@ -557,7 +592,7 @@ Deploy the detected app to a provider.
 
 Usage:
 ```bash
-opendeploy deploy <vercel|netlify> \
+opd deploy <vercel|netlify> \
   [--env <prod|preview>] [--project <id>] [--org <id>] [--path <dir>] \
   [--dry-run] [--json] [--ci] [--sync-env] [--alias <domain>]
 ```
@@ -594,7 +629,7 @@ Dry‑run example (Netlify):
 ### Single‑command deploy (alias: up)
 
 ```bash
-opendeploy up [vercel|netlify] \
+opd up [vercel|netlify] \
   [--env <prod|preview>] [--project <id>] [--org <id>] [--path <dir>] \
   [--dry-run] [--json] [--ci] [--print-cmd] \
   [--retries <n>] [--timeout-ms <ms>] [--base-delay-ms <ms>] [--ndjson]
@@ -610,7 +645,7 @@ Behavior:
 Single‑command deploy: sync env, then deploy.
 
 ```bash
-opendeploy up [provider] \
+opd up [provider] \
   --env prod \
   --project <ID> \
   --path <dir> \
@@ -621,7 +656,7 @@ Notes:
 - `up` runs in‑process and delegates to `deploy` with `--sync-env` implied.
 - Respects `--path` (monorepo), `--project/--org`, `--env` (`prod` | `preview`).
 - Use `--ndjson --timestamps` to stream structured progress events and a final summary with `{ final: true }`.
-- When the provider is omitted, the CLI opens the interactive wizard (`opendeploy start`) automatically.
+- When the provider is omitted, the CLI opens the interactive wizard (`opd start`) automatically.
 
 Dry‑run:
 - `--dry-run` emits a deterministic JSON summary and performs no env sync or deploy side effects.
@@ -685,7 +720,7 @@ Promote a preview to production.
 
 Usage (Vercel):
 ```bash
-opendeploy promote vercel --alias <prod-domain> [--path <dir>] [--project <id>] [--org <id>] [--dry-run] [--json]
+opd promote vercel --alias <prod-domain> [--path <dir>] [--project <id>] [--org <id>] [--dry-run] [--json]
 ```
 Behavior (Vercel):
 - Resolves the most recent ready preview deploy and assigns the provided `--alias` domain to it.
@@ -693,7 +728,7 @@ Behavior (Vercel):
 
 Usage (Netlify):
 ```bash
-opendeploy promote netlify [--path <dir>] [--project <siteId>] [--dry-run] [--json]
+opd promote netlify [--path <dir>] [--project <siteId>] [--dry-run] [--json]
 ```
 Behavior (Netlify):
 - Best‑effort promote by deploying current code to production: `netlify deploy --build --prod`.
@@ -762,14 +797,14 @@ Rollback production to a previous successful deployment.
 
 Usage (Vercel):
 ```bash
-opendeploy rollback vercel --alias <prod-domain> [--to <url|sha>] [--path <dir>] [--project <id>] [--org <id>] [--dry-run] [--json]
+opd rollback vercel --alias <prod-domain> [--to <url|sha>] [--path <dir>] [--project <id>] [--org <id>] [--dry-run] [--json]
 ```
 Behavior (Vercel):
 - Resolves the previous production deploy (or a specific one via `--to`) and points the alias back to it.
 
 Usage (Netlify):
 ```bash
-opendeploy rollback netlify [--project <siteId>] [--path <dir>] [--dry-run] [--json]
+opd rollback netlify [--project <siteId>] [--path <dir>] [--dry-run] [--json]
 ```
 Behavior (Netlify):
 - Attempts restore via Netlify API; falls back to dashboard guidance if not permitted.
@@ -839,7 +874,7 @@ Show what will happen for a deployment without executing anything.
 
 Usage:
 ```bash
-opendeploy explain <vercel|netlify> \
+opd explain <vercel|netlify> \
   [--env <prod|preview>] [--path <dir>] [--project <id>] [--org <id>] \
   [--sync-env] [--ci] [--json]
 ```
@@ -852,7 +887,7 @@ Open the project dashboard on the provider.
 
 Usage:
 ```bash
-opendeploy open <vercel|netlify> [--project <id>] [--org <id>] [--path <dir>]
+opd open <vercel|netlify> [--project <id>] [--org <id>] [--path <dir>]
 ```
 
 Notes:
@@ -864,7 +899,7 @@ Open or tail provider logs for the last deployment.
 
 Usage:
 ```bash
-opendeploy logs <vercel|netlify> \
+opd logs <vercel|netlify> \
   [--env <prod|preview>] \
   [--follow] \
   [--path <dir>] \
@@ -907,7 +942,7 @@ Seed a database using SQL, Prisma, or a package.json script.
 
 Usage:
 ```bash
-opendeploy seed \
+opd seed \
   [--db-url <url>] \
   [--file <sql>] \
   [--env <prod|preview|development>] \
@@ -928,7 +963,7 @@ Deploy via the chosen provider.
 
 Usage:
 ```bash
-opendeploy deploy <vercel|netlify> \
+opd deploy <vercel|netlify> \
   [--env <prod|preview>] [--project <id>] [--org <id>] [--path <dir>] [--dry-run] [--json] [--ci]
 ```
 Behavior (Vercel):
@@ -951,11 +986,11 @@ Behavior (Vercel):
 ```
 
 ## run
-Orchestrate env + seed tasks across multiple projects using `opendeploy.config.json`.
+Orchestrate env + seed tasks across multiple projects using `opd.config.json`.
 
 Usage:
 ```bash
-opendeploy run \
+opd run \
   [--env <prod|preview>] [--projects <a,b>] [--all] \
   [--concurrency <n>] \
   [--sync-env] [--diff-env] \
@@ -973,7 +1008,7 @@ Behavior:
 
 ### Policy and Defaults
 
-You can set organization‑wide defaults for env filtering and strictness in `opendeploy.config.json`:
+You can set organization‑wide defaults for env filtering and strictness in `opd.config.json`:
 
 ```json
 {
@@ -1007,7 +1042,7 @@ Precedence (highest → lowest):
 - Global `policy` defaults
 - Empty
 
-Per‑project defaults in `opendeploy.config.json`:
+Per‑project defaults in `opd.config.json`:
 
 - `envOnly`: array of glob patterns to include (e.g., `["NEXT_PUBLIC_*","DATABASE_URL"]`).
 - `envIgnore`: array of glob patterns to exclude (e.g., `["NEXT_PUBLIC_*"]`).
@@ -1015,7 +1050,7 @@ Per‑project defaults in `opendeploy.config.json`:
 These are used by `run` when CLI flags are not provided.
 
 Config validation:
-- On load, the CLI validates `opendeploy.config.json` and throws helpful errors when fields are missing or wrong types (e.g., `projects[0].name must be a non-empty string`).
+- On load, the CLI validates `opd.config.json` and throws helpful errors when fields are missing or wrong types (e.g., `projects[0].name must be a non-empty string`).
 
 Global options:
 - `--verbose` enables debug logging.
@@ -1043,21 +1078,21 @@ Validate a local `.env` against a schema of required keys. Supports three schema
 Usage:
 ```bash
 # keys schema (required keys only)
-opendeploy env validate \
+opd env validate \
   --file .env \
   --schema builtin:better-auth,builtin:email-basic \
   --schema-type keys \
   --json --ci
 
 # rules schema (regex/allowed/oneOf/requireIf)
-opendeploy env validate \
+opd env validate \
   --file .env \
   --schema ./schemas/production.rules.json \
   --schema-type rules \
   --json --ci
 
 # jsonschema (required: ["KEY"]) 
-opendeploy env validate \
+opd env validate \
   --file .env \
   --schema ./schemas/required.json \
   --schema-type jsonschema \
@@ -1067,10 +1102,10 @@ opendeploy env validate \
 Profiles (composed builtins):
 ```bash
 # Blogkit preset
-opendeploy env validate --file .env --schema builtin:blogkit --schema-type keys --json --ci
+opd env validate --file .env --schema builtin:blogkit --schema-type keys --json --ci
 
 # Ecommercekit preset
-opendeploy env validate --file .env --schema builtin:ecommercekit --schema-type keys --json --ci
+opd env validate --file .env --schema builtin:ecommercekit --schema-type keys --json --ci
 ```
 
 Example `production.rules.json`:
@@ -1095,7 +1130,7 @@ Validate a local env file against a minimal required‑keys schema.
 
 Usage:
 ```bash
-opendeploy env validate --file <path> --schema <path> [--json] [--ci]
+opd env validate --file <path> --schema <path> [--json] [--ci]
 ```
 
 Behavior:
@@ -1131,7 +1166,7 @@ Behavior:
 
 Example:
 ```bash
-opendeploy env validate --file .env.local --schema builtin:google-oauth --json
+opd env validate --file .env.local --schema builtin:google-oauth --json
 ```
 
 Composition:
@@ -1140,12 +1175,12 @@ Composition:
 Examples:
 ```bash
 # Combine Google + GitHub OAuth and Resend audience check
-opendeploy env validate --file .env.local \
+opd env validate --file .env.local \
   --schema builtin:google-oauth,builtin:github-oauth,builtin:resend-plus \
   --json --ci
 
 # Mix builtins with a custom JSON file schema
-opendeploy env validate --file .env.local \
+opd env validate --file .env.local \
   --schema builtin:s3-compat,./schemas/required-keys.json \
   --schema-type keys \
   --json

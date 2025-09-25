@@ -1,5 +1,5 @@
 import { Command } from 'commander'
-import { join } from 'node:path'
+import { join, isAbsolute } from 'node:path'
 import { logger, isJsonMode } from '../utils/logger'
 import { fsx } from '../utils/fs'
 import { spinner } from '../utils/ui'
@@ -11,8 +11,8 @@ import { computeRedactors } from '../utils/redaction'
 import { extractVercelInspectUrl } from '../utils/inspect'
 import { runStartWizard } from './start'
 import { detectApp } from '../core/detectors/auto'
-import { NetlifyAdapter } from '../providers/netlify/adapter'
 import type { Framework } from '../types/framework'
+import { loadProvider } from '../core/provider-system/provider'
 
 interface UpOptions {
   readonly path?: string
@@ -53,7 +53,7 @@ export function registerUpCommand(program: Command): void {
   program
     .command('up')
     .description('Deploy to preview with safe defaults (env sync + deploy)')
-    .argument('[provider]', 'Target provider: vercel | netlify')
+    .argument('[provider]', 'Target provider: vercel | netlify | cloudflare | github')
     .option('--env <env>', 'Environment: prod | preview', 'preview')
     .option('--path <dir>', 'Path to app directory (for monorepos)')
     .option('--json', 'Output JSON result')
@@ -71,11 +71,12 @@ export function registerUpCommand(program: Command): void {
     .option('--no-build', 'Skip local build; deploy existing publish directory (Netlify)')
     .action(async (provider: string | undefined, opts: UpOptions): Promise<void> => {
       const rootCwd: string = process.cwd()
-      const targetCwd: string = opts.path ? join(rootCwd, opts.path) : rootCwd
+      const targetCwd: string = opts.path ? (isAbsolute(opts.path) ? opts.path : join(rootCwd, opts.path)) : rootCwd
       try {
         const jsonMode: boolean = isJsonMode(opts.json)
         const ndjsonOn: boolean = opts.ndjson === true || process.env.OPD_NDJSON === '1'
         if (jsonMode) logger.setJsonOnly(true)
+        if (jsonMode || ndjsonOn || opts.ci === true) process.env.OPD_FORCE_CI = '1'
         if (opts.retries) process.env.OPD_RETRIES = String(Math.max(0, Number(opts.retries) || 0))
         if (opts.timeoutMs) process.env.OPD_TIMEOUT_MS = String(Math.max(0, Number(opts.timeoutMs) || 0))
         if (opts.baseDelayMs) process.env.OPD_BASE_DELAY_MS = String(Math.max(0, Number(opts.baseDelayMs) || 0))
@@ -86,6 +87,78 @@ export function registerUpCommand(program: Command): void {
         }
         // Signal to any nested flows/tools that env sync is desired for single-command up
         process.env.OPD_SYNC_ENV = '1'
+        // Plugin-first flow unless explicitly opting into legacy
+        if (process.env.OPD_LEGACY !== '1') {
+          const prov: string = (provider && ['vercel', 'netlify', 'cloudflare', 'github'].includes(provider)) ? provider : 'vercel'
+          const envTargetUp: 'preview' | 'production' = (opts.env === 'prod' ? 'production' : 'preview')
+          // Early dry-run (no provider CLI needed)
+          if (opts.dryRun === true) {
+            const envShort: 'prod' | 'preview' = (opts.env === 'prod' ? 'prod' : 'preview')
+            if (jsonMode) {
+              const cmdPlan: string[] = []
+              if (prov === 'vercel') {
+                if (opts.project || opts.org) cmdPlan.push(`vercel link --yes${opts.project ? ` --project ${opts.project}` : ''}${opts.org ? ` --org ${opts.org}` : ''}`.trim())
+                cmdPlan.push(envTargetUp === 'production' ? 'vercel deploy --prod --yes' : 'vercel deploy --yes')
+                if (opts.alias) cmdPlan.push(`vercel alias set <deployment-url> ${opts.alias}`)
+              } else if (prov === 'netlify') {
+                let publishDir = 'dist'
+                try {
+                  const det = await detectApp({ cwd: targetCwd })
+                  publishDir = det.publishDir ?? inferPublishDir(det.framework as Framework)
+                } catch { /* keep default */ }
+                const ctx = envShort === 'prod' ? 'production' : 'deploy-preview'
+                cmdPlan.push(`netlify build --context ${ctx}`.trim())
+                cmdPlan.push(`netlify deploy --no-build${envShort === 'prod' ? ' --prod' : ''} --dir ${publishDir}${opts.project ? ` --site ${opts.project}` : ''}`.trim())
+              } else if (prov === 'cloudflare') {
+                let publishDir = 'dist'
+                try { const det = await detectApp({ cwd: targetCwd }); publishDir = det.publishDir ?? 'dist' } catch { /* ignore */ }
+                cmdPlan.push(`wrangler pages deploy ${publishDir}`.trim())
+              } else if (prov === 'github') {
+                cmdPlan.push('next export && gh-pages -d out')
+              }
+              logger.jsonPrint({ ok: true, action: 'up' as const, provider: prov, target: envShort, mode: 'dry-run', cmdPlan, final: true })
+              return
+            }
+            logger.info(`[dry-run] up ${prov} (env=${envShort})`)
+            return
+          }
+          const p = await loadProvider(prov)
+          if (process.env.OPD_SKIP_VALIDATE !== '1') {
+            await p.validateAuth(targetCwd)
+          }
+          // Optional env sync for supported providers
+          const wantSync: boolean = opts.syncEnv === true || process.env.OPD_SYNC_ENV === '1'
+          if (wantSync && (prov === 'vercel' || prov === 'netlify')) {
+            const candidates: readonly string[] = envTargetUp === 'production' ? ['.env.production.local', '.env'] : ['.env', '.env.local']
+            let chosenFile: string | undefined
+            for (const f of candidates) { if (await fsx.exists(join(targetCwd, f))) { chosenFile = f; break } }
+            if (chosenFile) {
+              logger.section('Environment')
+              logger.note(`Syncing ${chosenFile} → ${prov}`)
+              try {
+                try { const patterns = await computeRedactors({ cwd: targetCwd, envFiles: [chosenFile], includeProcessEnv: true }); if (patterns.length > 0) logger.setRedactors(patterns) } catch { /* ignore */ }
+                await envSync({ provider: prov, cwd: targetCwd, file: chosenFile, env: (opts.env === 'prod' ? 'prod' : 'preview'), yes: true, ci: Boolean(opts.ci), json: false, projectId: opts.project, orgId: opts.org, ignore: [], only: [], optimizeWrites: true })
+                logger.success('Environment sync complete')
+              } catch (e) { logger.warn(`Env sync skipped: ${(e as Error).message}`) }
+            }
+          }
+          const linked = await p.link(targetCwd, { projectId: opts.project, orgId: opts.org })
+          let publishDirHint: string | undefined
+          let frameworkHint: string | undefined
+          try { const d = await p.detect(targetCwd); publishDirHint = d.publishDir; frameworkHint = d.framework } catch { /* ignore */ }
+          const t0 = Date.now()
+          const buildRes = await p.build({ cwd: targetCwd, framework: frameworkHint, envTarget: envTargetUp, publishDirHint, noBuild: Boolean(opts.noBuild) })
+          const deployRes = await p.deploy({ cwd: targetCwd, envTarget: envTargetUp, project: linked, artifactDir: buildRes.artifactDir, alias: opts.alias })
+          const durationMs = Date.now() - t0
+          if (jsonMode) { logger.jsonPrint({ ok: true, action: 'up' as const, provider: prov, target: (opts.env === 'prod' ? 'prod' : 'preview'), url: deployRes.url, logsUrl: deployRes.logsUrl, durationMs, final: true }); return }
+          if (deployRes.ok) {
+            if (deployRes.url) logger.success(`${opts.env === 'prod' ? 'Production' : 'Preview'}: ${deployRes.url}`)
+            else logger.success(`${opts.env === 'prod' ? 'Production' : 'Preview'} deploy complete`)
+          } else {
+            throw new Error(deployRes.message || 'Deploy failed')
+          }
+          return
+        }
         // Detection is optional for generic providers; keep 'up' framework-agnostic
         // Env sync first (preview)
         const envTarget: 'prod' | 'preview' = opts.env === 'prod' ? 'prod' : 'preview'
@@ -112,7 +185,9 @@ export function registerUpCommand(program: Command): void {
                   if (hasRR) publishDir = 'build/client'
                 } catch { /* ignore */ }
               }
-              cmdPlan.push(`netlify deploy --build${envTarget === 'prod' ? ' --prod' : ''} --dir ${publishDir}${opts.project ? ` --site ${opts.project}` : ''}`.trim())
+              const ctx = envTarget === 'prod' ? 'production' : 'deploy-preview'
+              cmdPlan.push(`netlify build --context ${ctx}`.trim())
+              cmdPlan.push(`netlify deploy --no-build${envTarget === 'prod' ? ' --prod' : ''} --dir ${publishDir}${opts.project ? ` --site ${opts.project}` : ''}`.trim())
             }
             const summary = { ok: true, action: 'up' as const, provider: prov, target: envTarget, mode: 'dry-run', cmdPlan, final: true }
             logger.jsonPrint(summary)
@@ -166,9 +241,11 @@ export function registerUpCommand(program: Command): void {
           let capturedInspect: string | undefined
           const urlRe = /https?:\/\/[^\s]+vercel\.app/g
           if (ndjsonOn) logger.json({ ok: true, action: 'up', stage: 'deployStart', provider: 'vercel', target: envTarget })
+          const deployTimeout = Number.isFinite(Number(process.env.OPD_TIMEOUT_MS)) ? Number(process.env.OPD_TIMEOUT_MS) : 900_000
           const controller = proc.spawnStream({
             cmd: envTarget === 'prod' ? 'vercel deploy --prod --yes' : 'vercel deploy --yes',
             cwd: runCwd,
+            timeoutMs: deployTimeout,
             onStdout: (chunk: string): void => {
               const m = chunk.match(urlRe)
               if (!capturedUrl && m && m.length > 0) {
@@ -201,6 +278,8 @@ export function registerUpCommand(program: Command): void {
               const found = extractVercelInspectUrl(text)
               if (found) capturedInspect = found
             } catch { /* ignore */ }
+            // Final fallback: construct a stable Inspect link that at least points to Vercel dashboard
+            if (!capturedInspect) capturedInspect = `https://vercel.com/inspect?url=${encodeURIComponent(capturedUrl)}`
           }
           if (ndjsonOn) logger.json({ ok: true, action: 'up', stage: 'deployed', provider: 'vercel', target: envTarget, url: capturedUrl, logsUrl: capturedInspect })
           // Optional alias
@@ -224,7 +303,7 @@ export function registerUpCommand(program: Command): void {
           try {
             const det = await detectApp({ cwd: targetCwd })
             // Ensure netlify.toml (idempotent)
-            try { const a = new NetlifyAdapter(); await a.generateConfig({ detection: det, overwrite: false }) } catch { /* ignore */ }
+            try { const p = await loadProvider('netlify'); await p.generateConfig({ detection: det, cwd: targetCwd, overwrite: false }) } catch { /* ignore */ }
             publishDir = det.publishDir ?? inferPublishDir(det.framework as Framework)
           } catch {
             // Fallback: react-router (Remix family) static output
@@ -240,8 +319,16 @@ export function registerUpCommand(program: Command): void {
           const sp = spinner(`Netlify: deploying (${envTarget === 'prod' ? 'production' : 'preview'})`)
           const siteFlag: string = opts.project ? ` --site ${opts.project}` : ''
           const dirFlag: string = ` --dir ${publishDir}`
-          const buildFlag: string = opts.noBuild === true ? '' : ' --build'
-          const cmd: string = `netlify deploy${buildFlag}${envTarget === 'prod' ? ' --prod' : ''}${dirFlag}${siteFlag}`.trim()
+          // Build first unless --no-build
+          if (opts.noBuild !== true) {
+            const ctx = envTarget === 'prod' ? 'production' : 'deploy-preview'
+            const buildCmd = `netlify build --context ${ctx}`
+            if (opts.printCmd) logger.info(`$ ${buildCmd}`)
+            if (ndjsonOn) logger.json({ ok: true, action: 'up', stage: 'buildStart', provider: 'netlify', target: envTarget, cmd: buildCmd })
+            const resBuild = await runWithRetry({ cmd: buildCmd, cwd: targetCwd }, { timeoutMs: Math.max(120000, Number(process.env.OPD_TIMEOUT_MS) || 300000) })
+            if (!resBuild.ok) throw new Error('Netlify build failed')
+          }
+          const cmd: string = `netlify deploy --no-build${envTarget === 'prod' ? ' --prod' : ''}${dirFlag}${siteFlag}`.trim()
           if (opts.printCmd) logger.info(`$ ${cmd}`)
           if (ndjsonOn) logger.json({ ok: true, action: 'up', stage: 'deployStart', provider: 'netlify', target: envTarget, cmd })
           const stop: Stopper = startHeartbeat({ label: 'netlify deploy', hint: 'Tip: connect repo for CI builds', intervalMs: ndjsonOn ? 5000 : 10000 })
@@ -275,6 +362,14 @@ export function registerUpCommand(program: Command): void {
                 try { const js = JSON.parse(siteRes.stdout) as { name?: string }; if (typeof js.name === 'string') siteName = js.name } catch { /* ignore */ }
               }
               if (siteName && deployId) logsUrl = `https://app.netlify.com/sites/${siteName}/deploys/${deployId}`
+              // Fallback: derive site name from deployment URL if API name missing
+              if (!logsUrl && url && deployId) {
+                try {
+                  const mm = url.match(/https?:\/\/([^.]+)\.netlify\.app/i)
+                  const derived = mm?.[1]
+                  if (derived) logsUrl = `https://app.netlify.com/sites/${derived}/deploys/${deployId}`
+                } catch { /* ignore */ }
+              }
             }
           } catch { /* ignore */ }
           if (ndjsonOn) logger.json({ ok: true, action: 'up', stage: 'deployed', provider: 'netlify', target: envTarget, url, logsUrl })

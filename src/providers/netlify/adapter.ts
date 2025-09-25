@@ -75,12 +75,17 @@ export class NetlifyAdapter implements ProviderAdapter {
     const siteFlag: string = inputs.projectId ? ` --site ${inputs.projectId}` : ''
     const prodFlag: string = inputs.env === 'prod' ? ' --prod' : ''
     const t0: number = Date.now()
-    const out = await proc.run({ cmd: `netlify deploy --build${prodFlag}${siteFlag}`, cwd })
+    // Build first with the appropriate context, then deploy without rebuilding
+    const ctx: string = inputs.env === 'prod' ? 'production' : 'deploy-preview'
+    const buildRes = await proc.run({ cmd: `netlify build --context ${ctx}`, cwd })
+    if (!buildRes.ok) throw new Error('Netlify build failed')
+    const out = await proc.run({ cmd: `netlify deploy --no-build${prodFlag}${siteFlag}`, cwd })
     const durationMs: number = Date.now() - t0
     if (!out.ok) throw new Error(out.stderr.trim() || out.stdout.trim() || 'Netlify deploy failed')
     const url: string = this.extractUrl(out.stdout)
+    const logsUrl: string | undefined = this.extractLogsUrl(out.stdout)
     if (url.length === 0) throw new Error('Netlify deploy succeeded but URL not found in output')
-    return { url, projectId: inputs.projectId ?? '', provider: 'netlify', target: inputs.env, durationMs }
+    return { url, projectId: inputs.projectId ?? '', provider: 'netlify', target: inputs.env, durationMs, logsUrl }
   }
 
   public async open(projectId?: string): Promise<void> {
@@ -103,6 +108,12 @@ export class NetlifyAdapter implements ProviderAdapter {
     // Netlify CLI prints lines like: "Website URL: https://your-site.netlify.app"
     const m = text.match(/https?:\/\/[^\s]+\.netlify\.app\b/)
     return m?.[0] ?? ''
+  }
+
+  private extractLogsUrl(text: string): string | undefined {
+    // Look for Netlify dashboard deploys URL, e.g., https://app.netlify.com/sites/<site>/deploys/<dep_...>
+    const m = text.match(/https?:\/\/app\.netlify\.com\/sites\/[A-Za-z0-9_-]+\/deploys\/[A-Za-z0-9_-]+/)
+    return m?.[0]
   }
 }
 

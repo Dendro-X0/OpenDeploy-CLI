@@ -4,8 +4,7 @@ import { writeFile } from 'node:fs/promises'
 import { logger } from '../utils/logger'
 import { confirm } from '../utils/prompt'
 import { detectNextApp } from '../core/detectors/next'
-import { VercelAdapter } from '../providers/vercel/adapter'
-import { NetlifyAdapter } from '../providers/netlify/adapter'
+import { loadProvider } from '../core/provider-system/provider'
 
 interface InitOptions { readonly json?: boolean }
 
@@ -41,15 +40,15 @@ export function registerInitCommand(program: Command): void {
         }
         // Generate provider configs
         if (useVercel) {
-          const ver = new VercelAdapter()
-          await ver.validateAuth().catch(() => {/* continue; user can auth later */})
-          await ver.generateConfig({ detection, overwrite: false }).catch(() => {/* ignore */})
+          const ver = await loadProvider('vercel')
+          await ver.validateAuth(cwd).catch(() => {/* continue; user can auth later */})
+          await ver.generateConfig({ detection, cwd, overwrite: false }).catch(() => {/* ignore */})
           logger.success('Vercel configuration ready')
         }
         if (useNetlify) {
-          const nl = new NetlifyAdapter()
-          await nl.validateAuth().catch(() => {/* continue; user can auth later */})
-          await nl.generateConfig({ detection, overwrite: false }).catch(() => {/* ignore */})
+          const nl = await loadProvider('netlify')
+          await nl.validateAuth(cwd).catch(() => {/* continue; user can auth later */})
+          await nl.generateConfig({ detection, cwd, overwrite: false }).catch(() => {/* ignore */})
           logger.success('Netlify configuration ready')
         }
         const path: string = join(cwd, 'opendeploy.config.json')

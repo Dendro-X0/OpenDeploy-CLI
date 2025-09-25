@@ -89,7 +89,7 @@ export const logger: Logger = {
   warn: (msg: string): void => { if (jsonOnly) return; write('warn', msg) },
   error: (msg: string): void => { if (jsonOnly) return; write('error', msg) },
   success: (msg: string): void => { if (jsonOnly) return; const text = `${noEmoji ? '[ok]' : '✓'} ${msg}`; const colored = colorize('green', text); write('info', colored) },
-  note: (msg: string): void => { if (jsonOnly) return; const text = `${noEmoji ? '[note]' : '✱'} ${msg}`; const colored = colorize('blue', text); write('info', colored) },
+  note: (msg: string): void => { if (jsonOnly) return; const text = `${noEmoji ? '[start]' : '◇'} ${msg}`; const colored = colorize('cyan', text); write('info', colored) },
   section: (title: string): void => {
     if (jsonOnly) return
     const bar = '─'.repeat(Math.max(12, Math.min(60, title.length + 10)))

@@ -56,6 +56,39 @@ async function checkNetlifyAuth(printCmd?: boolean): Promise<CheckResult> {
   return { name: 'netlify auth', ok: false, message: 'not logged in (run: netlify login)' }
 }
 
+async function checkWranglerAuth(printCmd?: boolean): Promise<CheckResult> {
+  const candidates: readonly string[] = process.platform === 'win32' ? ['wrangler', 'wrangler.cmd'] : ['wrangler']
+  for (const c of candidates) {
+    const verCmd: string = `${c} --version`
+    if (printCmd) logger.info(`$ ${verCmd}`)
+    const ver = await runWithRetry({ cmd: verCmd })
+    if (!ver.ok) continue
+    const whoCmd: string = `${c} whoami`
+    if (printCmd) logger.info(`$ ${whoCmd}`)
+    const who = await runWithRetry({ cmd: whoCmd })
+    if (who.ok && who.stdout.trim().length > 0) return { name: 'wrangler auth', ok: true, message: who.stdout.trim() }
+    return { name: 'wrangler auth', ok: false, message: 'not logged in (run: wrangler login)' }
+  }
+  return { name: 'wrangler', ok: false, message: 'not installed or not on PATH (install: npm i -g wrangler)' }
+}
+
+async function checkGitHubPagesSetup(cwd: string, printCmd?: boolean): Promise<CheckResult[]> {
+  const results: CheckResult[] = []
+  // Check that a git origin remote exists
+  const remoteCmd: string = 'git remote -v'
+  if (printCmd) logger.info(`$ ${remoteCmd}`)
+  const rem = await runWithRetry({ cmd: remoteCmd, cwd })
+  const hasOrigin: boolean = rem.ok && /origin\s+/.test(rem.stdout)
+  results.push({ name: 'git origin remote', ok: hasOrigin, message: hasOrigin ? 'found' : 'missing (set with: git remote add origin <url>)' })
+  // Check gh-pages branch existence on remote
+  const lsCmd: string = 'git ls-remote --heads origin gh-pages'
+  if (printCmd) logger.info(`$ ${lsCmd}`)
+  const ls = await runWithRetry({ cmd: lsCmd, cwd })
+  const hasGhPages: boolean = ls.ok && ls.stdout.trim().length > 0
+  results.push({ name: 'gh-pages branch (remote)', ok: hasGhPages, message: hasGhPages ? 'exists' : 'not found (will be created on first publish)' })
+  return results
+}
+
 /**
  * Register the `doctor` command.
  */
@@ -92,6 +125,10 @@ export function registerDoctorCommand(program: Command): void {
         const netlifyCandidates: readonly string[] = process.platform === 'win32' ? ['netlify', 'netlify.cmd'] : ['netlify']
         const netlifyCli = await checkCmdAny(netlifyCandidates, 'netlify', opts.printCmd)
         results.push(netlifyCli)
+        // Cloudflare Pages CLI (wrangler)
+        const wranglerCandidates: readonly string[] = process.platform === 'win32' ? ['wrangler', 'wrangler.cmd'] : ['wrangler']
+        const wranglerCli = await checkCmdAny(wranglerCandidates, 'wrangler', opts.printCmd)
+        results.push(wranglerCli)
         // Optional toolchain checks
         const prismaCandidates: readonly string[] = process.platform === 'win32'
           ? ['pnpm exec prisma', 'npx prisma', 'prisma', 'prisma.cmd']
@@ -110,6 +147,8 @@ export function registerDoctorCommand(program: Command): void {
         results.push(vercelAuth)
         const netlifyAuth = await checkNetlifyAuth(opts.printCmd)
         results.push(netlifyAuth)
+        const wranglerAuth = await checkWranglerAuth(opts.printCmd)
+        results.push(wranglerAuth)
         // Monorepo and workspace sanity
         const cwdRoot: string = process.cwd()
         const cwd: string = opts.path ? join(cwdRoot, opts.path) : cwdRoot
@@ -214,6 +253,16 @@ export function registerDoctorCommand(program: Command): void {
           }
         }
         const ok: boolean = results.every(r => r.ok)
+        // GitHub Pages readiness (best-effort)
+        try {
+          const ghChecks = await checkGitHubPagesSetup(cwd, opts.printCmd)
+          for (const r of ghChecks) results.push(r)
+          const originOk = ghChecks.find(r => r.name === 'git origin remote')?.ok === true
+          const ghBranchOk = ghChecks.find(r => r.name === 'gh-pages branch (remote)')?.ok === true
+          if (!originOk) suggestions.push('git remote add origin <url> && git push -u origin main')
+          if (!ghBranchOk) suggestions.push('opendeploy deploy github')
+        } catch { /* ignore */ }
+
         if (jsonMode) {
           logger.jsonPrint({ ok, action: 'doctor' as const, results, suggestions, final: true })
           process.exitCode = ok ? 0 : 1

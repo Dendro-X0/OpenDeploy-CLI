@@ -17,11 +17,11 @@ OpenDeploy redacts secrets from all logs by default:
    - `.env.local`
    - `.env.production.local`
 2) Process environment variables (`process.env`)
-3) Optional configuration file: `opendeploy.redaction.json`
+3) Optional configuration file: `opd.redaction.json`
 
 Keys with a `PUBLIC_` prefix are treated as public and will not be redacted.
 
-### Advanced: `opendeploy.redaction.json`
+### Advanced: `opd.redaction.json`
 
 Create this file at your project root to add custom redaction patterns. Patterns from this file are merged with the defaults derived from env files and the process environment.
 
@@ -50,7 +50,7 @@ The CLI also derives base64 versions of literal values from env files/process.en
 ### Verifying redaction
 
 - Run with JSON/NDJSON and file sinks:
-  - `opendeploy up vercel --env preview --json --ndjson --json-file .artifacts/out.json --ndjson-file .artifacts/out.ndjson`
+  - `opd up vercel --env preview --json --ndjson --json-file .artifacts/out.json --ndjson-file .artifacts/out.ndjson`
 - Grep artifacts for a known secret value; it should not appear.
 
 ## CI output settings
@@ -73,7 +73,7 @@ Provider subprocess invocations honor these environment variables (also configur
 
 ## Start Wizard Defaults
 
-When you confirm saving defaults at the end of `opendeploy start`, the CLI writes your selections to `opendeploy.config.json` at the project root under the `startDefaults` key.
+When you confirm saving defaults at the end of `opd start`, the CLI writes your selections to `opd.config.json` at the project root under the `startDefaults` key.
 
 Example:
 
@@ -93,6 +93,6 @@ Example:
 
 Behavior:
 
-- On subsequent runs of `opendeploy start`, the wizard loads these defaults and uses them as initial values.
+- On subsequent runs of `opd start`, the wizard loads these defaults and uses them as initial values.
 - Use `--no-save-defaults` to suppress the save prompt at the end of the wizard.
-- To clear, either delete `opendeploy.config.json` or remove the `startDefaults` property.
+- To clear, either delete `opd.config.json` or remove the `startDefaults` property.

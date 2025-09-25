@@ -172,8 +172,8 @@ export class ExampleAdapter implements ProviderAdapter {
 
 ## Wizard (start) behavior by provider
 
-- Vercel: the `start` wizard performs the deploy (preview/prod) and prints `url`/`logsUrl`.
-- Netlify: the `start` wizard is prepare‑only. It generates a safe `netlify.toml` (or uses the adapter for Next.js) and prints recommended `netlify deploy` commands with inferred `--dir`. It does not run the deploy itself.
+- Vercel: the `start` wizard performs the deploy (preview/prod) and prints `url`/`logsUrl`. When `--alias` is provided, the wizard attempts to set an alias after deploy.
+- Netlify: the `start` wizard is prepare‑only by default. It generates a safe `netlify.toml` (or uses the adapter for Next.js) and prints recommended `netlify deploy` commands with inferred `--dir`. Optionally, pass `--deploy` to execute a real deploy (supports `--no-build` to deploy prebuilt artifacts). Summaries include `logsUrl` pointing to the Netlify dashboard.
 
 See `docs/commands.md#start` for details.
 
@@ -211,5 +211,5 @@ vi.mock('../../utils/process', async (orig) => {
 - Respect `--ci` conventions: never prompt; return consistent exit codes.
 - Use `mapProviderError()` to translate raw provider errors into stable codes/messages/remedies.
 
-7) Example Adapters
-- See `src/providers/vercel/adapter.ts` and `src/providers/netlify/adapter.ts` for patterns.
+7) Provider Plugins
+- See `src/core/provider-system/providers/` for provider plugin implementations and patterns.

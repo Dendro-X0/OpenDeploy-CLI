@@ -64,7 +64,7 @@ OpenDeploy maps common Vercel CLI issues to human guidance:
 
 - VERCEL_BUILD_FAILED
   - Cause: Build failed during Vercel deployment.
-  - Remedy: Inspect logs: `opendeploy deploy logs vercel --follow`; run `next build` locally; check env with `opendeploy env diff` and `opendeploy env validate`.
+  - Remedy: Inspect logs: `opd deploy logs vercel --follow`; run `next build` locally; check env with `opd env diff` and `opd env validate`.
 
 - NODE_MODULE_NOT_FOUND
   - Cause: Module resolution failed in build.
@@ -76,7 +76,7 @@ OpenDeploy maps common Vercel CLI issues to human guidance:
 
 - ENV_MISSING
   - Cause: A required environment variable appears to be missing.
-  - Remedy: Use `opendeploy env diff` to compare local vs remote; then `opendeploy env sync` to apply.
+  - Remedy: Use `opd env diff` to compare local vs remote; then `opd env sync` to apply.
 
 - PERMISSION_DENIED
   - Cause: Permission denied during an operation.
@@ -91,4 +91,23 @@ OpenDeploy maps common Vercel CLI issues to human guidance:
 - Human mode prints concise messages with `Try:` suggestions.
 - JSON/NDJSON include `code`, `message`, `remedy`, and original `error` text when available.
 - GitHub Actions annotations are emitted for doctor and env diff when running in CI.
- - Run `opendeploy doctor --json` to see suggested commands based on linked state and monorepo cwd detection.
+ - Run `opd doctor --json` to see suggested commands based on linked state and monorepo cwd detection.
+
+## Netlify publishDir issues
+
+If a Netlify deploy fails due to a missing or empty publish directory, check:
+
+- Inspect wizard JSON fields (from `opd start --provider netlify --json` or `opd start` in installed CLI):
+  - `publishDir`: directory the wizard inferred
+  - `publishDirExists`: whether the directory exists
+  - `publishDirFileCount`: how many files were found
+- Framework guidance:
+  - Next.js: prefer `@netlify/next` runtime (publish `.next`), else legacy `@netlify/plugin-nextjs`.
+  - Astro: `astro build` → publish `dist`.
+  - SvelteKit: static via `@sveltejs/adapter-static` → publish `build`.
+  - Remix (RR v7): `react-router build` → publish `build/client`.
+  - Nuxt: `npx nuxi build` → publish `.output/public`.
+- Commands:
+  - Generate config only: `opd start --provider netlify --generate-config-only`
+  - Print recommended commands: `opd start --provider netlify --print-cmd`
+  - Prebuild and deploy artifacts: `pnpm build && opd start --provider netlify --deploy --no-build --project <SITE_ID>`

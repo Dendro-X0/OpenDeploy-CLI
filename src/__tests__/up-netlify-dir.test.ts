@@ -10,10 +10,6 @@ vi.mock('../commands/env', async () => {
   return h.envNoopMock()
 })
 
-vi.mock('../providers/netlify/adapter', async () => {
-  const h = await import('../../tests/helpers/mocks')
-  return h.netlifyAdapterNoopMock()
-})
 
 // We rely on --dry-run, so no need to mock process deploy calls here
 vi.mock('../core/detectors/auto', async () => {
@@ -36,7 +32,8 @@ describe('up netlify --dir inference', () => {
     const line = logs.find((l) => l.includes('"final": true')) ?? '{}'
     const obj = JSON.parse(line)
     expect(obj).toMatchObject({ provider: 'netlify', target: 'preview', final: true })
-    const cmd = String((obj.cmdPlan?.[0]) ?? '')
-    expect(cmd).toContain('--dir build/client')
+    const plan: string[] = Array.isArray(obj.cmdPlan) ? obj.cmdPlan : []
+    const deployCmd: string = String(plan.find((s) => typeof s === 'string' && s.startsWith('netlify deploy')) ?? '')
+    expect(deployCmd).toContain('--dir build/client')
   })
 })

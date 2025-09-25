@@ -18,6 +18,103 @@ Notes:
 - Vercel `logsUrl` is the Inspect URL. If not printed by the deploy stream, the CLI falls back to `vercel inspect <url>`.
 - Netlify `logsUrl` is a dashboard link constructed from site name and the latest deploy id.
 
+## start (wizard)
+
+The `start` wizard emits a final JSON summary and may emit intermediate NDJSON events when `--ndjson` (or `OPD_NDJSON=1`) is enabled.
+
+Common summary fields:
+
+| Field       | Type                       | Required | Notes |
+|-------------|----------------------------|----------|-------|
+| action      | const                      | Yes      | `start` |
+| provider    | enum                       | Yes      | `vercel` or `netlify` |
+| target      | enum                       | Yes      | `prod` or `preview` |
+| mode        | enum                       | Yes      | `deploy` or `prepare-only` |
+| url         | string                     | No       | When a deploy is executed (e.g., Vercel; Netlify when `--deploy`) |
+| logsUrl     | string                     | No       | Inspect (Vercel) or dashboard (Netlify) |
+| publishDir  | string                     | No       | Netlify only |
+| recommend   | object                     | No       | Netlify only; `{ previewCmd, prodCmd }` |
+| ciChecklist | object                     | Yes      | `{ buildCommand, publishDir?, envFile?, exampleKeys? }` |
+| cwd         | string                     | No       | The chosen working directory for the wizard |
+| final       | true                       | Yes      | Present on the summary object |
+
+Notes:
+
+- Netlify defaults to `mode: "prepare-only"` and prints recommended `netlify deploy` commands. Pass `--deploy` to execute a deploy in-wizard (supports `--no-build`).
+- Vercel uses `mode: "deploy"` and prints both `url` and `logsUrl`. When `--alias` is provided, the CLI attempts to alias the deployment and includes it in the human logs.
+
+Examples:
+
+Vercel (deploy):
+
+```json
+{
+  "ok": true,
+  "action": "start",
+  "provider": "vercel",
+  "target": "preview",
+  "mode": "deploy",
+  "url": "https://my-app-xyz.vercel.app",
+  "logsUrl": "https://vercel.com/acme/my-app/inspections/dep_456",
+  "ciChecklist": { "buildCommand": "next build", "envFile": ".env" },
+  "cwd": "/path/to/app",
+  "final": true
+}
+```
+
+Netlify (prepare-only):
+
+```json
+{
+  "ok": true,
+  "action": "start",
+  "provider": "netlify",
+  "target": "preview",
+  "mode": "prepare-only",
+  "projectId": "site_123",
+  "siteId": "site_123",
+  "siteName": "mysite",
+  "publishDir": "dist",
+  "recommend": { "previewCmd": "netlify deploy --dir dist --site site_123", "prodCmd": "netlify deploy --build --prod --dir dist --site site_123" },
+  "ciChecklist": { "buildCommand": "npm run build", "publishDir": "dist", "envFile": ".env.local" },
+  "logsUrl": "https://app.netlify.com/sites/mysite/deploys",
+  "cwd": "/path/to/app",
+  "final": true
+}
+```
+
+Netlify (deploy):
+
+```json
+{
+  "ok": true,
+  "action": "start",
+  "provider": "netlify",
+  "target": "preview",
+  "mode": "deploy",
+  "projectId": "site_123",
+  "siteId": "site_123",
+  "siteName": "mysite",
+  "url": "https://mysite.netlify.app",
+  "logsUrl": "https://app.netlify.com/sites/mysite/deploys",
+  "ciChecklist": { "buildCommand": "npm run build", "publishDir": "dist" },
+  "cwd": "/path/to/app",
+  "final": true
+}
+```
+
+NDJSON events:
+
+- When `--ndjson`/`OPD_NDJSON=1` is enabled, the wizard may emit non-final progress events prior to the summary. A cross-provider logs event is emitted when a dashboard/inspect URL is available:
+
+```json
+{"action":"start","provider":"vercel","target":"preview","event":"logs","logsUrl":"https://vercel.com/acme/app/inspections/dep_123"}
+```
+
+```json
+{"action":"start","provider":"netlify","target":"preview","event":"logs","logsUrl":"https://app.netlify.com/sites/mysite/deploys"}
+```
+
 ## up
 
 | Field     | Type                    | Required | Notes |
@@ -247,10 +344,10 @@ Extract common fields from final JSON summaries:
 
 ```bash
 # Get deploy URL from a final summary object
-jq -r 'select(.final==true) | .url // empty' < ./.artifacts/opendeploy.json
+jq -r 'select(.final==true) | .url // empty' < ./.artifacts/opd.json
 
 # Get logs/inspect URL
-jq -r 'select(.final==true) | .logsUrl // empty' < ./.artifacts/opendeploy.json
+jq -r 'select(.final==true) | .logsUrl // empty' < ./.artifacts/opd.json
 
 # Get ok flag or provider
 jq -r 'select(.final==true) | .ok // empty'
@@ -261,11 +358,11 @@ Parse NDJSON streams and select the final summary line:
 
 ```bash
 # Print the final summary object from an NDJSON stream
-grep -a "{" ./.artifacts/opendeploy.ndjson | jq -r 'select(.final==true)'
+grep -a "{" ./.artifacts/opd.ndjson | jq -r 'select(.final==true)'
 
 # Extract the first discovered URL from progress events, fallback to final url
-grep -a "{" ./.artifacts/opendeploy.ndjson \
+grep -a "{" ./.artifacts/opd.ndjson \
   | jq -r 'select(.stage=="url").url // empty' \
   | head -n1 \
-  || grep -a "{" ./.artifacts/opendeploy.ndjson | jq -r 'select(.final==true) | .url // empty'
+  || grep -a "{" ./.artifacts/opd.ndjson | jq -r 'select(.final==true) | .url // empty'
 ```

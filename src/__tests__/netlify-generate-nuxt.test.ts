@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { NetlifyAdapter } from '../providers/netlify/adapter'
+import { loadProvider } from '../core/provider-system/provider'
 import type { DetectionResult } from '../types/detection-result'
 
 async function makeTmp(): Promise<string> {
@@ -28,12 +28,12 @@ function fakeDetection(args: { cwd: string; build?: string }): DetectionResult {
   }
 }
 
-describe('NetlifyAdapter.generateConfig (Nuxt)', () => {
+describe('Netlify provider generateConfig (Nuxt)', () => {
   it('writes netlify.toml with nuxi build and .output/public', async () => {
     const cwd: string = await makeTmp()
-    const adapter = new NetlifyAdapter()
+    const plugin = await loadProvider('netlify')
     const detection: DetectionResult = fakeDetection({ cwd })
-    const path: string = await adapter.generateConfig({ detection, overwrite: true })
+    const path: string = await plugin.generateConfig({ detection, cwd, overwrite: true })
     expect(path.endsWith('netlify.toml')).toBe(true)
     const body: string = await readFile(path, 'utf8')
     expect(body).toContain('command = "npx nuxi build"')

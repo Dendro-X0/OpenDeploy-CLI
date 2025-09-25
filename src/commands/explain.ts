@@ -1,7 +1,7 @@
 import { Command } from 'commander'
 import { join } from 'node:path'
 import { logger } from '../utils/logger'
-import { detectNextApp } from '../core/detectors/next'
+import { detectApp } from '../core/detectors/auto'
 import { fsx } from '../utils/fs'
 import type { DeployPlan, DeployStep } from '../types/deploy-plan'
 
@@ -19,7 +19,7 @@ export function registerExplainCommand(program: Command): void {
   program
     .command('explain')
     .description('Show what will happen for a deploy, without executing anything')
-    .argument('<provider>', 'Target provider: vercel | netlify')
+    .argument('<provider>', 'Target provider: vercel | netlify | cloudflare | github')
     .option('--env <env>', 'Environment: prod | preview', 'preview')
     .option('--path <dir>', 'Path to app directory (for monorepos)')
     .option('--json', 'Output JSON plan')
@@ -32,12 +32,13 @@ export function registerExplainCommand(program: Command): void {
       const targetCwd: string = opts.path ? join(rootCwd, opts.path) : rootCwd
       try {
         if (opts.json === true) logger.setJsonOnly(true)
-        if (provider !== 'vercel' && provider !== 'netlify') {
+        const allowed = new Set(['vercel', 'netlify', 'cloudflare', 'github'])
+        if (!allowed.has(provider)) {
           logger.error(`Unknown provider: ${provider}`)
           process.exitCode = 1
           return
         }
-        const detection = await detectNextApp({ cwd: targetCwd })
+        const detection = await detectApp({ cwd: targetCwd })
         // Choose run cwd (same heuristic as deploy for vercel)
         let runCwd = targetCwd
         if (provider === 'vercel') {
@@ -53,15 +54,32 @@ export function registerExplainCommand(program: Command): void {
         let envFile: string | undefined
         for (const f of candidates) { if (await fsx.exists(join(runCwd, f))) { envFile = f; break } }
         const planSteps: DeployStep[] = []
-        planSteps.push({ id: 'detect', title: 'Detect Next.js app and project metadata', kind: 'detect' })
-        planSteps.push({ id: 'link', title: provider === 'vercel' ? 'Ensure Vercel link (project/org)' : 'Ensure Netlify link (site)', kind: 'link' })
+        planSteps.push({ id: 'detect', title: 'Detect app and project metadata', kind: 'detect' })
+        if (provider === 'vercel') {
+          planSteps.push({ id: 'link', title: 'Ensure Vercel link (project/org)', kind: 'link' })
+        } else if (provider === 'netlify') {
+          planSteps.push({ id: 'link', title: 'Ensure Netlify link (site)', kind: 'link' })
+        } else if (provider === 'cloudflare') {
+          planSteps.push({ id: 'link', title: 'Ensure Pages project (name)', kind: 'link' })
+        } else if (provider === 'github') {
+          planSteps.push({ id: 'link', title: 'Ensure repo origin and gh-pages branch config', kind: 'link' })
+        }
         const wantSync = opts.syncEnv === true || Boolean(envFile)
         if (wantSync) {
           planSteps.push({ id: 'env', title: `Sync environment from ${envFile ?? 'local .env'} (optimized writes)`, kind: 'env' })
         }
-        planSteps.push({ id: 'deploy', title: provider === 'vercel' ? `vercel deploy (${target === 'prod' ? 'production' : 'preview'})` : `netlify deploy --build${target === 'prod' ? ' --prod' : ''}` , kind: 'deploy' })
+        if (provider === 'vercel') {
+          planSteps.push({ id: 'deploy', title: `vercel deploy (${target === 'prod' ? 'production' : 'preview'})`, kind: 'deploy' })
+        } else if (provider === 'netlify') {
+          planSteps.push({ id: 'deploy', title: `netlify build && netlify deploy --no-build${target === 'prod' ? ' --prod' : ''}`, kind: 'deploy' })
+        } else if (provider === 'cloudflare') {
+          const pub = detection.publishDir ?? 'dist'
+          planSteps.push({ id: 'deploy', title: `wrangler pages deploy ${pub}`, kind: 'deploy' })
+        } else if (provider === 'github') {
+          planSteps.push({ id: 'deploy', title: 'static export (NEXT_EXPORT=1) → gh-pages publish', kind: 'deploy' })
+        }
         const plan: DeployPlan = {
-          provider,
+          provider: provider as DeployPlan['provider'],
           target,
           cwd: runCwd,
           steps: planSteps,

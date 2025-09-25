@@ -1,19 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { Command } from 'commander'
 
-vi.mock('../providers/vercel/adapter', async (orig) => {
-  const real = await orig<any>()
-  class FakeVercelAdapter {
-    public readonly name = 'vercel'
-    public validateAuth = vi.fn(async () => {})
-    public generateConfig = vi.fn(async () => 'vercel.json')
-    public deploy = vi.fn(async () => ({ url: 'https://x.vercel.app', projectId: 'p', provider: 'vercel', target: 'preview', durationMs: 1 }))
-    public open = vi.fn(async () => {})
-    public logs = vi.fn(async () => {})
-  }
-  return { ...real, VercelAdapter: FakeVercelAdapter as any }
-})
-
 // Mock process utils used by logs command to avoid calling real CLIs
 vi.mock('../utils/process', async (orig) => {
   const real = await orig<any>()
@@ -42,7 +29,7 @@ vi.mock('../utils/process', async (orig) => {
 
 import { registerDeployCommand } from '../commands/deploy'
 
-describe('logs routes through VercelAdapter', () => {
+describe('logs follow uses vercel logs (process spawn)', () => {
   it('invokes adapter.logs for follow', async () => {
     const program = new Command()
     registerDeployCommand(program)

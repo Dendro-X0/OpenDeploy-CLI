@@ -1,19 +1,19 @@
 import { Command } from 'commander'
-import { logger } from '../utils/logger'
+import { logger, isJsonMode } from '../utils/logger'
 import { detectNextApp } from '../core/detectors/next'
-import { VercelAdapter } from '../providers/vercel/adapter'
-import { NetlifyAdapter } from '../providers/netlify/adapter'
+import { loadProvider } from '../core/provider-system/provider'
 import type { DeployInputs } from '../types/deploy-inputs'
 import type { DetectionResult } from '../types/detection-result'
-import { join } from 'node:path'
+import { join, isAbsolute } from 'node:path'
 import { readFile } from 'node:fs/promises'
 import { fsx } from '../utils/fs'
-import { proc } from '../utils/process'
+import { proc, runWithRetry } from '../utils/process'
 import { startHeartbeat, type Stopper } from '../utils/progress'
 import { spinner } from '../utils/ui'
 import { mapProviderError } from '../utils/errors'
 import { printDeploySummary } from '../utils/summarize'
 import { envSync } from './env'
+// duplicate import removed
 import { computeRedactors } from '../utils/redaction'
 
 interface DeployOptions {
@@ -35,7 +35,7 @@ export function registerDeployCommand(program: Command): void {
   program
     .command('deploy')
     .description('Deploy the detected app to a provider')
-    .argument('<provider>', 'Target provider: vercel | netlify')
+    .argument('<provider>', 'Target provider: vercel | netlify | cloudflare | github')
     .option('--env <env>', 'Environment: prod | preview', 'preview')
     .option('--project <id>', 'Provider project/site ID')
     .option('--org <id>', 'Provider org/team ID')
@@ -47,9 +47,75 @@ export function registerDeployCommand(program: Command): void {
     .option('--alias <domain>', 'After deploy, assign this alias to the deployment (vercel only)')
     .action(async (provider: string, opts: DeployOptions): Promise<void> => {
       const rootCwd: string = process.cwd()
-      const targetCwd: string = opts.path ? join(rootCwd, opts.path) : rootCwd
+      const targetCwd: string = opts.path ? (isAbsolute(opts.path) ? opts.path : join(rootCwd, opts.path)) : rootCwd
       try {
-        if (opts.json === true) logger.setJsonOnly(true)
+        const jsonMode: boolean = isJsonMode(opts.json)
+        if (jsonMode) logger.setJsonOnly(true)
+        // Force CI-friendly env to suppress interactive prompts in child processes
+        if (jsonMode || opts.ci === true || process.env.OPD_NDJSON === '1') {
+          process.env.OPD_FORCE_CI = '1'
+        }
+        // Default: provider plugin flow. Use legacy only when OPD_LEGACY=1.
+        if (process.env.OPD_LEGACY !== '1') {
+          // Dry-run summary (no external side effects)
+          if (opts.dryRun === true) {
+            if (jsonMode) {
+              const payload = { provider, target: (opts.env === 'prod' ? 'prod' : 'preview'), mode: 'dry-run', final: true }
+              logger.jsonPrint(payload)
+              try { /* eslint-disable-next-line no-console */ console.log(JSON.stringify(payload)) } catch { /* ignore */ }
+              return
+            }
+            logger.info(`[dry-run] ${provider} deploy (plugins) (cwd=${targetCwd})`)
+            return
+          }
+          const p = await loadProvider(provider)
+          if (process.env.OPD_SKIP_VALIDATE !== '1') {
+            await p.validateAuth(targetCwd)
+          }
+          // Optional env sync for first-class providers
+          const wantSync: boolean = opts.syncEnv === true || process.env.OPD_SYNC_ENV === '1'
+          if (wantSync && (provider === 'vercel' || provider === 'netlify')) {
+            const envTarget: 'prod' | 'preview' = opts.env === 'prod' ? 'prod' : 'preview'
+            const candidates: readonly string[] = envTarget === 'prod' ? ['.env.production.local', '.env'] : ['.env', '.env.local']
+            let chosenFile: string | undefined
+            for (const f of candidates) { if (await fsx.exists(join(targetCwd, f))) { chosenFile = f; break } }
+            if (chosenFile) {
+              logger.section('Environment')
+              logger.note(`Syncing ${chosenFile} → ${provider}`)
+              try {
+                try { const patterns = await computeRedactors({ cwd: targetCwd, envFiles: [chosenFile], includeProcessEnv: true }); if (patterns.length > 0) logger.setRedactors(patterns) } catch { /* ignore */ }
+                await envSync({ provider: provider as 'vercel' | 'netlify', cwd: targetCwd, file: chosenFile, env: envTarget, yes: true, ci: Boolean(opts.ci), json: false, projectId: opts.project, orgId: opts.org, ignore: [], only: [] })
+                logger.success('Environment sync complete')
+              } catch (e) { logger.warn(`Env sync skipped: ${(e as Error).message}`) }
+            }
+          }
+          // Always perform a link step so providers can derive or create a project when missing
+          const linked = await p.link(targetCwd, { projectId: opts.project, orgId: opts.org })
+          const envTarget: 'preview' | 'production' = opts.env === 'prod' ? 'production' : 'preview'
+          // Detection hints for publishDir/framework
+          let publishDirHint: string | undefined
+          let frameworkHint: string | undefined
+          try {
+            const d = await p.detect(targetCwd)
+            publishDirHint = d.publishDir
+            frameworkHint = d.framework
+          } catch { /* ignore */ }
+          const t0: number = Date.now()
+          const buildRes = await p.build({ cwd: targetCwd, framework: frameworkHint, envTarget, publishDirHint, noBuild: false })
+          const deployRes = await p.deploy({ cwd: targetCwd, envTarget, project: linked, artifactDir: buildRes.artifactDir, alias: opts.alias })
+          const durationMs: number = Date.now() - t0
+          if (jsonMode) {
+            logger.jsonPrint({ url: deployRes.url, logsUrl: deployRes.logsUrl, projectId: linked.projectId ?? opts.project, provider, target: (opts.env === 'prod' ? 'prod' : 'preview'), durationMs, final: true })
+            return
+          }
+          if (deployRes.ok) {
+            if (deployRes.url) logger.success(`Deployed: ${deployRes.url}`)
+            else logger.success('Deployed')
+          } else {
+            throw new Error(deployRes.message || 'Deploy failed')
+          }
+          return
+        }
         const detection: DetectionResult = await detectNextApp({ cwd: targetCwd })
         // Optional: pre-deploy env sync for single-command UX
         const wantSync: boolean = opts.syncEnv === true || process.env.OPD_SYNC_ENV === '1'
@@ -75,9 +141,10 @@ export function registerDeployCommand(program: Command): void {
             logger.note('No local .env file found to sync')
           }
         }
+
         if (provider === 'vercel') {
-          const adapter = new VercelAdapter()
-          await adapter.validateAuth()
+          const plugin = await loadProvider('vercel')
+          await plugin.validateAuth(targetCwd)
           // Choose cwd for Vercel deploy in monorepos:
           // - Prefer target app directory when it is linked (has .vercel/project.json)
           // - Otherwise, if root is linked and target is not, deploy from root
@@ -99,6 +166,7 @@ export function registerDeployCommand(program: Command): void {
               await proc.run({ cmd: `vercel link ${linkFlags.join(' ')}`, cwd: runCwd })
             }
             const cmd: string = opts.env === 'prod' ? 'vercel deploy --prod --yes' : 'vercel deploy --yes'
+            const deployTimeout: number = Number.isFinite(Number(process.env.OPD_TIMEOUT_MS)) ? Number(process.env.OPD_TIMEOUT_MS) : 900_000
             const t0: number = Date.now()
             if (process.env.OPD_NDJSON === '1') logger.json({ event: 'phase', phase: 'deploy', provider: 'vercel', command: cmd, cwd: runCwd })
             sp.update('Vercel: deploying')
@@ -110,6 +178,7 @@ export function registerDeployCommand(program: Command): void {
             const controller = proc.spawnStream({
               cmd,
               cwd: runCwd,
+              timeoutMs: deployTimeout,
               onStdout: (chunk: string): void => {
                 if (process.env.OPD_NDJSON === '1') logger.json({ event: 'vc:stdout', line: chunk })
                 const m = chunk.match(urlRe)
@@ -184,40 +253,36 @@ export function registerDeployCommand(program: Command): void {
             }
             return
           }
-          const inputs: DeployInputs = {
-            provider: 'vercel',
-            detection,
-            env: (opts.env === 'prod' ? 'prod' : 'preview'),
-            dryRun: Boolean(opts.dryRun),
-            projectId: opts.project,
-            orgId: opts.org,
-            envVars: {}
-          }
-          const result = await adapter.deploy(inputs)
-          if (opts.json === true) {
-            logger.json(result)
-            return
-          }
-          logger.success(`Deployed: ${result.url}`)
-          if (result.logsUrl !== undefined) logger.info(`Inspect: ${result.logsUrl}`)
+          // legacy adapter-based deploy path removed; streaming deploy above covers Vercel
           return
         }
         if (provider === 'netlify') {
           if (opts.dryRun === true) {
-            logger.info('[dry-run] netlify deploy --build (target inferred by --env)')
+            logger.info('[dry-run] netlify build && netlify deploy --no-build (target inferred by --env)')
             if (opts.json === true || process.env.OPD_NDJSON === '1') {
               logger.json({ provider: 'netlify', target: (opts.env === 'prod' ? 'prod' : 'preview'), mode: 'dry-run', final: true })
             }
             return
           }
-          const adapter = new NetlifyAdapter()
-          await adapter.validateAuth()
+          const plugin = await loadProvider('netlify')
+          await plugin.validateAuth(targetCwd)
           // Ensure netlify.toml exists (idempotent)
           if (process.env.OPD_NDJSON === '1') logger.json({ event: 'phase', phase: 'generate-config', provider: 'netlify', path: targetCwd })
-          await adapter.generateConfig({ detection, overwrite: false })
+          await plugin.generateConfig({ detection, cwd: targetCwd, overwrite: false })
           const siteFlag: string = opts.project ? ` --site ${opts.project}` : ''
           const prodFlag: string = (opts.env === 'prod' ? ' --prod' : '')
-          const cmdNl: string = `netlify deploy --build${prodFlag}${siteFlag}`
+          // 1) Build with the proper context so env/behaviour match the target
+          const buildCtx: string = opts.env === 'prod' ? 'production' : 'deploy-preview'
+          const buildCmd: string = `netlify build --context ${buildCtx}`
+          if (process.env.OPD_NDJSON === '1') logger.json({ event: 'phase', phase: 'build', provider: 'netlify', command: buildCmd, cwd: targetCwd, site: opts.project })
+          {
+            const spBuild = spinner('Netlify: building')
+            const resBuild = await proc.run({ cmd: buildCmd, cwd: targetCwd })
+            spBuild.stop()
+            if (!resBuild.ok) throw new Error('Netlify build failed')
+          }
+          // 2) Deploy prebuilt artifacts without re-building
+          const cmdNl: string = `netlify deploy --no-build${prodFlag}${siteFlag}`
           if (process.env.OPD_NDJSON === '1') logger.json({ event: 'phase', phase: 'deploy', provider: 'netlify', command: cmdNl, cwd: targetCwd, site: opts.project })
           const sp2 = spinner('Netlify: deploying')
           const stop2: Stopper = startHeartbeat({ label: 'netlify deploy', hint: 'Tip: opendeploy open netlify --project <siteId>', intervalMs: process.env.OPD_NDJSON === '1' ? 5000 : 10000 })
@@ -226,9 +291,11 @@ export function registerDeployCommand(program: Command): void {
           const urlReNl = /https?:\/\/[^\s]+\.netlify\.app\b/g
           const logsReNl = /https?:\/\/[^\s]*netlify\.com[^\s]*/g
           const t0nl: number = Date.now()
+          const deployTimeoutNl: number = Number.isFinite(Number(process.env.OPD_TIMEOUT_MS)) ? Number(process.env.OPD_TIMEOUT_MS) : 900_000
           const controllerNl = proc.spawnStream({
             cmd: cmdNl,
             cwd: targetCwd,
+            timeoutMs: deployTimeoutNl,
             onStdout: (chunk: string): void => {
               if (process.env.OPD_NDJSON === '1') logger.json({ event: 'nl:stdout', line: chunk })
               const m = chunk.match(urlReNl)
@@ -306,9 +373,10 @@ export function registerDeployCommand(program: Command): void {
     .option('--open', 'Open the Inspect URL in the browser after resolving it')
     .action(async (provider: string, opts: { env?: 'prod' | 'preview'; follow?: boolean; path?: string; project?: string; org?: string; limit?: string; sha?: string; json?: boolean; open?: boolean; since?: string }): Promise<void> => {
       const rootCwd: string = process.cwd()
-      const targetCwd: string = opts.path ? join(rootCwd, opts.path) : rootCwd
+      const targetCwd: string = opts.path ? (isAbsolute(opts.path) ? opts.path : join(rootCwd, opts.path)) : rootCwd
       try {
         if (opts.json === true) logger.setJsonOnly(true)
+        if (opts.json === true || process.env.OPD_NDJSON === '1') process.env.OPD_FORCE_CI = '1'
         if (provider !== 'vercel' && provider !== 'netlify') {
           logger.error(`Logs not implemented for provider: ${provider}`)
           process.exitCode = 1
@@ -319,6 +387,10 @@ export function registerDeployCommand(program: Command): void {
           // Resolve site ID
           const runCwdNl: string = targetCwd
           let siteId: string | undefined = opts.project
+          // Emit early start event for NDJSON to indicate tailing has begun
+          if (opts.follow === true && isNdjson) {
+            logger.json({ event: 'logs:start', provider: 'netlify' })
+          }
           if (!siteId) {
             try {
               const state = await fsx.readJson<{ siteId?: string }>(join(runCwdNl, '.netlify', 'state.json'))
@@ -328,6 +400,7 @@ export function registerDeployCommand(program: Command): void {
           if (!siteId) throw new Error('Netlify site not resolved. Provide --project <siteId> or run inside a linked directory.')
           // List recent deploys
           const n: number = Math.max(1, parseInt(opts.limit ?? '1', 10) || 1)
+          const stepTimeout = Number.isFinite(Number(process.env.OPD_TIMEOUT_MS)) ? Number(process.env.OPD_TIMEOUT_MS) : 120_000
           const ls = await proc.run({ cmd: `netlify api listSiteDeploys --data '{"site_id":"${siteId}","per_page":${n}}'`, cwd: runCwdNl })
           if (!ls.ok) throw new Error(ls.stderr.trim() || ls.stdout.trim() || 'Failed to list Netlify deploys')
           type NlDeploy = { id?: string; state?: string; created_at?: string; commit_ref?: string | null }
@@ -354,7 +427,7 @@ export function registerDeployCommand(program: Command): void {
           } catch { /* ignore */ }
           const dashboardUrl: string | undefined = siteName ? `https://app.netlify.com/sites/${siteName}/deploys/${chosen.id}` : undefined
           if (opts.follow === true) {
-            if (isNdjson) logger.json({ event: 'logs:start', provider: 'netlify', deployId: chosen.id, siteId, dashboardUrl })
+            // We already emitted a start event above; continue with polling and end event
             // Poll deploy status until ready/error
             const start = Date.now()
             const spNl = (!isNdjson && process.env.OPD_JSON !== '1') ? spinner('Netlify: waiting for deploy') : null
@@ -389,11 +462,14 @@ export function registerDeployCommand(program: Command): void {
                   return
                 }
               } catch { /* ignore */ }
-              // Exponential backoff with jitter (base 3s, grow 1.5x, cap 15s, ±20% jitter)
+              // Exponential backoff with jitter
+              // Faster cadence in NDJSON mode (tests/CI) to finish under typical timeouts
               attempt += 1
-              const base = Math.min(15000, Math.round(3000 * Math.pow(1.5, attempt)))
-              const jitter = Math.round(base * (Math.random() * 0.4 - 0.2))
-              const sleep = Math.max(1000, base + jitter)
+              const base = isNdjson
+                ? Math.min(5000, Math.round(1500 * Math.pow(1.3, attempt)))
+                : Math.min(15000, Math.round(3000 * Math.pow(1.5, attempt)))
+              const jitter = Math.round(base * (Math.random() * 0.4 - 0.2)) // ±20%
+              const sleep = Math.max(500, base + jitter)
               if (isNdjson) logger.json({ event: 'nl:backoff', ms: sleep })
               await new Promise(r => setTimeout(r, sleep))
             }
@@ -429,7 +505,8 @@ export function registerDeployCommand(program: Command): void {
         if (opts.project) { flags.push('--project', opts.project) }
         if (opts.org) { flags.push('--org', opts.org) }
         const listCmd: string = `vercel ${flags.join(' ')}`
-        const ls = await proc.run({ cmd: listCmd, cwd: runCwd })
+        const stepTimeoutV = Number.isFinite(Number(process.env.OPD_TIMEOUT_MS)) ? Number(process.env.OPD_TIMEOUT_MS) : 120_000
+        const ls = await runWithRetry({ cmd: listCmd, cwd: runCwd }, { timeoutMs: stepTimeoutV })
         if (!ls.ok) throw new Error(ls.stderr.trim() || ls.stdout.trim() || 'Failed to list deployments')
         let depUrl: string | undefined
         try {
@@ -450,7 +527,7 @@ export function registerDeployCommand(program: Command): void {
         }
         if (!depUrl) throw new Error('No recent deployment found')
         // Resolve Inspect URL
-        const insp = await proc.run({ cmd: `vercel inspect ${depUrl}`, cwd: runCwd })
+        const insp = await runWithRetry({ cmd: `vercel inspect ${depUrl}`, cwd: runCwd }, { timeoutMs: stepTimeoutV })
         if (!insp.ok) throw new Error(insp.stderr.trim() || insp.stdout.trim() || 'Failed to fetch inspect info')
         const inspectRe2 = /https?:\/\/[^\s]*vercel\.com[^\s]*/g
         const im = insp.stdout.match(inspectRe2)
@@ -460,9 +537,15 @@ export function registerDeployCommand(program: Command): void {
           // Tail runtime logs via adapter; emit high-level NDJSON events if enabled
           if (isNdjsonV) logger.json({ event: 'logs:start', provider: 'vercel', url: depUrl, inspectUrl })
           const spV = (!isNdjsonV && process.env.OPD_JSON !== '1') ? spinner('Vercel: logs') : null
-          const adapter = new VercelAdapter()
           try {
-            await adapter.logs({ env: (opts.env === 'prod' ? 'prod' : 'preview'), projectId: opts.project, orgId: opts.org, cwd: runCwd, follow: true, since: opts.since })
+            // Logs follow remains implemented via `vercel logs` below; keep existing spawn behavior when follow=false.
+            // For follow=true here we continue to use `vercel logs` directly to avoid adapter usage.
+            const envFlag = (opts.env === 'prod' ? '--prod' : '')
+            const since = opts.since ? ` --since ${opts.since}` : ''
+            const follow = ' -f'
+            const cmd = `vercel logs ${depUrl}${follow}${since} ${envFlag}`.trim()
+            const ctrl = proc.spawnStream({ cmd, cwd: runCwd })
+            await ctrl.done
             if (spV) spV.succeed('Vercel: logs end')
             if (isNdjsonV) logger.json({ event: 'logs:end', ok: true, final: true })
             process.exitCode = 0
@@ -521,14 +604,14 @@ export function registerDeployCommand(program: Command): void {
             if (opts.org) linkFlags.push(`--org ${opts.org}`)
             await proc.run({ cmd: `vercel link ${linkFlags.join(' ')}`, cwd: runCwd })
           }
-          const adapter = new VercelAdapter()
-          await adapter.open(opts.project)
+          const plugin = await loadProvider('vercel')
+          await plugin.open({ projectId: opts.project, orgId: opts.org })
           logger.success('Opened Vercel dashboard')
           return
         }
         if (provider === 'netlify') {
-          const adapter = new NetlifyAdapter()
-          await adapter.open(opts.project)
+          const plugin = await loadProvider('netlify')
+          await plugin.open({ projectId: opts.project })
           logger.success('Opened Netlify dashboard')
           return
         }

@@ -12,10 +12,6 @@ vi.mock('../commands/env', async () => {
   const h = await import('../../tests/helpers/mocks')
   return h.envNoopMock()
 })
-vi.mock('../providers/netlify/adapter', async () => {
-  const h = await import('../../tests/helpers/mocks')
-  return h.netlifyAdapterNoopMock()
-})
 
 // Ensure netlify process calls are mocked deterministically
 vi.mock('../utils/process', async (orig) => {

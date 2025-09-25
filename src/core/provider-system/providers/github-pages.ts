@@ -1,0 +1,192 @@
+/**
+ * GitHub Pages provider (static-only) implementing the Provider interface.
+ * Local deploy uses `gh-pages` (via npx) to push the artifact folder to the gh-pages branch.
+ */
+import { join } from 'node:path'
+import { proc } from '../../../utils/process'
+import type { Provider } from '../provider-interface'
+import type { ProviderCapabilities } from '../provider-capabilities'
+import type { ProjectRef, BuildInputs, BuildResult, DeployInputs, DeployResult } from '../provider-types'
+import { fsx } from '../../../utils/fs'
+import { detectApp as autoDetect } from '../../detectors/auto'
+import { writeFile, stat } from 'node:fs/promises'
+import type { DetectionResult } from '../../../types/detection-result'
+
+/** Parse a Git remote URL (https or ssh) into owner/repo */
+function parseGitRemote(remote: string): { readonly owner?: string; readonly repo?: string } {
+  const t = remote.trim()
+  // https: https://github.com/owner/repo.git
+  const httpsRe = /^https?:\/\/github\.com\/(.+?)\/(.+?)(?:\.git)?$/i
+  const m1 = t.match(httpsRe)
+  if (m1) return { owner: m1[1], repo: m1[2] }
+  // ssh: git@github.com:owner/repo.git
+  const sshRe = /^git@github\.com:(.+?)\/(.+?)(?:\.git)?$/i
+  const m2 = t.match(sshRe)
+  if (m2) return { owner: m2[1], repo: m2[2] }
+  return {}
+}
+
+/**
+ * GitHub Pages provider.
+ * - Static-only deployments.
+ * - Uses `gh-pages` to push the artifact directory to the `gh-pages` branch.
+ */
+export class GithubPagesProvider implements Provider {
+  public readonly id: string = 'github'
+
+  /** Resolve a working gh-pages binary on the current platform. */
+  private async resolveGhPagesBin(cwd: string): Promise<string> {
+    const envBin = process.env.OPD_GHPAGES_BIN
+    if (envBin && envBin.length > 0) {
+      const chk = await proc.run({ cmd: `${envBin} --help`, cwd })
+      if (chk.ok) return envBin
+    }
+    // Try local install first
+    const local = await proc.run({ cmd: 'gh-pages --help', cwd })
+    if (local.ok) return 'gh-pages'
+    // Windows shims and absolute paths via where
+    if (process.platform === 'win32') {
+      const whereCmd = await proc.run({ cmd: 'where gh-pages.cmd', cwd })
+      if (whereCmd.ok) {
+        const first = (whereCmd.stdout || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean)[0]
+        if (first) return first
+      }
+      const whereExe = await proc.run({ cmd: 'where gh-pages', cwd })
+      if (whereExe.ok) {
+        const first = (whereExe.stdout || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean)[0]
+        if (first) return first
+      }
+    }
+    // NPX fallback (works cross platform)
+    const npx = await proc.run({ cmd: 'npx -y gh-pages --help', cwd })
+    if (npx.ok) return 'npx -y gh-pages'
+    if (process.platform === 'win32') {
+      const npxCmd = await proc.run({ cmd: 'npx.cmd -y gh-pages --help', cwd })
+      if (npxCmd.ok) return 'npx.cmd -y gh-pages'
+    }
+    // PNPM DLX fallback
+    const dlx = await proc.run({ cmd: 'pnpm dlx gh-pages --help', cwd })
+    if (dlx.ok) return 'pnpm dlx gh-pages'
+    if (process.platform === 'win32') {
+      const dlxCmd = await proc.run({ cmd: 'pnpm.cmd dlx gh-pages --help', cwd })
+      if (dlxCmd.ok) return 'pnpm.cmd dlx gh-pages'
+    }
+    return 'gh-pages'
+  }
+
+  /** Return capabilities to help the CLI adapt flows for this provider. */
+  public getCapabilities(): ProviderCapabilities {
+    return {
+      name: 'GitHub Pages',
+      supportsLocalBuild: true,
+      supportsRemoteBuild: false,
+      supportsStaticDeploy: true,
+      supportsServerless: false,
+      supportsEdgeFunctions: false,
+      supportsSsr: false,
+      hasProjectLinking: false,
+      envContexts: ['production'],
+      supportsLogsFollow: false,
+      supportsAliasDomains: false,
+      supportsRollback: false
+    }
+  }
+
+  /**
+   * Detect framework and publish directory.
+   * Falls back to 'dist' when detection is inconclusive.
+   */
+  public async detect(cwd: string): Promise<{ readonly framework?: string; readonly publishDir?: string }> {
+    try {
+      const det = await autoDetect({ cwd })
+      return { framework: det.framework as string | undefined, publishDir: det.publishDir ?? 'dist' }
+    } catch {
+      return { publishDir: 'dist' }
+    }
+  }
+
+  /** Validate Git and GitHub remote prerequisites for gh-pages deploy. */
+  public async validateAuth(cwd: string): Promise<void> {
+    // gh-pages uses git under the hood; ensure git exists and origin is set
+    const git = await proc.run({ cmd: 'git --version', cwd })
+    if (!git.ok) throw new Error('Git not found. Install Git to deploy to GitHub Pages.')
+    const origin = await proc.run({ cmd: 'git remote get-url origin', cwd })
+    if (!origin.ok) throw new Error('No GitHub remote detected. Ensure `origin` remote points to GitHub.')
+  }
+
+  /**
+   * Linking for GitHub Pages is implicit; derive owner/repo from the origin remote when possible.
+   * Returns a minimal project reference.
+   */
+  public async link(cwd: string, project: ProjectRef): Promise<ProjectRef> {
+    // Nothing to link explicitly for gh-pages; derive repo if possible
+    try {
+      const origin = await proc.run({ cmd: 'git remote get-url origin', cwd })
+      if (origin.ok) {
+        const { owner, repo } = parseGitRemote(origin.stdout.trim())
+        if (owner && repo) return { projectId: repo, orgId: owner, slug: `${owner}/${repo}` }
+      }
+    } catch { /* ignore */ }
+    const base = cwd.replace(/\\/g, '/').split('/').filter(Boolean).pop() || 'site'
+    return { projectId: base, slug: base }
+  }
+
+  /**
+   * Resolve an artifact directory. Does not run a user build.
+   */
+  public async build(args: BuildInputs): Promise<BuildResult> {
+    // Reuse existing artifact if present; otherwise point to hint/default
+    const candidates: string[] = []
+    if (args.publishDirHint) candidates.push(args.publishDirHint)
+    candidates.push('dist', 'build', 'out', 'public')
+    for (const c of candidates) {
+      const full = join(args.cwd, c)
+      try { if (await fsx.exists(full)) return { ok: true, artifactDir: full } } catch { /* ignore */ }
+    }
+    const hint = args.publishDirHint ? join(args.cwd, args.publishDirHint) : join(args.cwd, 'dist')
+    return { ok: true, artifactDir: hint }
+  }
+
+  /**
+   * Deploy by pushing the artifact directory to the gh-pages branch using gh-pages.
+   * Returns the public Pages URL when it can be inferred from the origin remote.
+   */
+  public async deploy(args: DeployInputs): Promise<DeployResult> {
+    const bin = await this.resolveGhPagesBin(args.cwd)
+    const dir: string = args.artifactDir || join(args.cwd, 'dist')
+    try { if (!(await fsx.exists(dir))) return { ok: false, message: `Artifact directory not found: ${dir}. Run your build or set publishDir.` } } catch { /* ignore */ }
+    // Push to gh-pages branch
+    const cmd = `${bin} -d ${dir}`
+    const out = await proc.run({ cmd, cwd: args.cwd })
+    if (!out.ok) return { ok: false, message: out.stderr.trim() || out.stdout.trim() || 'GitHub Pages deploy failed' }
+    // Best-effort URL from git remote
+    let url: string | undefined
+    try {
+      const origin = await proc.run({ cmd: 'git remote get-url origin', cwd: args.cwd })
+      if (origin.ok) {
+        const { owner, repo } = parseGitRemote(origin.stdout.trim())
+        if (owner && repo) url = `https://${owner}.github.io/${repo}/`
+      }
+    } catch { /* ignore */ }
+    return { ok: true, url }
+  }
+
+  public async open(_project: ProjectRef): Promise<void> { return }
+  public async envList(_project: ProjectRef): Promise<Record<string, string[]>> { return {} }
+  public async envSet(_project: ProjectRef, _kv: Record<string, string>): Promise<void> { return }
+  public async logs(_project: ProjectRef): Promise<void> { return }
+
+  /**
+   * GitHub Pages generally requires no config file, but we can ensure a `.nojekyll` marker.
+   * Returns the path to the marker file.
+   */
+  public async generateConfig(args: { readonly detection: DetectionResult; readonly cwd: string; readonly overwrite: boolean }): Promise<string> {
+    void args.detection
+    const p = join(args.cwd, '.nojekyll')
+    if (args.overwrite !== true) {
+      try { const s = await stat(p); if (s.isFile()) return p } catch { /* not exists */ }
+    }
+    await writeFile(p, '', 'utf8')
+    return p
+  }
+}

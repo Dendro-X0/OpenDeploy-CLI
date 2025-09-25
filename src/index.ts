@@ -13,11 +13,13 @@ import { registerCompletionCommand } from './commands/completion'
 import { registerPromoteCommand } from './commands/promote'
 import { registerExplainCommand } from './commands/explain'
 import { registerRollbackCommand } from './commands/rollback'
+import { registerProvidersCommand } from './commands/providers'
+import { registerPlanCommand } from './commands/plan'
 import { registerUpCommand } from './commands/up'
 import { registerStartCommand } from './commands/start'
 import { computeRedactors } from './utils/redaction'
 
-const VERSION: string = '0.1.0'
+const VERSION: string = '1.0.0-beta'
 
 function main(): void {
   const program: Command = new Command()
@@ -146,6 +148,8 @@ function main(): void {
   registerPromoteCommand(program)
   registerExplainCommand(program)
   registerRollbackCommand(program)
+  registerProvidersCommand(program)
+  registerPlanCommand(program)
   registerUpCommand(program)
   registerStartCommand(program)
   program.parseAsync(process.argv)

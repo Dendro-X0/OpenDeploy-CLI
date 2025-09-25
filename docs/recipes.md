@@ -6,22 +6,22 @@ Use the guided wizard to prepare or deploy with consistent JSON/NDJSON outputs.
 
 ```bash
 # Vercel: preview deploy and alias
-opendeploy start --provider vercel --env preview \
+opd start --provider vercel --env preview \
   --alias preview.example.com --json
 
 # Vercel: NDJSON progress (human suppressed)
-OPD_NDJSON=1 opendeploy start --provider vercel --env preview --ci
+OPD_NDJSON=1 opd start --provider vercel --env preview --ci
 
 # Netlify: prepare-only (JSON summary with recommend + logsUrl)
-opendeploy start --provider netlify --env preview \
+opd start --provider netlify --env preview \
   --project <SITE_ID> --json
 
 # Netlify: deploy prebuilt artifacts (no build)
-opendeploy start --provider netlify --env preview \
+opd start --provider netlify --env preview \
   --project <SITE_ID> --deploy --no-build --json --print-cmd
 
 # Monorepo: choose app directory for deploy
-opendeploy start --provider vercel --path apps/web --env preview --json
+opd start --provider vercel --path apps/web --env preview --json
 ```
 
 ## Remix family deploys (React Router v7)
@@ -34,19 +34,19 @@ Prerequisites:
 
 Steps:
 1. Detect and generate config (idempotent):
-   - `opendeploy detect`
-   - `opendeploy generate vercel` (writes `vercel.json` with `outputDirectory: build/client`)
-   - `opendeploy generate netlify` (writes `netlify.toml` with `publish = build/client`)
+   - `opd detect`
+   - `opd generate vercel` (writes `vercel.json` with `outputDirectory: build/client`)
+   - `opd generate netlify` (writes `netlify.toml` with `publish = build/client`)
 
 2. Netlify prepare-only via wizard (recommended first run):
-   - `opendeploy start --provider netlify --framework remix`
+   - `opd start --provider netlify --framework remix`
    - The wizard will preflight build and recommend:
      - `netlify deploy --dir build/client`
      - `netlify deploy --prod --dir build/client`
 
 3. Vercel deploy:
-   - Preview: `opendeploy up vercel --env preview`
-   - Production: `opendeploy up vercel --env prod`
+   - Preview: `opd up vercel --env preview`
+   - Production: `opd up vercel --env prod`
 
 Notes:
 - For SPA routing on Netlify add:
@@ -61,12 +61,12 @@ Notes:
 
 ## Single-command Deploy (Up)
 
-Use `opendeploy up` to sync env from a local file and deploy in one step.
+Use `opd up` to sync env from a local file and deploy in one step.
 
 ### Vercel (Preview)
 
 ```bash
-node "./OpenDeploy CLI/dist/index.js" up vercel \
+opd up vercel \
   --env preview \
   --ndjson --timestamps --ndjson-file
 ```
@@ -74,7 +74,7 @@ node "./OpenDeploy CLI/dist/index.js" up vercel \
 ### Netlify (Production)
 
 ```bash
-node "./OpenDeploy CLI/dist/index.js" up netlify \
+opd up netlify \
   --env prod \
   --project "$NETLIFY_SITE_ID" \
   --ndjson --timestamps --ndjson-file
@@ -88,7 +88,7 @@ Notes:
 
 ## Netlify Up (CI)
 
-Use `opendeploy up netlify` to sync env and deploy in a single CI step with streaming NDJSON and artifact sinks.
+Use `opd up netlify` to sync env and deploy in a single CI step with streaming NDJSON and artifact sinks.
 
 ```yaml
 name: Netlify Up (CI)
@@ -116,7 +116,7 @@ jobs:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
           NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
         run: |
-          node "./OpenDeploy CLI/dist/index.js" up netlify \
+          opd up netlify \
             --env prod \
             --project "$NETLIFY_SITE_ID" \
             --ndjson --timestamps \
@@ -124,7 +124,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: opendeploy-up-netlify
+          name: opd-up-netlify
           path: ./.artifacts
           if-no-files-found: ignore
 ```
@@ -155,11 +155,11 @@ jobs:
         run: pnpm --filter "OpenDeploy CLI" -C "OpenDeploy CLI" build
       - name: Up (preview)
         run: |
-          node "./OpenDeploy CLI/dist/index.js" --gha up vercel --env preview
+          opd --gha up vercel --env preview
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: opendeploy-artifacts
+          name: opd-artifacts
           path: ./.artifacts
           if-no-files-found: ignore
 ```
@@ -192,7 +192,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Env Diff
         run: |
-          node "./OpenDeploy CLI/dist/index.js" env diff vercel \
+          opd env diff vercel \
             --file ./apps/web/.env.production.local \
             --env prod \
             --project-id "$VERCEL_PROJECT_ID" --org-id "$VERCEL_ORG_ID" \
@@ -223,7 +223,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Validate env (composition)
         run: |
-          node "./OpenDeploy CLI/dist/index.js" env validate \
+          opd env validate \
             --file ./apps/web/.env.local \
             --schema builtin:google-oauth,builtin:github-oauth,builtin:resend-plus,builtin:s3-compat \
             --json --ci
@@ -231,12 +231,57 @@ jobs:
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
         run: |
-          node "./OpenDeploy CLI/dist/index.js" deploy netlify \
+          opd deploy netlify \
             --path apps/web \
             --env prod \
             --project ${{ secrets.NETLIFY_SITE_ID }} \
             --json
 ```
+
+## Netlify publishDir troubleshooting
+
+When using Netlify via `opd start --provider netlify` (or `opd start` in the installed CLI), the wizard infers a `publishDir` and prints recommended commands. If your deploy fails or the `publishDir` is empty/missing, check the framework notes below:
+
+- Next.js
+  - Preferred: install Netlify Next Runtime for optimal SSR/Edge.
+    - `pnpm add -D @netlify/next`
+    - Publish: `.next`
+  - Fallback: legacy plugin `@netlify/plugin-nextjs` (auto-detected when runtime missing).
+
+- Astro (static)
+  - Build: `astro build`
+  - Publish: `dist`
+
+- SvelteKit
+  - Static: use `@sveltejs/adapter-static` → Publish: `build`
+  - Netlify adapter (`@sveltejs/adapter-netlify`) produces server functions (not static). For prepare-only flow, stick to static output; for SSR, deploy via Netlify CI.
+
+- Remix (React Router v7 family)
+  - Build: `react-router build`
+  - Publish: `build/client`
+  - SPA routing (static): add redirect in `netlify.toml`:
+    ```toml
+    [[redirects]]
+      from = "/*"
+      to = "/index.html"
+      status = 200
+    ```
+
+- Nuxt
+  - Build: `npx nuxi build`
+  - Publish: `.output/public`
+
+General tips
+- Inspect wizard JSON: `publishDirExists` and `publishDirFileCount` fields indicate directory status.
+- Prebuild locally then deploy artifacts:
+  ```bash
+  pnpm build
+  opd start --provider netlify --env preview --deploy --no-build --project <SITE_ID> --print-cmd
+  ```
+- To generate `netlify.toml` only:
+  ```bash
+  opd start --provider netlify --generate-config-only
+  ```
 
 ## CI Output & Annotations
 
@@ -248,7 +293,7 @@ name: OpenDeploy (CI)
 on: [push]
 
 jobs:
-  opendeploy:
+  opd:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -263,12 +308,12 @@ jobs:
       # Doctor emits ::warning annotations for failed checks
       - name: Doctor (annotate)
         run: |
-          node "./OpenDeploy CLI/dist/index.js" doctor --ci
+          opd doctor --ci
 
       # Also persist JSON summary to artifact
       - name: Doctor (JSON sink)
         run: |
-          node "./OpenDeploy CLI/dist/index.js" doctor \
+          opd doctor \
             --json --summary-only \
             --json-file ./.artifacts/doctor.json
 
@@ -278,7 +323,7 @@ jobs:
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
         run: |
-          node "./OpenDeploy CLI/dist/index.js" env diff vercel \
+          opd env diff vercel \
             --file ./apps/web/.env.production.local \
             --env prod \
             --project-id "$VERCEL_PROJECT_ID" --org-id "$VERCEL_ORG_ID" \
@@ -290,7 +335,7 @@ jobs:
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
         run: |
-          node "./OpenDeploy CLI/dist/index.js" env diff vercel \
+          opd env diff vercel \
             --file ./apps/web/.env.production.local \
             --env prod \
             --project-id "$VERCEL_PROJECT_ID" --org-id "$VERCEL_ORG_ID" \
@@ -301,7 +346,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: opendeploy-artifacts
+          name: opd-artifacts
           path: ./.artifacts
           if-no-files-found: ignore
 ```
@@ -336,7 +381,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Validate Env
         run: |
-          node "./OpenDeploy CLI/dist/index.js" env validate \
+          opd env validate \
             --file ./apps/web/.env.local \
             --schema builtin:google-oauth,builtin:github-oauth,builtin:resend-plus,builtin:s3-compat \
             --json --ci
@@ -349,7 +394,7 @@ Sync preview env (public + DB only) and then run a Drizzle push. Works well in m
 ```bash
 # From workspace root
 # 1) Sync env for apps/web
-node "./OpenDeploy CLI/dist/index.js" env sync vercel \
+opd env sync vercel \
   --file ./apps/web/.env.local \
   --env preview \
   --only NEXT_PUBLIC_*,DATABASE_URL \
@@ -358,7 +403,7 @@ node "./OpenDeploy CLI/dist/index.js" env sync vercel \
 
 # 2) Seed/push from packages/db
 cd packages/db
-node "../../OpenDeploy CLI/dist/index.js" seed --schema script --script db:push --env preview
+opd seed --schema script --script db:push --env preview
 ```
 
 ## Monorepo Env Strategy
@@ -381,14 +426,14 @@ repo/
 
 ```bash
 cd apps/web
-node "../../OpenDeploy CLI/dist/index.js" env pull vercel --env preview \
+opd env pull vercel --env preview \
   --project-id "$VERCEL_PROJECT_ID" --org-id "$VERCEL_ORG_ID"
 ```
 
 - __Diff env before merging to main__:
 
 ```bash
-node "../../OpenDeploy CLI/dist/index.js" env diff vercel \
+opd env diff vercel \
   --file ./.env.production.local --env prod \
   --ignore NEXT_PUBLIC_* --fail-on-remove --json --ci
 ```
@@ -396,7 +441,7 @@ node "../../OpenDeploy CLI/dist/index.js" env diff vercel \
 - __Sync a subset__ (public and DB only):
 
 ```bash
-node "../../OpenDeploy CLI/dist/index.js" env sync vercel \
+opd env sync vercel \
   --file ./.env.local --env preview \
   --only NEXT_PUBLIC_*,DATABASE_URL --yes
 ```
@@ -406,8 +451,8 @@ node "../../OpenDeploy CLI/dist/index.js" env sync vercel \
 Run env + seed across multiple projects with a higher concurrency (e.g., 3). Each project still runs env then seed in order.
 
 ```bash
-# From repo root with opendeploy.config.json
-node "./OpenDeploy CLI/dist/index.js" run \
+# From repo root with opd.config.json
+opd run \
   --all \
   --env preview \
   --sync-env \
@@ -417,7 +462,7 @@ node "./OpenDeploy CLI/dist/index.js" run \
 
 ## Monorepo Matrix CI
 
-Run per-app jobs in parallel with a matrix, using `opendeploy run` for env sync/diff and seeding. Configure `policy` in `opendeploy.config.json` to set org-wide defaults.
+Run per-app jobs in parallel with a matrix, using `opd run` for env sync/diff and seeding. Configure `policy` in `opd.config.json` to set org-wide defaults.
 
 ```yaml
 name: Monorepo Matrix (Env + Seed)
@@ -445,7 +490,7 @@ jobs:
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
         run: |
-          node "./OpenDeploy CLI/dist/index.js" run \
+          opd run \
             --projects "${{ matrix.project }}" \
             --env preview \
             --diff-env --sync-env \

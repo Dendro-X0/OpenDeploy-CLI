@@ -3,25 +3,67 @@ import { spawn } from 'node:child_process'
 interface RunArgs { readonly cmd: string; readonly cwd?: string; readonly stdin?: string; readonly env?: Readonly<Record<string, string>> }
 
 function spawnStream(args: RunStreamArgs): StreamController {
-  const parts: readonly string[] = splitCmd(args.cmd)
-  const file: string = parts[0] ?? ''
-  const fileArgs: readonly string[] = parts.slice(1)
-  if (file.length === 0) return { stop: () => {}, done: Promise.resolve({ ok: false, exitCode: 1 }) }
-  const shellPath: string = process.env.SHELL ?? (process.platform === 'win32' ? (process.env.ComSpec ?? 'cmd.exe') : '/bin/sh')
-  const mergedEnv: NodeJS.ProcessEnv = args.env !== undefined ? { ...process.env, ...args.env } : process.env
-  const cp = spawn(file, [...fileArgs], { cwd: args.cwd, shell: shellPath, windowsHide: true, env: mergedEnv })
+  if (!args.cmd || args.cmd.trim().length === 0) return { stop: () => {}, done: Promise.resolve({ ok: false, exitCode: 1 }) }
+  const isWin: boolean = process.platform === 'win32'
+  // Inject CI-friendly env to suppress interactive prompts in provider CLIs when requested
+  const mergedEnv: NodeJS.ProcessEnv = args.env !== undefined ? { ...process.env, ...args.env } : { ...process.env }
+  const wantCI: boolean = process.env.OPD_FORCE_CI === '1' || process.env.OPD_JSON === '1' || process.env.OPD_NDJSON === '1' || process.env.CI === 'true' || process.env.CI === '1' || process.env.GITHUB_ACTIONS === 'true'
+  if (wantCI) {
+    mergedEnv.CI = '1'
+    if (!mergedEnv.FORCE_COLOR) mergedEnv.FORCE_COLOR = '0'
+    if (!mergedEnv.TERM) mergedEnv.TERM = 'dumb'
+  }
+  const shellFile: string = isWin ? (process.env.ComSpec ?? 'cmd.exe') : (process.env.SHELL ?? '/bin/sh')
+  const shellArgs: readonly string[] = isWin ? ['/d', '/s', '/c', args.cmd] : ['-c', args.cmd]
+  const cp = spawn(shellFile, [...shellArgs], { cwd: args.cwd, windowsHide: true, env: mergedEnv })
+  const t0 = Date.now()
+  if (process.env.OPD_DEBUG_PROCESS === '1') {
+    const info = `[proc] spawnStream pid=? cmd="${args.cmd}" cwd="${args.cwd ?? ''}" timeoutMs=${Number(args.timeoutMs) || 0}`
+    try { process.stderr.write(info + '\n') } catch { /* ignore */ }
+  }
   cp.stdout?.setEncoding('utf8')
   cp.stderr?.setEncoding('utf8')
   if (args.onStdout) cp.stdout?.on('data', (d: string) => { args.onStdout?.(d) })
   if (args.onStderr) cp.stderr?.on('data', (d: string) => { args.onStderr?.(d) })
+  let timeout: NodeJS.Timeout | undefined
   const done: Promise<{ readonly ok: boolean; readonly exitCode: number }> = new Promise((resolve) => {
-    cp.on('error', () => resolve({ ok: false, exitCode: 1 }))
-    cp.on('close', (code: number | null) => resolve({ ok: (code ?? 1) === 0, exitCode: code ?? 1 }))
+    cp.on('error', () => {
+      if (process.env.OPD_DEBUG_PROCESS === '1') {
+        try { process.stderr.write(`[proc] spawnStream error after ${Date.now() - t0}ms\n`) } catch { /* ignore */ }
+      }
+      resolve({ ok: false, exitCode: 1 })
+    })
+    cp.on('close', (code: number | null) => {
+      if (process.env.OPD_DEBUG_PROCESS === '1') {
+        const info = `[proc] spawnStream exit code=${code ?? 'null'} after ${Date.now() - t0}ms`
+        try { process.stderr.write(info + '\n') } catch { /* ignore */ }
+      }
+      resolve({ ok: (code ?? 1) === 0, exitCode: code ?? 1 })
+    })
   })
-  const stop = (): void => { try { cp.kill('SIGTERM') } catch { /* ignore */ } }
+  // Optional timeout watchdog
+  if (Number.isFinite(Number(args.timeoutMs)) && Number(args.timeoutMs) > 0) {
+    timeout = setTimeout(() => {
+      try { cp.kill() } catch { /* ignore */ }
+      try { if (isWin) spawn('taskkill', ['/T', '/F', '/PID', String(cp.pid)], { stdio: 'ignore', windowsHide: true }) } catch { /* ignore */ }
+    }, Number(args.timeoutMs))
+    cp.on('close', () => { if (timeout) clearTimeout(timeout) })
+    cp.on('error', () => { if (timeout) clearTimeout(timeout) })
+  }
+  const stop = (): void => {
+    try {
+      if (process.platform === 'win32') {
+        try { cp.kill() } catch { /* ignore */ }
+        try { spawn('taskkill', ['/T', '/F', '/PID', String(cp.pid)], { stdio: 'ignore', windowsHide: true }) } catch { /* ignore */ }
+      } else {
+        try { cp.kill('SIGTERM') } catch { /* ignore */ }
+        setTimeout(() => { try { cp.kill('SIGKILL' as any) } catch { /* ignore */ } }, 500)
+      }
+    } catch { /* ignore */ }
+  }
   return { stop, done }
 }
-interface RunStreamArgs { readonly cmd: string; readonly cwd?: string; readonly env?: Readonly<Record<string, string>>; readonly onStdout?: (chunk: string) => void; readonly onStderr?: (chunk: string) => void }
+interface RunStreamArgs { readonly cmd: string; readonly cwd?: string; readonly env?: Readonly<Record<string, string>>; readonly onStdout?: (chunk: string) => void; readonly onStderr?: (chunk: string) => void; readonly timeoutMs?: number }
 interface StreamController { readonly stop: () => void; readonly done: Promise<{ readonly ok: boolean; readonly exitCode: number }> }
 
 interface RunResult { readonly ok: boolean; readonly exitCode: number; readonly stdout: string; readonly stderr: string }
@@ -43,14 +85,24 @@ function splitCmd(cmdline: string): readonly string[] {
 }
 
 async function run(args: RunArgs): Promise<RunResult> {
-  const parts: readonly string[] = splitCmd(args.cmd)
-  const file: string = parts[0] ?? ''
-  const fileArgs: readonly string[] = parts.slice(1)
   return await new Promise<RunResult>((resolve) => {
-    if (file.length === 0) return resolve({ ok: false, exitCode: 1, stdout: '', stderr: 'empty command' })
-    const shellPath: string = process.env.SHELL ?? (process.platform === 'win32' ? (process.env.ComSpec ?? 'cmd.exe') : '/bin/sh')
-    const mergedEnv: NodeJS.ProcessEnv = args.env !== undefined ? { ...process.env, ...args.env } : process.env
-    const cp = spawn(file, [...fileArgs], { cwd: args.cwd, shell: shellPath, windowsHide: true, env: mergedEnv })
+    if (!args.cmd || args.cmd.trim().length === 0) return resolve({ ok: false, exitCode: 1, stdout: '', stderr: 'empty command' })
+    const isWin: boolean = process.platform === 'win32'
+    const mergedEnv: NodeJS.ProcessEnv = args.env !== undefined ? { ...process.env, ...args.env } : { ...process.env }
+    const wantCI: boolean = process.env.OPD_FORCE_CI === '1' || process.env.OPD_JSON === '1' || process.env.OPD_NDJSON === '1' || process.env.CI === 'true' || process.env.CI === '1' || process.env.GITHUB_ACTIONS === 'true'
+    if (wantCI) {
+      mergedEnv.CI = '1'
+      if (!mergedEnv.FORCE_COLOR) mergedEnv.FORCE_COLOR = '0'
+      if (!mergedEnv.TERM) mergedEnv.TERM = 'dumb'
+    }
+    const shellFile: string = isWin ? (process.env.ComSpec ?? 'cmd.exe') : (process.env.SHELL ?? '/bin/sh')
+    const shellArgs: readonly string[] = isWin ? ['/d', '/s', '/c', args.cmd] : ['-c', args.cmd]
+    const cp = spawn(shellFile, [...shellArgs], { cwd: args.cwd, windowsHide: true, env: mergedEnv })
+    const t0 = Date.now()
+    if (process.env.OPD_DEBUG_PROCESS === '1') {
+      const info = `[proc] run pid=? cmd="${args.cmd}" cwd="${args.cwd ?? ''}"`
+      try { process.stderr.write(info + '\n') } catch { /* ignore */ }
+    }
     const outChunks: Buffer[] = []
     const errChunks: Buffer[] = []
     cp.stdout?.on('data', (d: Buffer) => { outChunks.push(Buffer.from(d)) })
@@ -73,20 +125,46 @@ async function has(cmd: string): Promise<boolean> {
 }
 
 async function runStream(args: RunStreamArgs): Promise<{ readonly ok: boolean; readonly exitCode: number }> {
-  const parts: readonly string[] = splitCmd(args.cmd)
-  const file: string = parts[0] ?? ''
-  const fileArgs: readonly string[] = parts.slice(1)
   return await new Promise((resolve) => {
-    if (file.length === 0) return resolve({ ok: false, exitCode: 1 })
-    const shellPath: string = process.env.SHELL ?? (process.platform === 'win32' ? (process.env.ComSpec ?? 'cmd.exe') : '/bin/sh')
-    const mergedEnv: NodeJS.ProcessEnv = args.env !== undefined ? { ...process.env, ...args.env } : process.env
-    const cp = spawn(file, [...fileArgs], { cwd: args.cwd, shell: shellPath, windowsHide: true, env: mergedEnv })
+    if (!args.cmd || args.cmd.trim().length === 0) return resolve({ ok: false, exitCode: 1 })
+    const isWin: boolean = process.platform === 'win32'
+    const mergedEnv: NodeJS.ProcessEnv = args.env !== undefined ? { ...process.env, ...args.env } : { ...process.env }
+    const wantCI: boolean = process.env.OPD_FORCE_CI === '1' || process.env.OPD_JSON === '1' || process.env.OPD_NDJSON === '1' || process.env.CI === 'true' || process.env.CI === '1' || process.env.GITHUB_ACTIONS === 'true'
+    if (wantCI) {
+      mergedEnv.CI = '1'
+      if (!mergedEnv.FORCE_COLOR) mergedEnv.FORCE_COLOR = '0'
+      if (!mergedEnv.TERM) mergedEnv.TERM = 'dumb'
+    }
+    const shellFile: string = isWin ? (process.env.ComSpec ?? 'cmd.exe') : (process.env.SHELL ?? '/bin/sh')
+    const shellArgs: readonly string[] = isWin ? ['/d', '/s', '/c', args.cmd] : ['-c', args.cmd]
+    const cp = spawn(shellFile, [...shellArgs], { cwd: args.cwd, windowsHide: true, env: mergedEnv })
+    const t0 = Date.now()
     cp.stdout?.setEncoding('utf8')
     cp.stderr?.setEncoding('utf8')
     if (args.onStdout) cp.stdout?.on('data', (d: string) => { args.onStdout?.(d) })
     if (args.onStderr) cp.stderr?.on('data', (d: string) => { args.onStderr?.(d) })
-    cp.on('error', () => resolve({ ok: false, exitCode: 1 }))
-    cp.on('close', (code: number | null) => resolve({ ok: (code ?? 1) === 0, exitCode: code ?? 1 }))
+    let timeout: NodeJS.Timeout | undefined
+    cp.on('error', () => {
+      if (timeout) clearTimeout(timeout)
+      if (process.env.OPD_DEBUG_PROCESS === '1') {
+        try { process.stderr.write(`[proc] runStream error after ${Date.now() - t0}ms\n`) } catch { /* ignore */ }
+      }
+      resolve({ ok: false, exitCode: 1 })
+    })
+    cp.on('close', (code: number | null) => {
+      if (timeout) clearTimeout(timeout)
+      if (process.env.OPD_DEBUG_PROCESS === '1') {
+        const info = `[proc] runStream exit code=${code ?? 'null'} after ${Date.now() - t0}ms`
+        try { process.stderr.write(info + '\n') } catch { /* ignore */ }
+      }
+      resolve({ ok: (code ?? 1) === 0, exitCode: code ?? 1 })
+    })
+    if (Number.isFinite(Number(args.timeoutMs)) && Number(args.timeoutMs) > 0) {
+      timeout = setTimeout(() => {
+        try { cp.kill() } catch { /* ignore */ }
+        try { if (isWin) spawn('taskkill', ['/T', '/F', '/PID', String(cp.pid)], { stdio: 'ignore', windowsHide: true }) } catch { /* ignore */ }
+      }, Number(args.timeoutMs))
+    }
   })
 }
 

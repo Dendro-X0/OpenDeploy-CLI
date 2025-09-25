@@ -4,7 +4,9 @@
   "description": "OpenDeploy CLI — cross-provider deployment tool focused on Next.js first.",
   "type": "module",
   "bin": {
-    "opendeploy": "dist/index.js"
+    "opendeploy": "dist/index.js",
+    "opendeploy-cli": "dist/index.js",
+    "opd": "dist/index.js"
   },
   "scripts": {
     "build": "tsup",

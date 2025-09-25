@@ -1,6 +1,70 @@
 # OpenDeploy CLI Roadmap
 
-This roadmap outlines the planned scope for 1.0.0 Alpha and 1.0.0 Beta, followed by a post‑1.0 direction. Items reflect current implementation status and upcoming priorities.
+Updated: 2025‑09. The OpenDeploy CLI is now a plugin‑based toolkit focused on making deploys to modern web platforms reliable and predictable. This roadmap sets near‑term priorities for the frameworks and providers we actively support today, and defines clear acceptance criteria for a dependable 1.0 experience.
+
+Supported today
+
+- Frameworks: Next.js, Astro, SvelteKit, Nuxt, Remix (Beta)
+- Providers: Vercel, Netlify, Cloudflare Pages, GitHub Pages
+
+Guiding principles (always on)
+
+- Reliability first: deterministic JSON/NDJSON outputs, strict exit codes, non‑interactive CI by default (OPD_FORCE_CI), resilient process control (timeouts, retries, cleanup on timeout), and robust Windows support.
+- Simple by default: the same commands work across providers with safe defaults (`start`, `up`, `deploy`, `promote`, `rollback`, `logs`), plus clear `explain` and `doctor --fix` flows.
+- Observability built‑in: `opd providers --json` for capabilities, reproducible command plans, CI annotations/summaries, and docs that stay in sync (providers.json).
+
+Near‑term focus (Q4 2025)
+
+- Provider parity and polish
+  - Netlify: reduce prompts/hangs (prefer API linking), tuned backoff/jitter for status APIs, reliable `--no-build` and `publishDir` detection, clearer `logsUrl`.
+  - Cloudflare Pages: robust project auto‑create, publish dir/env detection, static exports first, explicit limits in docs.
+  - GitHub Pages: static export basePath defaults, `.nojekyll`, branch/source checks, faster no‑prompt publish.
+  - Vercel: solidify promote/rollback surfaces, edge/runtime hints, consistent logs/open.
+- Framework UX
+  - Next.js: friction‑free `up` (detect/link → env sync → deploy → logs/open), `explain` plan, `doctor --fix`, monorepo chosen‑cwd hints.
+  - Astro/SvelteKit/Nuxt: idempotent config generation; static/SSR notes by provider; env sync recipes.
+  - Remix (Beta): static path first; SSR caveats called out with links to adapters/community options.
+- CI & Observability
+  - Lean GHA templates for preview/prod, deterministic final summaries, NDJSON streaming, and `providers.json` auto‑sync in docs (already added).
+- Docs
+  - Provider pages with deep‑links, end‑to‑end examples, and live capability matrix fed by `providers.json`.
+
+Milestones
+
+- M0 — Toolkit stabilization (current)
+  - Provider adapter surface finalized (detect/link/build/deploy/logs/open/caps).
+  - Deterministic JSON/NDJSON for `deploy|up|promote|rollback|env|logs` with `{ final: true }` summaries.
+  - Timeouts/retries across long‑running steps; processes are cleaned up on timeout.
+  - Windows path resolution and CLI detection hardened.
+  - Docs: capabilities panel (providers.json) and provider pages with anchors/examples.
+- M1 — Provider polish (Vercel, Netlify, Cloudflare Pages, GitHub Pages)
+  - Netlify reliability (API linking, tuned polling, publishDir validation) and no‑prompt CI flows.
+  - Cloudflare Pages: project auto‑create, publishDir/env detection, explicit static constraints.
+  - GitHub Pages: fast `gh-pages` publish, basePath/.nojekyll safeguards, URL detection.
+  - Vercel: promote/rollback UX and logs/open parity.
+- M2 — Framework UX (Next.js first)
+  - One‑shot `opd up <provider>` with safe defaults, `explain`/`doctor --fix`, and monorepo hints.
+  - Config generators for Astro/SvelteKit/Nuxt refined; Remix static path improved.
+- M3 — CI ergonomics
+  - First‑class Actions for preview/prod, summaries/annotations, and providers matrix smoke tests.
+
+Acceptance criteria (snapshot)
+
+- Cross‑provider
+  - JSON/NDJSON outputs stable and documented; `--json` summaries deterministic.
+  - All long steps have timeouts/retries; no orphaned processes.
+  - `up` can complete non‑interactively with clear failures and links.
+- Provider specific
+  - Vercel: `deploy`, `promote`, `rollback`, `logs` parity; edge/runtime hints.
+  - Netlify: API linking preference; reliable deploys with tuned backoff; clear `logsUrl`.
+  - Cloudflare Pages: static export flow with auto‑create and correct publishDir/env handling.
+  - GitHub Pages: static export with basePath; `.nojekyll`; no‑prompt publish.
+
+Scope reminder
+
+- We will add more stacks/providers later; near‑term focus is on shipping a rock‑solid experience for the supported frameworks/providers above.
+
+## Archived Roadmap
 
 ## 1.0.0 Alpha (Completed)
 
@@ -88,7 +152,7 @@ Beta Acceptance Criteria
 
 ## 1.0.0 GA (Release)
 
-Status: Ready
+Status: Deferred (internal iteration)
 
 What’s done (highlights)
 
@@ -100,13 +164,22 @@ What’s done (highlights)
 - Docs: repo docs updated; Docs Site content aligned (Overview, Commands → start, Recipes → Wizard Quick Examples, Response Shapes → start).
 - Tests: unit + integration coverage for wizard outputs and NDJSON; Windows/Linux matrix.
 
+Distribution Strategy (interim)
+
+- Primary channel: GitHub Releases with signed/checked binaries and checksums.
+- Short command: ship `opd` binary/alias; keep `opendeploy` and `opendeploy-cli` for compatibility.
+- Secondary: Docker/OCI image on GHCR (`ghcr.io/dendro-x0/opd`).
+- Optional (future): Homebrew/Scoop/Winget/Nix/asdf formulae that pull from Releases.
+
 Release checklist
 
 1) Schemas: add optional wizard fields (`logsUrl`, `cwd`, `alias`, `siteId`, `siteName`) to `schemas/start.schema.json`.
-2) Docs Site: deploy to GitHub Pages (or Vercel) and link from README.
-3) Version: bump to `1.0.0` and tag release with concise notes (features, known limits, next plan).
+2) Docs Site: deploy to Vercel using OpenDeploy (dogfood `start`/`up`) and link from README.
+3) Version: bump to `1.0.0` (internal) and tag with concise notes (features, known limits, next plan).
 4) Changelog: include NDJSON parity, start flags (`--deploy`, `--no-build`, `--alias`).
 5) Smoke pass on real projects (Next, one Remix static, one Nuxt static) using `start` and `up`.
+6) Publish GitHub Release (primary channel): attach linux-x64/arm64, darwin-arm64/x64, win-x64 binaries; include checksums (and optional signatures); update Docs Quick Start to prefer `opd`.
+7) Optional (deferred): Publish to npm when available; keep `opendeploy`/`opendeploy-cli`/`opd` bins mapped in package.json.
 
 Known limitations (kept short in release notes)
 
@@ -117,15 +190,36 @@ Known limitations (kept short in release notes)
 
 Scope: 2–3 week cycle, small and focused.
 
+- Priority: Netlify Deployment Experience
+  - Wizard: make `start --deploy` a smooth path on Netlify (beyond prepare-only) with reliable build/no-build flows.
+  - Backoff/jitter and status polling tuned for Netlify APIs.
+  - `publishDir` inference and validation improvements; better hints and error tails.
+  - Linking UX: friendlier `netlify link` prompts; non-interactive `--project` mapping and detection.
+  - Logs: clearer `logsUrl` surfacing and `--show-logs` ergonomics.
+
+- Branding & Distribution
+  - Adopt `opd` as the primary command in docs and demos; retain `opendeploy`/`opendeploy-cli` as aliases.
+  - Automate GitHub Releases and GHCR publishing; add Homebrew/Scoop formulas pulling from Releases.
+
 - Detection & UX
   - React Router v7 detector + static fallback heuristics; clarify SPA redirects.
   - Monorepo chosen‑cwd advisories (doctor + wizard hints).
+  - Auth & Login UX: detect Vercel/Netlify login reliably (CLI `whoami` and config files); add `--skip-auth-check`/`--assume-logged-in` to avoid TTY timeouts; instruct manual `vercel login` when out-of-sync.
 - Schemas & CI
   - Publish `start.schema.json` with the optional fields above; add schema validation test.
   - Minimal matrix smoke workflow (`up --dry-run --json`) on templates.
 - Docs & DX
   - “When to use start vs up” callouts; more compact Quick Start on the site.
   - One short video tutorial (2–3 min) showcasing wizard + up.
+  - Dogfood deploy of the Docs site via `opendeploy start/up vercel` (no GitHub Pages).
+
+- Providers (Next targets)
+  - GitHub Pages: simplified provider and `generate gh-pages` workflow (optional path) to reduce CI/CD friction for OSS sites.
+  - Cloudflare Pages: exploratory adapter (static export first), document limits and basePath behavior.
+
+Rationale
+
+- Many developers are not CI/CD experts. Our core purpose is to simplify deployment workflows for resource‑constrained teams by encoding safe defaults, deterministic outputs, and provider‑aware guidance.
 
 ## Backlog (Not committed to a release)
 

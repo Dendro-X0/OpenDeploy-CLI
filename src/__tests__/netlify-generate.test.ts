@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { NetlifyAdapter } from '../providers/netlify/adapter'
+import { loadProvider } from '../core/provider-system/provider'
 import type { DetectionResult } from '../types/detection-result'
 
 async function makeTmp(): Promise<string> {
@@ -28,12 +28,12 @@ function fakeDetection(args: { cwd: string; framework: DetectionResult['framewor
   }
 }
 
-describe('NetlifyAdapter.generateConfig', () => {
+describe('Netlify provider generateConfig', () => {
   it('writes minimal netlify.toml for Astro with publish and build', async () => {
     const cwd: string = await makeTmp()
-    const adapter = new NetlifyAdapter()
+    const plugin = await loadProvider('netlify')
     const detection: DetectionResult = fakeDetection({ cwd, framework: 'astro', build: 'astro build', publish: 'dist' })
-    const path: string = await adapter.generateConfig({ detection, overwrite: true })
+    const path: string = await plugin.generateConfig({ detection, cwd, overwrite: true })
     expect(path.endsWith('netlify.toml')).toBe(true)
     const body: string = await readFile(path, 'utf8')
     expect(body).toContain('publish = "dist"')
@@ -42,10 +42,10 @@ describe('NetlifyAdapter.generateConfig', () => {
 
   it('is idempotent when overwrite is false', async () => {
     const cwd: string = await makeTmp()
-    const adapter = new NetlifyAdapter()
+    const plugin = await loadProvider('netlify')
     const detection: DetectionResult = fakeDetection({ cwd, framework: 'remix', build: 'remix build', publish: 'build/client' })
-    const p1: string = await adapter.generateConfig({ detection, overwrite: true })
-    const p2: string = await adapter.generateConfig({ detection, overwrite: false })
+    const p1: string = await plugin.generateConfig({ detection, cwd, overwrite: true })
+    const p2: string = await plugin.generateConfig({ detection, cwd, overwrite: false })
     expect(p1).toBe(p2)
     const body: string = await readFile(p2, 'utf8')
     expect(body).toContain('publish = "build/client"')

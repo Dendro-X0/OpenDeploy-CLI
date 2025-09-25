@@ -94,25 +94,46 @@ vi.mock('../core/detectors/next', () => ({
   })
 }))
 
-// Hoisted flags to control adapter auth behavior
+// Hoisted flags to control provider auth behavior
 const { mockFailVercelAuth, mockFailNetlifyAuth } = vi.hoisted(() => ({
   mockFailVercelAuth: { value: false },
   mockFailNetlifyAuth: { value: false }
 }))
 
-// Mock provider adapters; validateAuth throws when flags set
-vi.mock('../providers/vercel/adapter', () => ({
-  VercelAdapter: class {
-    async validateAuth() { if (mockFailVercelAuth.value) throw new Error('not logged in') }
-    async generateConfig() { return }
-    async open() { return }
-  }
-}))
-vi.mock('../providers/netlify/adapter', () => ({
-  NetlifyAdapter: class {
-    async validateAuth() { if (mockFailNetlifyAuth.value) throw new Error('not logged in') }
-    async generateConfig() { return }
-    async open() { return }
+// Mock provider loader to inject auth failures deterministically
+vi.mock('../core/provider-system/provider', () => ({
+  loadProvider: async (name: string) => {
+    return {
+      id: name,
+      getCapabilities: () => ({
+        name: name === 'vercel' ? 'Vercel' : 'Netlify',
+        supportsLocalBuild: true,
+        supportsRemoteBuild: true,
+        supportsStaticDeploy: true,
+        supportsServerless: true,
+        supportsEdgeFunctions: true,
+        supportsSsr: true,
+        hasProjectLinking: true,
+        envContexts: ['preview','production'],
+        supportsLogsFollow: true,
+        supportsAliasDomains: true,
+        supportsRollback: false
+      }),
+      async detect() { return {} },
+      async validateAuth() {
+        if (name === 'vercel' && mockFailVercelAuth.value) throw new Error('not logged in')
+        if (name === 'netlify' && mockFailNetlifyAuth.value) throw new Error('not logged in')
+        return
+      },
+      async link(_cwd: string, proj: any) { return proj },
+      async build(_args: any) { return { ok: true } },
+      async deploy(_args: any) { return { ok: true } },
+      async open() { return },
+      async envList() { return {} },
+      async envSet() { return },
+      async logs() { return },
+      async generateConfig() { return 'noop' }
+    }
   }
 }))
 

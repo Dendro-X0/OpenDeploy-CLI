@@ -1,0 +1,8 @@
+{
+  "startDefaults": {
+    "framework": "next",
+    "provider": "vercel",
+    "env": "preview",
+    "syncEnv": false
+  }
+}
