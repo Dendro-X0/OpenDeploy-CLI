@@ -169,7 +169,7 @@ See `docs/commands.md#start` for details.
 
 1) Create provider plugin file
 - Path: `src/core/provider-system/providers/<name>.ts`
-- Implement `ProviderAdapter` methods: `validateAuth`, `generateConfig`, `deploy`, `open`, `logs`.
+- Implement `Provider` interface methods: `validateAuth`, `generateConfig`, `deploy`, `open`, `logs`.
 - Keep each method short and single-purpose; prefer small helpers.
 
 2) Use `proc.run` and `proc.spawnStream`
@@ -181,7 +181,7 @@ See `docs/commands.md#start` for details.
 - For monorepos, prefer linked app directory and fall back to root.
 
 4) Testing
-- Use Vitest with `vi.mock` to replace provider adapters or process helpers.
+- Use Vitest with `vi.mock` to replace provider plugins (mock `loadProvider`) or process helpers.
 - Example pattern:
 ```ts
 vi.mock('../../utils/process', async (orig) => {
