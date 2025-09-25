@@ -10,13 +10,13 @@
   status = 200
 ```
 
-- SSR requires an adapter or serverless build; static is supported out of the box.
+- SSR for some frameworks may require a framework adapter or a serverless build; static is supported out of the box.
 
 ### React Router v7 (Vercel)
 
-- Static preview/prod deploys are supported by setting `outputDirectory` to `build/client` (the adapter writes this in `vercel.json`).
+- Static preview/prod deploys are supported by setting `outputDirectory` to `build/client` (the provider plugin writes this in `vercel.json`).
 - The CLI detects these projects and writes `vercel.json` idempotently.
-- SSR requires a serverless adapter and is not provided by default.
+- SSR requires a framework/serverless adapter and is not provided by default by OpenDeploy.
 
 ### Config generation (idempotent)
 
@@ -35,7 +35,7 @@ OpenDeploy writes a minimal `vercel.json` using the Detection Engine v2:
 
 - Keeps your existing config unless `--overwrite` is passed.
 - Ensures safe defaults for Next.js and other supported frameworks.
-- The `start` wizard and `generate vercel` use the same adapter logic.
+- The `start` wizard and `generate vercel` use the same provider plugin logic.
 
 When editing manually, see Vercel docs for advanced options (headers, redirects, images, i18n).
 
@@ -87,26 +87,7 @@ Notes:
   - Netlify: `@remix-run/netlify`
     - Docs: https://github.com/remix-run/remix/tree/main/packages/remix-netlify
 
-If you are deploying static-only versions, the generated `vercel.json` and `netlify.toml` are sufficient; SSR requires the adapters above.
-
-# Provider Adapter API
-
-This document describes the provider adapter interface used by OpenDeploy CLI and how to implement a new provider.
-
-## Interface
-
-File: `src/types/provider-adapter.ts`
-
-```ts
-export interface ProviderAdapter {
-  readonly name: ProviderName
-  validateAuth(): Promise<void>
-  generateConfig(args: { readonly detection: DetectionResult; readonly overwrite: boolean }): Promise<string>
-  deploy(inputs: DeployInputs): Promise<DeployResult>
-  open(projectId?: string): Promise<void>
-  logs(args: { readonly projectId?: string; readonly env: 'prod' | 'preview'; readonly follow?: boolean; readonly since?: string; readonly cwd?: string; readonly orgId?: string }): Promise<void>
-}
-```
+If you are deploying static-only versions, the generated `vercel.json` and `netlify.toml` are sufficient; SSR may require framework-specific adapters (e.g., SvelteKit adapters) within your application, but OpenDeploy itself now uses provider plugins.
 
 Key types:
 - `DetectionResult`: result of stack detection (rootDir, buildCommand, etc.)
@@ -136,33 +117,40 @@ Key types:
   - Print or stream provider logs. The CLI handles UX/NDJSON; adapters should execute the provider CLI/API.
   - Arguments include `env`, `projectId`, `orgId`, `cwd`, `follow`, `since`.
 
-## CLI vs Adapter Responsibilities
+## CLI vs Provider Plugin Responsibilities
 
 - CLI (`src/commands/deploy.ts`)
   - UX, flags, NDJSON/human output, spinners, summaries.
   - Monorepo cwd selection and link hints.
 
-- Adapter (`src/providers/*/adapter.ts`)
+- Provider Plugin (`src/core/provider-system/providers/*`)
   - Low-level provider operations (spawn provider CLI, read/write config files).
   - Keep logic small, testable, and side-effect aware.
 
-## Minimal Adapter Skeleton
+## Minimal Provider Plugin Skeleton
 
 ```ts
-export class ExampleAdapter implements ProviderAdapter {
-  public readonly name = 'example'
-  async validateAuth(): Promise<void> { /* ... */ }
-  async generateConfig(args: { detection: DetectionResult; overwrite: boolean }): Promise<string> { /* ... */ return '' }
-  async deploy(inputs: DeployInputs): Promise<DeployResult> { /* ... */ return { url: '', projectId: '', provider: 'example', target: inputs.env, durationMs: 0 } }
-  async open(projectId?: string): Promise<void> { void projectId }
-  async logs(args: { projectId?: string; env: 'prod'|'preview'; follow?: boolean; since?: string; cwd?: string; orgId?: string }): Promise<void> { void args }
+import type { Provider } from '../../src/core/provider-system/provider-interface'
+export class ExampleProvider implements Provider {
+  public readonly id = 'example'
+  getCapabilities() { return { /* ... */ } as any }
+  async detect(cwd: string) { void cwd; return {} }
+  async validateAuth(cwd: string) { void cwd }
+  async link(cwd: string, project: { projectId?: string; orgId?: string }) { void cwd; return project }
+  async build(args: any) { void args; return { ok: true } }
+  async deploy(args: any) { void args; return { ok: true, url: 'https://ex.example.com', logsUrl: undefined, durationMs: 0 } }
+  async open(project: { projectId?: string; orgId?: string }) { void project }
+  async envList(project: any) { void project; return {} }
+  async envSet(project: any, kv: Record<string, string>) { void project; void kv }
+  async logs(project: any, options?: { follow?: boolean }) { void project; void options }
+  async generateConfig(args: { detection: any; cwd: string; overwrite: boolean }) { void args; return 'config-path' }
 }
 ```
 
-## Testing Adapters
+## Testing Provider Plugins
 
-- Unit test adapter methods by mocking `proc.run`/`proc.spawnStream` from `src/utils/process`.
-- Add integration tests in CLI level to ensure adapters are invoked (mock the adapter class and assert calls).
+- Unit test provider plugin methods by mocking `proc.run`/`proc.spawnStream` from `src/utils/process`.
+- Add integration tests at CLI level to ensure providers are invoked (mock `loadProvider()` and assert calls).
 
 ## Best Practices
 
@@ -173,14 +161,14 @@ export class ExampleAdapter implements ProviderAdapter {
 ## Wizard (start) behavior by provider
 
 - Vercel: the `start` wizard performs the deploy (preview/prod) and prints `url`/`logsUrl`. When `--alias` is provided, the wizard attempts to set an alias after deploy.
-- Netlify: the `start` wizard is prepare‑only by default. It generates a safe `netlify.toml` (or uses the adapter for Next.js) and prints recommended `netlify deploy` commands with inferred `--dir`. Optionally, pass `--deploy` to execute a real deploy (supports `--no-build` to deploy prebuilt artifacts). Summaries include `logsUrl` pointing to the Netlify dashboard.
+- Netlify: the `start` wizard is prepare‑only by default. It generates a safe `netlify.toml` (uses the provider plugin to apply Next.js runtime/plugin when appropriate) and prints recommended `netlify deploy` commands with inferred `--dir`. Optionally, pass `--deploy` to execute a real deploy (supports `--no-build` to deploy prebuilt artifacts). Summaries include `logsUrl` pointing to the Netlify dashboard.
 
 See `docs/commands.md#start` for details.
 
-## Contributor Guide: Building an Adapter
+## Contributor Guide: Building a Provider Plugin
 
-1) Create adapter file
-- Path: `src/providers/<name>/adapter.ts`
+1) Create provider plugin file
+- Path: `src/core/provider-system/providers/<name>.ts`
 - Implement `ProviderAdapter` methods: `validateAuth`, `generateConfig`, `deploy`, `open`, `logs`.
 - Keep each method short and single-purpose; prefer small helpers.
 

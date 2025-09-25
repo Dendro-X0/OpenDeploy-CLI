@@ -32,7 +32,7 @@ Near‑term focus (Q4 2025)
 Milestones
 
 - M0 — Toolkit stabilization (current)
-  - Provider adapter surface finalized (detect/link/build/deploy/logs/open/caps).
+  - Provider plugin surface finalized (detect/link/build/deploy/logs/open/caps).
   - Deterministic JSON/NDJSON for `deploy|up|promote|rollback|env|logs` with `{ final: true }` summaries.
   - Timeouts/retries across long‑running steps; processes are cleaned up on timeout.
   - Windows path resolution and CLI detection hardened.
@@ -111,8 +111,8 @@ Focus: provider parity, CI ergonomics, extensibility.
 - Achievements
   - Netlify env and deploy parity (JSON/NDJSON, exit codes) — [Done]
   - CI templates and docs (recipes, sinks, annotations) — [Done]
-  - Provider adapter API documented (docs/providers.md) — [Done]
-  - Logs/open routed through provider adapters — Done
+  - Provider plugin API documented (docs/providers.md) — [Done]
+  - Logs/open routed through provider plugins — Done
   - Env validate: rules schema (regex/allowed/oneOf/requireIf) and profile builtins (blogkit, ecommercekit) — [Done]
   - Interactive config init and richer TTY output — [Done]
   - Shell completions command — [Done]
@@ -136,7 +136,7 @@ Focus: provider parity, CI ergonomics, extensibility.
   - First‑class GitHub Actions templates (diff‑only, sync‑and‑deploy, promote). [Done]
   - Command summaries and annotations. [Done]
 - Plugins/Extensibility
-  - Provider adapter API documented; experimental external providers. [API documented; adapters used for logs/open — Done]
+  - Provider plugin API documented; experimental external providers. [API documented; plugins used for logs/open — Done]
 - Performance & Caching
   - Cache remote env snapshots. [Done]
   - Backoff/rate‑limit strategies. [Partial]
@@ -148,7 +148,7 @@ Focus: provider parity, CI ergonomics, extensibility.
 Beta Acceptance Criteria
   - Netlify env and deploy parity with consistent JSON & exit codes. [Achieved]
   - CI templates published and referenced in docs. [Achieved]
-  - Provider adapter API documented. [Achieved]
+  - Provider plugin API documented. [Achieved]
 
 ## 1.0.0 GA (Release)
 
@@ -215,7 +215,7 @@ Scope: 2–3 week cycle, small and focused.
 
 - Providers (Next targets)
   - GitHub Pages: simplified provider and `generate gh-pages` workflow (optional path) to reduce CI/CD friction for OSS sites.
-  - Cloudflare Pages: exploratory adapter (static export first), document limits and basePath behavior.
+  - Cloudflare Pages: exploratory provider plugin (static export first), document limits and basePath behavior.
 
 Rationale
 
@@ -255,7 +255,7 @@ Deliverables: UX spec for `explain`, `promote`, `rollback`, `doctor --fix` cover
 Goal: reuse the Next.js experience across frameworks via detection + recipe scaffolding.
 
 - Detection & metadata
-  - [ ] `framework detect` with confidence and required features (SSR/SSG, adapter)
+  - [ ] `framework detect` with confidence and required features (SSR/SSG, framework adapter)
   - [ ] Profile env keys (common .env keys per template)
 - Recipes (scaffolding)
   - [ ] `opendeploy recipe apply astro-basic`
@@ -293,9 +293,9 @@ Template spec (draft)
 Initial targets
 
 - Astro
-  - Vercel + Netlify adapters; `dist/` output; SSR/SSG flags
+  - Vercel + Netlify framework adapters; `dist/` output; SSR/SSG flags
 - SvelteKit
-  - Adapters (Vercel, Netlify); `adapter-*` dependency checks
+  - Framework adapters (Vercel, Netlify); `adapter-*` dependency checks
 - Remix (Monorepo)
   - Workspace-aware path selection; Verce/Netlify functions dir hints; Vite/Remix build commands
 - Expo (Env Management first)

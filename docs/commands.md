@@ -33,7 +33,7 @@ opd init [--json]
 
 Behavior:
 - Prompts to select Vercel and/or Netlify.
-- Generates `vercel.json`/`netlify.toml` (idempotent) via adapters.
+- Generates `vercel.json`/`netlify.toml` (idempotent) via provider plugins.
 - Writes `opd.config.json` with your env policy (auto‑sync on/off, filters).
 
 Use these flags with any command to tailor output for CI or local use:
@@ -115,7 +115,7 @@ Behavior:
 - Shows provider login status and offers one‑click login if required.
 - If `--project/--org` (Vercel) or `--project` (Netlify) is provided and the directory is not linked yet, the wizard offers to run `vercel link` / `netlify link` inline.
 - Env sync is optional; when enabled, the wizard chooses a sensible `.env` file per target.
-- Config generation: ensures minimal `vercel.json` (Vercel) and a safe `netlify.toml` when applicable. For Next.js on Netlify, the adapter applies the official Next runtime/plugin.
+- Config generation: ensures minimal `vercel.json` (Vercel) and a safe `netlify.toml` when applicable. For Next.js on Netlify, the provider plugin applies the official Next runtime/plugin when installed, otherwise falls back to the legacy plugin.
 - Preflight: optionally runs a local build (skipped in `--ci`) and validates that Netlify publishDir contains output for non‑Next frameworks.
 - Vercel: performs the deploy (preview/prod) and prints `url`/`logsUrl`. When `--alias` is provided, the wizard attempts to alias the deployment to the given domain.
 - Netlify: prepare‑only by default. The wizard generates config and prints recommended `netlify deploy` commands (preview/prod) with an inferred `--dir`. Optionally, pass `--deploy` to execute a real deploy inside the wizard. With `--no-build`, the wizard deploys prebuilt artifacts from `--dir`.

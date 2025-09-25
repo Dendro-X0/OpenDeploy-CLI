@@ -30,7 +30,7 @@ vi.mock('../utils/process', async (orig) => {
 import { registerDeployCommand } from '../commands/deploy'
 
 describe('logs follow uses vercel logs (process spawn)', () => {
-  it('invokes adapter.logs for follow', async () => {
+  it('invokes process spawn for follow', async () => {
     const program = new Command()
     registerDeployCommand(program)
     const spyJson = vi.spyOn(console, 'log').mockImplementation(() => {})
@@ -40,7 +40,7 @@ describe('logs follow uses vercel logs (process spawn)', () => {
       // We will mock process utils to avoid actually calling vercel list/inspect
       await program.parseAsync(['node','test','logs','vercel','--follow'])
       expect(true).toBe(true)
-      // If the adapter replacement was wired, parseAsync should complete without errors
+      // If process spawning is wired, parseAsync should complete without errors
     } finally {
       delete process.env.OPD_NDJSON
       spyJson.mockRestore()
