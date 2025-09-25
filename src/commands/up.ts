@@ -150,7 +150,8 @@ export function registerUpCommand(program: Command): void {
           const buildRes = await p.build({ cwd: targetCwd, framework: frameworkHint, envTarget: envTargetUp, publishDirHint, noBuild: Boolean(opts.noBuild) })
           const deployRes = await p.deploy({ cwd: targetCwd, envTarget: envTargetUp, project: linked, artifactDir: buildRes.artifactDir, alias: opts.alias })
           const durationMs = Date.now() - t0
-          if (jsonMode) { logger.jsonPrint({ ok: true, action: 'up' as const, provider: prov, target: (opts.env === 'prod' ? 'prod' : 'preview'), url: deployRes.url, logsUrl: deployRes.logsUrl, durationMs, final: true }); return }
+          const targetShort: 'prod' | 'preview' = envTargetUp === 'production' ? 'prod' : 'preview'
+          if (jsonMode) { logger.jsonPrint({ ok: true, action: 'up' as const, provider: prov, target: targetShort, url: deployRes.url, logsUrl: deployRes.logsUrl, durationMs, final: true }); return }
           if (deployRes.ok) {
             if (deployRes.url) logger.success(`${opts.env === 'prod' ? 'Production' : 'Preview'}: ${deployRes.url}`)
             else logger.success(`${opts.env === 'prod' ? 'Production' : 'Preview'} deploy complete`)
