@@ -38,8 +38,11 @@ describe('vercel inspect fallback (up --json)', () => {
     const lines: string[] = []
     console.log = ((...args: unknown[]) => { lines.push(String(args[0])) }) as any
     await program.parseAsync(['node','test','up','vercel','--env','preview','--json'])
-    const lastLine = lines.pop() ?? ''
-    const js = JSON.parse(lastLine)
+    // Pick the most recent JSON line that looks like the final up summary for vercel
+    const candidate = [...lines].reverse().find((l) => {
+      return typeof l === 'string' && l.includes('"action":"up"') && l.includes('"provider":"vercel"') && l.includes('"final":true')
+    }) ?? (lines[lines.length - 1] ?? '')
+    const js = JSON.parse(candidate)
     expect(js.provider).toBe('vercel')
     expect(js.target).toBe('preview')
     expect(typeof js.url).toBe('string')
