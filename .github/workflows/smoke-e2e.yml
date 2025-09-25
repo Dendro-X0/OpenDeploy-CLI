@@ -7,7 +7,13 @@ on:
 
 jobs:
   next-vercel-dryrun:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -22,6 +28,8 @@ jobs:
       - name: Build CLI
         run: pnpm build
         working-directory: OpenDeploy CLI
+      - name: Prepare artifacts dir
+        run: mkdir -p ./.artifacts
       - name: Scaffold Next.js app
         run: |
           npx create-next-app@latest smoke-next --ts --eslint --src-dir --app --tailwind --use-pnpm --no-git --import-alias @/*
@@ -29,13 +37,31 @@ jobs:
           pnpm build
       - name: Wizard dry-run (vercel)
         run: |
-          node "OpenDeploy CLI/dist/index.js" start --provider vercel --env preview --json --dry-run --summary-only
+          node "OpenDeploy CLI/dist/index.js" start --provider vercel --env preview \
+            --json --ndjson --dry-run --summary-only \
+            --json-file ./.artifacts/next-vercel-start.json \
+            --ndjson-file ./.artifacts/next-vercel-start.ndjson
       - name: Up dry-run (vercel)
         run: |
-          node "OpenDeploy CLI/dist/index.js" up vercel --env preview --json --summary-only --dry-run
+          node "OpenDeploy CLI/dist/index.js" up vercel --env preview \
+            --json --ndjson --summary-only --dry-run \
+            --json-file ./.artifacts/next-vercel-up.json \
+            --ndjson-file ./.artifacts/next-vercel-up.ndjson
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-next-vercel
+          path: ./.artifacts
+          if-no-files-found: ignore
 
   astro-netlify-dryrun:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -58,15 +84,30 @@ jobs:
           pnpm build
       - name: Generate netlify config (idempotent)
         run: |
-          node "OpenDeploy CLI/dist/index.js" generate netlify --json --summary-only
+          node "OpenDeploy CLI/dist/index.js" generate netlify \
+            --json --ndjson --summary-only \
+            --json-file ./.artifacts/astro-netlify-generate.json \
+            --ndjson-file ./.artifacts/astro-netlify-generate.ndjson
       - name: Wizard dry-run (netlify)
         run: |
-          node "OpenDeploy CLI/dist/index.js" start --provider netlify --env preview --json --dry-run --summary-only
+          node "OpenDeploy CLI/dist/index.js" start --provider netlify --env preview \
+            --json --ndjson --dry-run --summary-only \
+            --json-file ./.artifacts/astro-netlify-start.json \
+            --ndjson-file ./.artifacts/astro-netlify-start.ndjson
       - name: Up dry-run (netlify)
         run: |
-          node "OpenDeploy CLI/dist/index.js" up netlify --env preview --json --summary-only --dry-run
+          node "OpenDeploy CLI/dist/index.js" up netlify --env preview \
+            --json --ndjson --summary-only --dry-run \
+            --json-file ./.artifacts/astro-netlify-up.json \
+            --ndjson-file ./.artifacts/astro-netlify-up.ndjson
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-astro-netlify
+          path: ./.artifacts
+          if-no-files-found: ignore
 
-  vercel-preview-optional:
+  vercel-logs-follow-optional:
     if: ${{ secrets.VERCEL_TOKEN && secrets.VERCEL_PROJECT_ID && secrets.VERCEL_ORG_ID }}
     runs-on: ubuntu-latest
     steps:
@@ -83,23 +124,29 @@ jobs:
       - name: Build CLI
         run: pnpm build
         working-directory: OpenDeploy CLI
-      - name: Scaffold Next.js app
-        run: |
-          npx create-next-app@latest smoke-next --ts --eslint --src-dir --app --tailwind --use-pnpm --no-git --import-alias @/*
-          cd smoke-next
-          pnpm build
-      - name: Up vercel preview
+      - name: Prepare artifacts dir
+        run: mkdir -p ./.artifacts
+      - name: Vercel logs follow (short timeout)
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
-          node "OpenDeploy CLI/dist/index.js" up vercel \
+          node "OpenDeploy CLI/dist/index.js" logs vercel \
             --env preview \
             --project-id "${{ secrets.VERCEL_PROJECT_ID }}" \
             --org-id "${{ secrets.VERCEL_ORG_ID }}" \
-            --json --summary-only
+            --follow \
+            --timeout 30 \
+            --json --ndjson --summary-only \
+            --json-file ./.artifacts/vercel-logs.json \
+            --ndjson-file ./.artifacts/vercel-logs.ndjson
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vercel-logs-output
+          path: ./.artifacts
+          if-no-files-found: ignore
 
-  netlify-preview-optional:
-    if: ${{ secrets.NETLIFY_AUTH_TOKEN && secrets.NETLIFY_SITE_ID }}
+  sveltekit-static-dryrun:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -115,18 +162,35 @@ jobs:
       - name: Build CLI
         run: pnpm build
         working-directory: OpenDeploy CLI
-      - name: Scaffold Astro app
+      - name: Scaffold SvelteKit app
         run: |
-          npm create astro@latest -- --template basics --skip-install --git false --yes
-          cd basics
+          npm create svelte@latest smoke-sveltekit -- --template skeleton --yes
+          cd smoke-sveltekit
           pnpm install
           pnpm build
-      - name: Up netlify preview (no-build)
-        env:
-          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+      - name: Prepare artifacts dir
+        run: mkdir -p ./.artifacts
+      - name: Generate netlify config (idempotent)
         run: |
-          node "OpenDeploy CLI/dist/index.js" up netlify \
-            --env preview \
-            --project "${{ secrets.NETLIFY_SITE_ID }}" \
-            --no-build \
-            --json --summary-only
+          node "OpenDeploy CLI/dist/index.js" generate netlify \
+            --json --ndjson --summary-only \
+            --json-file ./.artifacts/sveltekit-netlify-generate.json \
+            --ndjson-file ./.artifacts/sveltekit-netlify-generate.ndjson
+      - name: Wizard dry-run (netlify)
+        run: |
+          node "OpenDeploy CLI/dist/index.js" start --provider netlify --env preview \
+            --json --ndjson --dry-run --summary-only \
+            --json-file ./.artifacts/sveltekit-netlify-start.json \
+            --ndjson-file ./.artifacts/sveltekit-netlify-start.ndjson
+      - name: Up dry-run (netlify)
+        run: |
+          node "OpenDeploy CLI/dist/index.js" up netlify --env preview \
+            --json --ndjson --summary-only --dry-run \
+            --json-file ./.artifacts/sveltekit-netlify-up.json \
+            --ndjson-file ./.artifacts/sveltekit-netlify-up.ndjson
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-sveltekit-netlify
+          path: ./.artifacts
+          if-no-files-found: ignore

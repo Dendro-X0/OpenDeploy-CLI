@@ -10,6 +10,9 @@ jobs:
   build-test:
     name: Build and Test (Node ${{ matrix.node }} / ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    env:
+      CI: '1'
+      FORCE_COLOR: '0'
     strategy:
       fail-fast: false
       matrix:
@@ -20,16 +23,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      - name: Enable corepack and pnpm
+      - name: Enable corepack & setup pnpm
         run: |
           corepack enable
-          corepack prepare pnpm@9 --activate
+          corepack prepare pnpm@10.13.1 --activate
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
       - name: Build
         run: pnpm build
       - name: Run unit tests
-        run: pnpm test
+        run: pnpm test -- --reporter=dot
       - name: Exit code consistency checks
         run: pnpm run ci:exit-codes
       - name: Validate JSON schemas against examples

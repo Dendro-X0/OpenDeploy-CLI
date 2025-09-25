@@ -10,14 +10,18 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    env:
+      CI: '1'
+      FORCE_COLOR: '0'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
+      - name: Enable Corepack & setup pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.13.1 --activate
       - name: Install deps
         run: pnpm install --frozen-lockfile
       - name: Typecheck
@@ -25,4 +29,4 @@ jobs:
       - name: Build
         run: pnpm build
       - name: Test
-        run: pnpm test -r
+        run: pnpm test -- --reporter=dot
