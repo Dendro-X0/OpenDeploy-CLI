@@ -29,6 +29,29 @@ vi.mock('../utils/process', async (orig) => {
   }
 })
 
+// Also mock the provider's relative import path to ensure CI uses the mock
+vi.mock('../../../utils/process', async (orig) => {
+  const real = await orig<any>()
+  return {
+    ...real,
+    proc: {
+      ...real.proc,
+      run: vi.fn(async (args: { cmd: string }) => {
+        calls.push(args.cmd)
+        if (args.cmd.startsWith('vercel inspect ')) {
+          return { ok: true, exitCode: 0, stdout: 'Inspect: https://vercel.com/acme/astro-mini/inspect/dep_123', stderr: '' }
+        }
+        return { ok: true, exitCode: 0, stdout: '', stderr: '' }
+      }),
+      spawnStream: vi.fn((args: { cmd: string; cwd?: string; onStdout?: (l: string) => void; onStderr?: (l: string) => void }) => {
+        calls.push(args.cmd)
+        args.onStdout?.('https://astro-mini-test.vercel.app\n')
+        return { done: Promise.resolve({ ok: true, exitCode: 0 }) }
+      })
+    }
+  }
+})
+
 describe('vercel inspect fallback (up --json)', () => {
   beforeEach(() => { origLog = console.log })
   afterEach(() => { console.log = origLog })
