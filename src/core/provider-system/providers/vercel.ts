@@ -108,6 +108,12 @@ export class VercelProvider implements Provider {
   }
 
   public async deploy(args: DeployInputs): Promise<DeployResult> {
+    // Deterministic path for tests/CI: avoid spawning vercel processes entirely
+    if (process.env.OPD_TEST_NO_SPAWN === '1') {
+      const url = 'https://example-preview.vercel.app'
+      const logsUrl = 'https://vercel.com/acme/app/inspect/dep_123'
+      return { ok: true, url, logsUrl }
+    }
     const bin = await this.resolveVercel(args.cwd)
     const prod = args.envTarget === 'production'
     const cmd = prod ? `${bin} deploy --prod --yes` : `${bin} deploy --yes`
