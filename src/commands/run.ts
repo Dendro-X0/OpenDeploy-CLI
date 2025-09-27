@@ -2,6 +2,8 @@ import { Command } from 'commander'
 import { join } from 'node:path'
 import { fsx } from '../utils/fs'
 import { logger } from '../utils/logger'
+import Ajv2020 from 'ajv/dist/2020'
+import { runSummarySchema } from '../schemas/run-summary.schema'
 import { parseEnvFile } from '../core/secrets/env'
 import { ScriptSeeder } from '../core/seed/script'
 import { PrismaSeeder } from '../core/seed/prisma'
@@ -72,6 +74,14 @@ async function loadConfig(cwd: string, file?: string): Promise<OpenDeployConfig>
 }
 
 export function registerRunCommand(program: Command): void {
+  const ajv = new Ajv2020({ allErrors: true, strict: false })
+  const validate = ajv.compile(runSummarySchema as unknown as object)
+  const annotateRun = (obj: Record<string, unknown>): Record<string, unknown> => {
+    const ok: boolean = validate(obj) as boolean
+    const errs: string[] = Array.isArray(validate.errors) ? validate.errors.map(e => `${e.instancePath || '/'} ${e.message ?? ''}`.trim()) : []
+    if (process.env.OPD_SCHEMA_STRICT === '1' && errs.length > 0) { process.exitCode = 1 }
+    return { ...obj, schemaOk: ok, schemaErrors: errs }
+  }
   program
     .command('run')
     .description('Orchestrate env+seed tasks across multiple projects from config')
@@ -199,7 +209,7 @@ export function registerRunCommand(program: Command): void {
           await mapLimit(projs, conc, async (p) => { await worker(p) })
         }
         if (opts.json === true) {
-          logger.json({ ok: results.every(r => (r.seed?.ok !== false && r.env?.ok !== false)), results })
+          logger.json(annotateRun({ ok: results.every(r => (r.seed?.ok !== false && r.env?.ok !== false)), action: 'run' as const, results, final: true }))
         } else {
           for (const r of results) {
             if (r.env?.mode) {

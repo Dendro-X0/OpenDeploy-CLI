@@ -1,23 +1,31 @@
 name: CI Matrix
 
 on:
-  push:
-    branches: [ main ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build-test:
     name: Build and Test (Node ${{ matrix.node }} / ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    concurrency:
+      group: ci-matrix-${{ github.ref }}
+      cancel-in-progress: true
     env:
       CI: '1'
       FORCE_COLOR: '0'
+      OPD_SCHEMA_STRICT: '1'
+      OPD_TEST_NO_SPAWN: '1'
+      OPD_PROVIDER_MODE: 'virtual'
+      OPD_FORCE_CI: '1'
+      TZ: 'UTC'
+      LC_ALL: 'C'
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-2022]
-        node: [18.x, 20.x]
+        node: [18.x, 20.x, 22.x]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -39,6 +47,10 @@ jobs:
         run: pnpm run ci:validate-schemas
       - name: Capture real outputs and validate against schemas
         run: pnpm run ci:capture-validate
+      - name: Capture CI environment snapshot
+        run: node dist/index.js doctor env-snapshot --out ./.artifacts/ci.snapshot.json
+      - name: Docs link check
+        run: pnpm run ci:docs-links
       - name: Upload JSON/NDJSON artifacts (if present)
         if: always()
         uses: actions/upload-artifact@v4

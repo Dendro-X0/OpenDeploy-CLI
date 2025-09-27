@@ -13,6 +13,10 @@ import { runStartWizard } from './start'
 import { detectApp } from '../core/detectors/auto'
 import type { Framework } from '../types/framework'
 import { loadProvider } from '../core/provider-system/provider'
+import Ajv2020 from 'ajv/dist/2020'
+import { upSummarySchema } from '../schemas/up-summary.schema'
+import { providerBuildResultSchema } from '../schemas/provider-build-result.schema'
+import { providerDeployResultSchema } from '../schemas/provider-deploy-result.schema'
 
 interface UpOptions {
   readonly path?: string
@@ -50,6 +54,16 @@ function inferPublishDir(fw: Framework): string {
  * - Optionally assigns alias (Vercel)
  */
 export function registerUpCommand(program: Command): void {
+  const ajv = new Ajv2020({ allErrors: true, strict: false })
+  const validate = ajv.compile(upSummarySchema as unknown as object)
+  const validateBuild = ajv.compile(providerBuildResultSchema as unknown as object)
+  const validateDeploy = ajv.compile(providerDeployResultSchema as unknown as object)
+  const annotate = (obj: Record<string, unknown>): Record<string, unknown> => {
+    const ok: boolean = validate(obj) as boolean
+    const errs: string[] = Array.isArray(validate.errors) ? validate.errors.map(e => `${e.instancePath || '/'} ${e.message ?? ''}`.trim()) : []
+    if (process.env.OPD_SCHEMA_STRICT === '1' && errs.length > 0) { process.exitCode = 1 }
+    return { ...obj, schemaOk: ok, schemaErrors: errs }
+  }
   program
     .command('up')
     .description('Deploy to preview with safe defaults (env sync + deploy)')
@@ -116,7 +130,7 @@ export function registerUpCommand(program: Command): void {
               } else if (prov === 'github') {
                 cmdPlan.push('next export && gh-pages -d out')
               }
-              logger.jsonPrint({ ok: true, action: 'up' as const, provider: prov, target: envShort, mode: 'dry-run', cmdPlan, final: true })
+              logger.jsonPrint(annotate({ ok: true, action: 'up' as const, provider: prov, target: envShort, mode: 'dry-run', cmdPlan, final: true }))
               return
             }
             logger.info(`[dry-run] up ${prov} (env=${envShort})`)
@@ -148,10 +162,14 @@ export function registerUpCommand(program: Command): void {
           try { const d = await p.detect(targetCwd); publishDirHint = d.publishDir; frameworkHint = d.framework } catch { /* ignore */ }
           const t0 = Date.now()
           const buildRes = await p.build({ cwd: targetCwd, framework: frameworkHint, envTarget: envTargetUp, publishDirHint, noBuild: Boolean(opts.noBuild) })
+          const buildSchemaOk: boolean = validateBuild(buildRes as unknown as Record<string, unknown>) as boolean
+          const buildSchemaErrors: string[] = Array.isArray(validateBuild.errors) ? validateBuild.errors.map(e => `${e.instancePath || '/'} ${e.message ?? ''}`.trim()) : []
           const deployRes = await p.deploy({ cwd: targetCwd, envTarget: envTargetUp, project: linked, artifactDir: buildRes.artifactDir, alias: opts.alias })
+          const deploySchemaOk: boolean = validateDeploy(deployRes as unknown as Record<string, unknown>) as boolean
+          const deploySchemaErrors: string[] = Array.isArray(validateDeploy.errors) ? validateDeploy.errors.map(e => `${e.instancePath || '/'} ${e.message ?? ''}`.trim()) : []
           const durationMs = Date.now() - t0
           const targetShort: 'prod' | 'preview' = envTargetUp === 'production' ? 'prod' : 'preview'
-          if (jsonMode) { logger.jsonPrint({ ok: true, action: 'up' as const, provider: prov, target: targetShort, url: deployRes.url, logsUrl: deployRes.logsUrl, durationMs, final: true }); return }
+          if (jsonMode) { logger.jsonPrint(annotate({ ok: true, action: 'up' as const, provider: prov, target: targetShort, url: deployRes.url, logsUrl: deployRes.logsUrl, durationMs, buildSchemaOk, buildSchemaErrors, deploySchemaOk, deploySchemaErrors, final: true })); return }
           if (deployRes.ok) {
             if (deployRes.url) logger.success(`${opts.env === 'prod' ? 'Production' : 'Preview'}: ${deployRes.url}`)
             else logger.success(`${opts.env === 'prod' ? 'Production' : 'Preview'} deploy complete`)
@@ -191,7 +209,7 @@ export function registerUpCommand(program: Command): void {
               cmdPlan.push(`netlify deploy --no-build${envTarget === 'prod' ? ' --prod' : ''} --dir ${publishDir}${opts.project ? ` --site ${opts.project}` : ''}`.trim())
             }
             const summary = { ok: true, action: 'up' as const, provider: prov, target: envTarget, mode: 'dry-run', cmdPlan, final: true }
-            logger.jsonPrint(summary)
+            logger.jsonPrint(annotate(summary as unknown as Record<string, unknown>))
           } else {
             logger.info(`[dry-run] up ${provider} (env=${envTarget})`)
           }

@@ -1,8 +1,54 @@
 import { spawn } from 'node:child_process'
+import { dirname } from 'node:path'
+import { appendFile, mkdir, readFile } from 'node:fs/promises'
 
 interface RunArgs { readonly cmd: string; readonly cwd?: string; readonly stdin?: string; readonly env?: Readonly<Record<string, string>> }
 
+// ------- Minimal NDJSON record/replay (Phase 1) -------
+const recordFile: string | undefined = process.env.OPD_RECORD_FIXTURES
+const replayFile: string | undefined = process.env.OPD_REPLAY_FIXTURES
+type ReplayEvent = { readonly t: 'run' | 'stream'; readonly cmd: string; readonly cwd?: string; readonly ok: boolean; readonly exitCode: number; readonly stdout?: string; readonly stderr?: string; readonly chunks?: ReadonlyArray<{ readonly fd: 'out' | 'err'; readonly data: string }> }
+let replayEvents: ReplayEvent[] = []
+let replayIdx = 0
+
+async function ensureDir(path: string): Promise<void> { try { await mkdir(dirname(path), { recursive: true }) } catch { /* ignore */ } }
+async function recordAppend(obj: unknown): Promise<void> { if (!recordFile) return; try { await ensureDir(recordFile); await appendFile(recordFile, JSON.stringify(obj) + '\n', 'utf8') } catch { /* ignore */ } }
+async function loadReplay(): Promise<void> {
+  if (!replayFile || replayEvents.length > 0) return
+  try {
+    const buf = await readFile(replayFile, 'utf8')
+    const lines = buf.split(/\r?\n/).map(l => l.trim()).filter(Boolean)
+    replayEvents = lines.map((l) => JSON.parse(l) as ReplayEvent)
+  } catch { replayEvents = [] }
+}
+function nextReplay(type: 'run' | 'stream', fallbackCmd: string): ReplayEvent | undefined {
+  if (replayEvents.length === 0 || replayIdx >= replayEvents.length) return undefined
+  const ev = replayEvents[replayIdx++]
+  if (ev.t !== type) return ev // tolerate minor drift; Phase 1
+  return ev
+}
+
 function spawnStream(args: RunStreamArgs): StreamController {
+  // Replay first
+  if (replayFile) {
+    void loadReplay()
+    const ev = nextReplay('stream', args.cmd)
+    const chunks = ev?.chunks ?? []
+    let closed = false
+    // Emit chunks async to simulate streaming
+    setImmediate(() => {
+      for (const c of chunks) {
+        if (c.fd === 'out') args.onStdout?.(c.data)
+        else args.onStderr?.(c.data)
+      }
+      closed = true
+    })
+    const done = new Promise<{ readonly ok: boolean; readonly exitCode: number }>((resolve) => {
+      setTimeout(() => resolve({ ok: ev?.ok ?? true, exitCode: ev?.exitCode ?? 0 }), 0)
+    })
+    const stop = (): void => { /* noop in replay */ }
+    return { stop, done }
+  }
   if (!args.cmd || args.cmd.trim().length === 0) return { stop: () => {}, done: Promise.resolve({ ok: false, exitCode: 1 }) }
   const isWin: boolean = process.platform === 'win32'
   // Inject CI-friendly env to suppress interactive prompts in provider CLIs when requested
@@ -23,22 +69,29 @@ function spawnStream(args: RunStreamArgs): StreamController {
   }
   cp.stdout?.setEncoding('utf8')
   cp.stderr?.setEncoding('utf8')
-  if (args.onStdout) cp.stdout?.on('data', (d: string) => { args.onStdout?.(d) })
-  if (args.onStderr) cp.stderr?.on('data', (d: string) => { args.onStderr?.(d) })
+  const recChunks: Array<{ readonly fd: 'out' | 'err'; readonly data: string }> = []
+  const onOut = (d: string): void => { recChunks.push({ fd: 'out', data: d }); args.onStdout?.(d) }
+  const onErr = (d: string): void => { recChunks.push({ fd: 'err', data: d }); args.onStderr?.(d) }
+  cp.stdout?.on('data', onOut)
+  cp.stderr?.on('data', onErr)
   let timeout: NodeJS.Timeout | undefined
   const done: Promise<{ readonly ok: boolean; readonly exitCode: number }> = new Promise((resolve) => {
     cp.on('error', () => {
       if (process.env.OPD_DEBUG_PROCESS === '1') {
         try { process.stderr.write(`[proc] spawnStream error after ${Date.now() - t0}ms\n`) } catch { /* ignore */ }
       }
-      resolve({ ok: false, exitCode: 1 })
+      const res = { ok: false, exitCode: 1 }
+      void recordAppend({ t: 'stream', cmd: args.cmd, cwd: args.cwd, ...res, chunks: recChunks })
+      resolve(res)
     })
     cp.on('close', (code: number | null) => {
       if (process.env.OPD_DEBUG_PROCESS === '1') {
         const info = `[proc] spawnStream exit code=${code ?? 'null'} after ${Date.now() - t0}ms`
         try { process.stderr.write(info + '\n') } catch { /* ignore */ }
       }
-      resolve({ ok: (code ?? 1) === 0, exitCode: code ?? 1 })
+      const res = { ok: (code ?? 1) === 0, exitCode: code ?? 1 }
+      void recordAppend({ t: 'stream', cmd: args.cmd, cwd: args.cwd, ...res, chunks: recChunks })
+      resolve(res)
     })
   })
   // Optional timeout watchdog
@@ -85,6 +138,14 @@ function splitCmd(cmdline: string): readonly string[] {
 }
 
 async function run(args: RunArgs): Promise<RunResult> {
+  if (replayFile) {
+    await loadReplay()
+    const ev = nextReplay('run', args.cmd)
+    const stdout = ev?.stdout ?? ''
+    const stderr = ev?.stderr ?? ''
+    const exitCode = ev?.exitCode ?? 0
+    return { ok: (ev?.ok ?? true), exitCode, stdout, stderr }
+  }
   return await new Promise<RunResult>((resolve) => {
     if (!args.cmd || args.cmd.trim().length === 0) return resolve({ ok: false, exitCode: 1, stdout: '', stderr: 'empty command' })
     const isWin: boolean = process.platform === 'win32'
@@ -111,10 +172,16 @@ async function run(args: RunArgs): Promise<RunResult> {
       cp.stdin.write(args.stdin)
       cp.stdin.end()
     }
-    cp.on('error', (_err: Error) => { resolve({ ok: false, exitCode: 1, stdout: Buffer.concat(outChunks).toString(), stderr: Buffer.concat(errChunks).toString() }) })
+    cp.on('error', (_err: Error) => {
+      const res = { ok: false, exitCode: 1, stdout: Buffer.concat(outChunks).toString(), stderr: Buffer.concat(errChunks).toString() }
+      void recordAppend({ t: 'run', cmd: args.cmd, cwd: args.cwd, ...res })
+      resolve(res)
+    })
     cp.on('close', (code: number | null) => {
       const exit: number = code === null ? 1 : code
-      resolve({ ok: exit === 0, exitCode: exit, stdout: Buffer.concat(outChunks).toString(), stderr: Buffer.concat(errChunks).toString() })
+      const res = { ok: exit === 0, exitCode: exit, stdout: Buffer.concat(outChunks).toString(), stderr: Buffer.concat(errChunks).toString() }
+      void recordAppend({ t: 'run', cmd: args.cmd, cwd: args.cwd, ...res })
+      resolve(res)
     })
   })
 }
@@ -125,6 +192,12 @@ async function has(cmd: string): Promise<boolean> {
 }
 
 async function runStream(args: RunStreamArgs): Promise<{ readonly ok: boolean; readonly exitCode: number }> {
+  if (replayFile) {
+    await loadReplay()
+    const ev = nextReplay('stream', args.cmd)
+    for (const c of ev?.chunks ?? []) { if (c.fd === 'out') args.onStdout?.(c.data); else args.onStderr?.(c.data) }
+    return { ok: ev?.ok ?? true, exitCode: ev?.exitCode ?? 0 }
+  }
   return await new Promise((resolve) => {
     if (!args.cmd || args.cmd.trim().length === 0) return resolve({ ok: false, exitCode: 1 })
     const isWin: boolean = process.platform === 'win32'
@@ -149,7 +222,9 @@ async function runStream(args: RunStreamArgs): Promise<{ readonly ok: boolean; r
       if (process.env.OPD_DEBUG_PROCESS === '1') {
         try { process.stderr.write(`[proc] runStream error after ${Date.now() - t0}ms\n`) } catch { /* ignore */ }
       }
-      resolve({ ok: false, exitCode: 1 })
+      const res = { ok: false, exitCode: 1 }
+      void recordAppend({ t: 'stream', cmd: args.cmd, cwd: args.cwd, ...res })
+      resolve(res)
     })
     cp.on('close', (code: number | null) => {
       if (timeout) clearTimeout(timeout)

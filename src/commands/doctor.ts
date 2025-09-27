@@ -8,6 +8,9 @@ import { detectMonorepo } from '../core/detectors/monorepo'
 import { detectPackageManager } from '../core/detectors/package-manager'
 import { mapProviderError } from '../utils/errors'
 import { printDoctorSummary } from '../utils/summarize'
+import { writeFile } from 'node:fs/promises'
+import Ajv2020 from 'ajv/dist/2020'
+import { doctorSummarySchema } from '../schemas/doctor-summary.schema'
 
 interface DoctorOptions { readonly ci?: boolean; readonly json?: boolean; readonly verbose?: boolean; readonly fix?: boolean; readonly path?: string; readonly project?: string; readonly org?: string; readonly site?: string; readonly printCmd?: boolean }
 
@@ -93,7 +96,15 @@ async function checkGitHubPagesSetup(cwd: string, printCmd?: boolean): Promise<C
  * Register the `doctor` command.
  */
 export function registerDoctorCommand(program: Command): void {
-  program
+  const ajv = new Ajv2020({ allErrors: true, strict: false })
+  const validate = ajv.compile(doctorSummarySchema as unknown as object)
+  const annotate = (obj: Record<string, unknown>): Record<string, unknown> => {
+    const ok: boolean = validate(obj) as boolean
+    const errs: string[] = Array.isArray(validate.errors) ? validate.errors.map(e => `${e.instancePath || '/'} ${e.message ?? ''}`.trim()) : []
+    if (process.env.OPD_SCHEMA_STRICT === '1' && errs.length > 0) { process.exitCode = 1 }
+    return { ...obj, schemaOk: ok, schemaErrors: errs }
+  }
+  const doctorCmd = program
     .command('doctor')
     .description('Validate local environment and provider CLIs')
     .option('--ci', 'CI mode (exit non-zero on warnings)')
@@ -264,7 +275,7 @@ export function registerDoctorCommand(program: Command): void {
         } catch { /* ignore */ }
 
         if (jsonMode) {
-          logger.jsonPrint({ ok, action: 'doctor' as const, results, suggestions, final: true })
+          logger.jsonPrint(annotate({ ok, action: 'doctor' as const, results, suggestions, final: true }))
           process.exitCode = ok ? 0 : 1
           return
         }
@@ -296,12 +307,103 @@ export function registerDoctorCommand(program: Command): void {
       } catch (err) {
         const raw: string = err instanceof Error ? err.message : String(err)
         const info = mapProviderError('doctor', raw)
-        if (isJsonMode(opts.json)) {
-          logger.jsonPrint({ ok: false, action: 'doctor' as const, code: info.code, message: info.message, remedy: info.remedy, error: raw, final: true })
-        }
+        if (isJsonMode(opts.json)) { logger.jsonPrint(annotate({ ok: false, action: 'doctor' as const, code: info.code, message: info.message, remedy: info.remedy, error: raw, final: true })) }
         logger.error(`${info.message} (${info.code})`)
         if (info.remedy) logger.info(`Try: ${info.remedy}`)
         process.exitCode = 1
       }
     })
+
+  // ----- doctor env-snapshot -----
+  doctorCmd
+    .command('env-snapshot')
+    .description('Capture a deterministic environment snapshot for parity checks')
+    .option('--out <file>', 'Output file path', '.artifacts/env.snapshot.json')
+    .action(async (opts: { readonly out: string }): Promise<void> => {
+      try {
+        const snap: Snapshot = buildEnvSnapshot()
+        const json: string = JSON.stringify(snap, null, 2) + '\n'
+        await writeFile(opts.out, json, 'utf8')
+        logger.success(`Environment snapshot written to ${opts.out}`)
+      } catch (err) {
+        const raw: string = err instanceof Error ? err.message : String(err)
+        logger.error(`env-snapshot failed: ${raw}`)
+        process.exitCode = 1
+      }
+    })
+
+  // ----- doctor env-compare -----
+  doctorCmd
+    .command('env-compare')
+    .description('Compare two environment snapshots and print differences')
+    .option('--a <file>', 'Snapshot A file path')
+    .option('--b <file>', 'Snapshot B file path')
+    .action(async (opts: { readonly a?: string; readonly b?: string }): Promise<void> => {
+      try {
+        if (!opts.a || !opts.b) {
+          logger.error('Provide both --a and --b snapshot file paths')
+          process.exitCode = 1
+          return
+        }
+        const a: Record<string, unknown> = (await fsx.readJson<Record<string, unknown>>(opts.a)) ?? {}
+        const b: Record<string, unknown> = (await fsx.readJson<Record<string, unknown>>(opts.b)) ?? {}
+        const diff: { readonly added: string[]; readonly removed: string[]; readonly changed: Array<{ readonly key: string; readonly a: unknown; readonly b: unknown }> } = diffSnapshots(a, b)
+        const ok: boolean = diff.added.length === 0 && diff.removed.length === 0 && diff.changed.length === 0
+        logger.jsonPrint(annotate({ ok, action: 'doctor' as const, subcommand: 'env-compare' as const, diff, final: true }))
+        if (!ok) process.exitCode = 1
+      } catch (err) {
+        const raw: string = err instanceof Error ? err.message : String(err)
+        logger.error(`env-compare failed: ${raw}`)
+        process.exitCode = 1
+      }
+    })
+}
+
+// -------- helpers: environment snapshot/compare --------
+
+interface Snapshot {
+  readonly platform: string
+  readonly release: string
+  readonly arch: string
+  readonly node: string
+  readonly pnpm?: string
+  readonly PATH?: string
+  readonly PATHEXT?: string
+  readonly TZ?: string
+  readonly LC_ALL?: string
+  readonly FORCE_COLOR?: string
+  readonly TERM?: string
+}
+
+function pickEnv(keys: readonly string[]): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const k of keys) { const v = process.env[k]; if (typeof v === 'string') out[k] = v }
+  return out
+}
+
+function buildEnvSnapshot(): Snapshot {
+  const core: Snapshot = {
+    platform: process.platform,
+    release: typeof (process as any).getSystemVersion === 'function' ? (process as any).getSystemVersion() ?? '' : process.release.name,
+    arch: process.arch,
+    node: process.versions.node,
+    pnpm: process.env.npm_config_user_agent,
+    ...pickEnv(['PATH','PATHEXT','TZ','LC_ALL','FORCE_COLOR','TERM'])
+  }
+  return core
+}
+
+function diffSnapshots(a: Record<string, unknown>, b: Record<string, unknown>): { readonly added: string[]; readonly removed: string[]; readonly changed: Array<{ readonly key: string; readonly a: unknown; readonly b: unknown }> } {
+  const keys = new Set<string>([...Object.keys(a), ...Object.keys(b)])
+  const added: string[] = []
+  const removed: string[] = []
+  const changed: Array<{ readonly key: string; readonly a: unknown; readonly b: unknown }> = []
+  for (const k of keys) {
+    const va = (a as Record<string, unknown>)[k]
+    const vb = (b as Record<string, unknown>)[k]
+    if (!(k in a)) { added.push(k); continue }
+    if (!(k in b)) { removed.push(k); continue }
+    if (JSON.stringify(va) !== JSON.stringify(vb)) changed.push({ key: k, a: va, b: vb })
+  }
+  return { added, removed, changed }
 }

@@ -13,6 +13,8 @@ import { confirm } from '../utils/prompt'
 import { proc, runWithRetry } from '../utils/process'
 import { fsx } from '../utils/fs'
 import { getCached, setCached } from '../utils/cache'
+import Ajv2020 from 'ajv/dist/2020'
+import { envSummarySchema } from '../schemas/env-summary.schema'
 
 type EnvTarget = 'prod' | 'preview' | 'development' | 'all'
 
@@ -35,6 +37,16 @@ interface SyncOptions {
   readonly retries?: string
   readonly timeoutMs?: string
   readonly baseDelayMs?: string
+}
+
+// Ajv validator for env summaries (top-level so helpers can use it)
+const envAjv = new Ajv2020({ allErrors: true, strict: false })
+const envSchemaValidate = envAjv.compile(envSummarySchema as unknown as object)
+function annotateEnv(obj: Record<string, unknown>): Record<string, unknown> {
+  const ok: boolean = envSchemaValidate(obj) as boolean
+  const errs: string[] = Array.isArray(envSchemaValidate.errors) ? envSchemaValidate.errors.map(e => `${e.instancePath || '/'} ${e.message ?? ''}`.trim()) : []
+  if (process.env.OPD_SCHEMA_STRICT === '1' && errs.length > 0) { process.exitCode = 1 }
+  return { ...obj, schemaOk: ok, schemaErrors: errs }
 }
 
 // ---------------- Netlify parity ----------------
@@ -96,7 +108,7 @@ async function pullNetlify(args: { readonly cwd: string; readonly out?: string; 
     const remote = await fetchNetlifyEnvMap({ cwd: args.cwd, projectId: siteId, context: args.context, printCmd: args.printCmd })
     const content: string = Object.entries(remote).map(([k, v]) => `${k}=${v}`).join('\n') + '\n'
     await writeFile(join(args.cwd, outFile), content, 'utf8')
-    if (args.json === true) logger.jsonPrint({ ok: true, action: 'env' as const, subcommand: 'pull' as const, provider: 'netlify' as const, out: outFile, count: Object.keys(remote).length, final: true })
+    if (args.json === true) logger.jsonPrint(annotateEnv({ ok: true, action: 'env' as const, subcommand: 'pull' as const, provider: 'netlify' as const, out: outFile, count: Object.keys(remote).length, final: true }))
     else { sp.succeed(`Netlify: pulled to ${outFile}`); logger.success(`Pulled Netlify env to ${outFile}`); printEnvPullSummary({ provider: 'netlify', out: outFile, count: Object.keys(remote).length }) }
   } finally { sp.stop() }
 }
@@ -134,7 +146,7 @@ async function syncNetlify(args: { readonly cwd: string; readonly file: string; 
   }
   if (args.json === true) {
     const ok = results.every(r => r.status !== 'failed')
-    logger.jsonPrint({ ok, action: 'env' as const, subcommand: 'sync' as const, provider: 'netlify' as const, file: args.file, envs: results, final: true })
+    logger.jsonPrint(annotateEnv({ ok, action: 'env' as const, subcommand: 'sync' as const, provider: 'netlify' as const, file: args.file, envs: results, final: true }))
   }
   else {
     const setCount = results.filter(r => r.status === 'set').length
@@ -165,7 +177,7 @@ async function diffNetlify(args: { readonly cwd: string; readonly file: string; 
     else if (l !== undefined && r !== undefined && l !== r) changed.push({ key: k, local: l, remote: r })
   }
   const ok: boolean = added.length === 0 && removed.length === 0 && changed.length === 0
-  if (args.json === true) logger.jsonPrint({ ok, action: 'env' as const, subcommand: 'diff' as const, provider: 'netlify' as const, added, removed, changed, final: true })
+  if (args.json === true) logger.jsonPrint(annotateEnv({ ok, action: 'env' as const, subcommand: 'diff' as const, provider: 'netlify' as const, added, removed, changed, final: true }))
   else {
     sp.stop()
     if (ok) logger.success('No differences between local file and Netlify environment.')
@@ -330,7 +342,7 @@ async function pullVercel(args: { readonly cwd: string; readonly env: EnvTarget;
   if (args.printCmd) logger.info(`$ ${pullCmd}`)
   const res = await runWithRetry({ cmd: pullCmd, cwd: args.cwd })
   if (!res.ok) throw new Error(res.stderr.trim() || res.stdout.trim() || 'Failed to pull env from Vercel')
-  if (args.json === true) logger.jsonPrint({ ok: true, action: 'env' as const, subcommand: 'pull' as const, provider: 'vercel' as const, environment: vercelEnv, out: outFile, final: true })
+  if (args.json === true) logger.jsonPrint(annotateEnv({ ok: true, action: 'env' as const, subcommand: 'pull' as const, provider: 'vercel' as const, environment: vercelEnv, out: outFile, final: true }))
   else {
     sp.succeed(`Vercel: pulled to ${outFile}`)
     logger.success(`Pulled ${vercelEnv} env to ${outFile}`)
@@ -506,7 +518,7 @@ async function syncVercel(args: { readonly cwd: string; readonly file: string; r
   }
   if (args.json === true) {
     const ok = results.every(r => r.status !== 'failed')
-    logger.jsonPrint({ ok, action: 'env' as const, subcommand: 'sync' as const, provider: 'vercel' as const, file: args.file, envs: results, final: true })
+    logger.jsonPrint(annotateEnv({ ok, action: 'env' as const, subcommand: 'sync' as const, provider: 'vercel' as const, file: args.file, envs: results, final: true }))
   }
   else {
     const setCount = results.filter(r => r.status === 'set').length
@@ -548,7 +560,7 @@ async function diffVercel(args: { readonly cwd: string; readonly file: string; r
   }
   const ok: boolean = added.length === 0 && removed.length === 0 && changed.length === 0
   if (args.json === true) {
-    logger.jsonPrint({ ok, action: 'env' as const, subcommand: 'diff' as const, provider: 'vercel' as const, env: vercelEnv, added, removed, changed, final: true })
+    logger.jsonPrint(annotateEnv({ ok, action: 'env' as const, subcommand: 'diff' as const, provider: 'vercel' as const, env: vercelEnv, added, removed, changed, final: true }))
   } else {
     sp.stop()
     if (ok) logger.success('No differences between local file and remote environment.')

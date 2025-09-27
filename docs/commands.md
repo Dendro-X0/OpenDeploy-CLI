@@ -23,6 +23,13 @@ JSON summary:
 
 ## Global Output & CI Flags
 For CI consumers, see also: [Response Shapes (CI)](./response-shapes.md)
+
+### Schema Validation and Guardrail
+
+All commands emit a final JSON summary which is validated at runtime and annotated with `schemaOk` and `schemaErrors`.
+
+- Set `OPD_SCHEMA_STRICT=1` to make commands set a non‑zero exit code when schema errors are present (final JSON is still printed for diagnosis).
+- CI workflows enable this guardrail by default.
 ## init
 Interactive setup to choose provider(s), generate provider config files, and set default env policy.
 

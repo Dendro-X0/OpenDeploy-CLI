@@ -41,6 +41,10 @@ opd start
 - Docs site: https://dendro-x0.github.io/opendeploy-cli-docs-site/
 - Provider architecture (WIP): `docs/architecture/provider-system.md`
 
+- Schemas & Validation: `docs/schemas.md`
+- CI Guide (strict schema + matrix): `docs/ci.md`
+- Local Test Matrix: `docs/test-matrix.md`
+
 ## License
 
 MIT © OpenDeploy Contributors

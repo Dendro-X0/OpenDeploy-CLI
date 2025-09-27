@@ -17,6 +17,7 @@ import { registerProvidersCommand } from './commands/providers'
 import { registerPlanCommand } from './commands/plan'
 import { registerUpCommand } from './commands/up'
 import { registerStartCommand } from './commands/start'
+import { registerTestMatrixCommand } from './commands/test-matrix'
 import { computeRedactors } from './utils/redaction'
 
 const VERSION: string = '1.0.0-beta'
@@ -152,6 +153,7 @@ function main(): void {
   registerPlanCommand(program)
   registerUpCommand(program)
   registerStartCommand(program)
+  registerTestMatrixCommand(program)
   program.parseAsync(process.argv)
     .then(() => {})
     .catch((err: unknown) => {

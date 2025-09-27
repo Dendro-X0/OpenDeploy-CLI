@@ -129,6 +129,9 @@ Fine‑tune provider subprocess calls:
 - Commands reference: `docs/commands.md`
 - Troubleshooting (error codes and remedies): `docs/troubleshooting.md`
 - CI and usage recipes: `docs/recipes.md`
+ - Schemas & Validation: `docs/schemas.md`
+ - CI Guide (strict schema + matrix): `docs/ci.md`
+ - Local Test Matrix: `docs/test-matrix.md`
 
 ## For Contributors
 

@@ -5,6 +5,8 @@ import { spinner } from '../utils/ui'
 import { proc, runWithRetry } from '../utils/process'
 import { fsx } from '../utils/fs'
 import { printDeploySummary } from '../utils/summarize'
+import Ajv2020 from 'ajv/dist/2020'
+import { rollbackSummarySchema } from '../schemas/rollback-summary.schema'
 
 interface RollbackOptions {
   readonly alias?: string
@@ -27,6 +29,14 @@ interface RollbackOptions {
  * - Netlify: best-effort restore of the previous production deploy via API; fallback to dashboard instructions.
  */
 export function registerRollbackCommand(program: Command): void {
+  const ajv = new Ajv2020({ allErrors: true, strict: false })
+  const validate = ajv.compile(rollbackSummarySchema as unknown as object)
+  const annotate = (obj: Record<string, unknown>): Record<string, unknown> => {
+    const ok: boolean = validate(obj) as boolean
+    const errs: string[] = Array.isArray(validate.errors) ? validate.errors.map(e => `${e.instancePath || '/'} ${e.message ?? ''}`.trim()) : []
+    if (process.env.OPD_SCHEMA_STRICT === '1' && errs.length > 0) { process.exitCode = 1 }
+    return { ...obj, schemaOk: ok, schemaErrors: errs }
+  }
   program
     .command('rollback')
     .description('Rollback production to a previous successful deployment (provider-specific)')
@@ -65,7 +75,7 @@ export function registerRollbackCommand(program: Command): void {
                 `netlify api restoreDeploy --data '{"deploy_id":"<deploy-id>"}'${opts.project ? ' --site ' + opts.project : ''}`.trim()
               ]
           if (jsonMode) {
-            logger.jsonPrint({ ...base, cmdPlan, final: true })
+            logger.jsonPrint(annotate({ ...base, cmdPlan, final: true }))
           } else {
             logger.info(`[dry-run] rollback ${prov}`)
           }
@@ -74,7 +84,7 @@ export function registerRollbackCommand(program: Command): void {
         if (provider === 'vercel') {
           if (!opts.alias && !opts.to) {
             const msg = 'Provide --alias <domain> (required for repoint) and/or --to <url|sha> to target a specific deployment.'
-            if (jsonMode) { logger.jsonPrint({ ok: false, action: 'rollback' as const, provider: 'vercel' as const, message: msg, final: true }); return }
+            if (jsonMode) { logger.jsonPrint(annotate({ ok: false, action: 'rollback' as const, provider: 'vercel' as const, message: msg, final: true })); return }
             logger.error(msg)
             return
           }
@@ -119,7 +129,7 @@ export function registerRollbackCommand(program: Command): void {
           if (!url) throw new Error('Could not resolve a previous production deployment')
           if (!opts.alias) {
             const msg = `Resolved candidate: ${url}. Provide --alias <domain> to repoint production.`
-            if (jsonMode) { logger.jsonPrint({ ok: true, provider: 'vercel', action: 'rollback', target: 'prod', candidate: url, needsAlias: true, final: true }); return }
+            if (jsonMode) { logger.jsonPrint(annotate({ ok: true, provider: 'vercel', action: 'rollback', target: 'prod', candidate: url, needsAlias: true, final: true })); return }
             logger.info(msg)
             return
           }
@@ -127,7 +137,7 @@ export function registerRollbackCommand(program: Command): void {
           if (opts.printCmd) logger.info(`$ ${aliasCmd}`)
           const res = await runWithRetry({ cmd: aliasCmd, cwd: runCwd })
           if (!res.ok) throw new Error(res.stderr.trim() || res.stdout.trim() || 'Failed to point alias to previous deployment')
-          if (jsonMode) { logger.jsonPrint({ ok: true, provider: 'vercel', action: 'rollback', target: 'prod', to: url, url: `https://${opts.alias}`, alias: `https://${opts.alias}`, final: true }); return }
+          if (jsonMode) { logger.jsonPrint(annotate({ ok: true, provider: 'vercel', action: 'rollback', target: 'prod', to: url, url: `https://${opts.alias}`, alias: `https://${opts.alias}`, final: true })); return }
           logger.success(`Rolled back production → ${opts.alias}`)
           if (opts.alias) printDeploySummary({ provider: 'vercel', target: 'prod', url: `https://${opts.alias}` })
           return
@@ -162,7 +172,7 @@ export function registerRollbackCommand(program: Command): void {
           if (!prevId) {
             const dash = siteName ? `https://app.netlify.com/sites/${siteName}/deploys` : undefined
             const msg = `Could not resolve previous production deploy. ${dash ? `Open: ${dash}` : ''}`
-            if (jsonMode) { logger.jsonPrint({ ok: false, provider: 'netlify', action: 'rollback', target: 'prod', message: msg, dashboard: dash, final: true }); return }
+            if (jsonMode) { logger.jsonPrint(annotate({ ok: false, provider: 'netlify', action: 'rollback', target: 'prod', message: msg, dashboard: dash, final: true })); return }
             logger.error(msg)
             return
           }
@@ -172,12 +182,12 @@ export function registerRollbackCommand(program: Command): void {
           const restore = await runWithRetry({ cmd: restoreCmd, cwd: targetCwd })
           if (!restore.ok) {
             const dash = siteName ? `https://app.netlify.com/sites/${siteName}/deploys/${prevId}` : undefined
-            if (jsonMode) { logger.jsonPrint({ ok: false, provider: 'netlify', action: 'rollback', target: 'prod', message: 'Restore failed. Use dashboard to restore.', dashboard: dash, final: true }); return }
+            if (jsonMode) { logger.jsonPrint(annotate({ ok: false, provider: 'netlify', action: 'rollback', target: 'prod', message: 'Restore failed. Use dashboard to restore.', dashboard: dash, final: true })); return }
             logger.warn('Netlify restore API failed. Open the dashboard to restore this deploy:')
             if (dash) logger.info(dash)
             return
           }
-          if (jsonMode) { logger.jsonPrint({ ok: true, provider: 'netlify', action: 'rollback', target: 'prod', deployId: prevId, final: true }); return }
+          if (jsonMode) { logger.jsonPrint(annotate({ ok: true, provider: 'netlify', action: 'rollback', target: 'prod', deployId: prevId, final: true })); return }
           logger.success(`Requested restore of deploy ${prevId}`)
           printDeploySummary({ provider: 'netlify', target: 'prod' })
           return
@@ -186,7 +196,7 @@ export function registerRollbackCommand(program: Command): void {
         process.exitCode = 1
       } catch (err) {
         const msg: string = err instanceof Error ? err.message : String(err)
-        if (isJsonMode(opts.json)) logger.jsonPrint({ ok: false, action: 'rollback', provider, message: msg, final: true })
+        if (isJsonMode(opts.json)) logger.jsonPrint(annotate({ ok: false, action: 'rollback', provider, message: msg, final: true }))
         logger.error(msg)
         process.exitCode = 1
       }

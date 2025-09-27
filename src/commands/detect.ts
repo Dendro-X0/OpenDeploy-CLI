@@ -1,6 +1,8 @@
 import { Command } from 'commander'
 import { detectApp, detectCandidates } from '../core/detectors/auto'
 import { logger } from '../utils/logger'
+import Ajv2020 from 'ajv/dist/2020'
+import { detectSummarySchema } from '../schemas/detect-summary.schema'
 import type { DetectionResult } from '../types/detection-result'
 import type { Framework } from '../types/framework'
 
@@ -8,6 +10,14 @@ import type { Framework } from '../types/framework'
  * Register the `detect` command.
  */
 export function registerDetectCommand(program: Command): void {
+  const ajv = new Ajv2020({ allErrors: true, strict: false })
+  const validate = ajv.compile(detectSummarySchema as unknown as object)
+  const annotate = (obj: Record<string, unknown>): Record<string, unknown> => {
+    const ok: boolean = validate(obj) as boolean
+    const errs: string[] = Array.isArray(validate.errors) ? validate.errors.map(e => `${e.instancePath || '/'} ${e.message ?? ''}`.trim()) : []
+    if (process.env.OPD_SCHEMA_STRICT === '1' && errs.length > 0) { process.exitCode = 1 }
+    return { ...obj, schemaOk: ok, schemaErrors: errs }
+  }
   program
     .command('detect')
     .description('Detect your app (Next, Astro, SvelteKit, Remix, Nuxt; Expo when OPD_EXPERIMENTAL=1)')
@@ -19,7 +29,7 @@ export function registerDetectCommand(program: Command): void {
         const result: DetectionResult = await detectApp({ cwd })
         if (opts.json === true || process.env.OPD_JSON === '1') {
           const summary = { ok: true, action: 'detect' as const, detection: result, final: true }
-          logger.jsonPrint(summary)
+          logger.jsonPrint(annotate(summary as unknown as Record<string, unknown>))
           return
         }
         // Human output
@@ -45,7 +55,7 @@ export function registerDetectCommand(program: Command): void {
       } catch (err) {
         const message: string = err instanceof Error ? err.message : String(err)
         if (opts.json === true || process.env.OPD_JSON === '1') {
-          logger.jsonPrint({ ok: false, action: 'detect' as const, message, final: true })
+          logger.jsonPrint(annotate({ ok: false, action: 'detect' as const, message, final: true }))
         } else {
           logger.error(message)
         }

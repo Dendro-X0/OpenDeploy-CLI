@@ -1,0 +1,22 @@
+{
+  "name": "OpenDeploy CLI Dev",
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:20",
+  "features": {},
+  "remoteEnv": {
+    "CI": "1",
+    "FORCE_COLOR": "0",
+    "TZ": "UTC",
+    "LC_ALL": "C"
+  },
+  "postCreateCommand": "corepack enable && corepack prepare pnpm@10.13.1 --activate && pnpm install",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash"
+      },
+      "extensions": [
+        "esbenp.prettier-vscode"
+      ]
+    }
+  }
+}

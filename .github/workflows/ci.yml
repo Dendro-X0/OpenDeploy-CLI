@@ -2,17 +2,26 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
     tags: [ 'v*' ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    concurrency:
+      group: ci-${{ github.ref }}
+      cancel-in-progress: true
     env:
       CI: '1'
       FORCE_COLOR: '0'
+      OPD_SCHEMA_STRICT: '1'
+      OPD_TEST_NO_SPAWN: '1'
+      OPD_PROVIDER_MODE: 'virtual'
+      OPD_FORCE_CI: '1'
+      TZ: 'UTC'
+      LC_ALL: 'C'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -30,3 +39,16 @@ jobs:
         run: pnpm build
       - name: Test
         run: pnpm test -- --reporter=dot
+      - name: Capture CI environment snapshot
+        run: node dist/index.js doctor env-snapshot --out ./.artifacts/ci.snapshot.json
+      - name: Upload artifacts (JSON/NDJSON)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: opd-artifacts-ci
+          path: |
+            ./.artifacts/**/*.json
+            ./.artifacts/**/*.ndjson
+          if-no-files-found: ignore
+      - name: Docs link check
+        run: pnpm run ci:docs-links

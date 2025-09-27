@@ -6,15 +6,23 @@ const calls: string[] = []
 
 // Avoid env sync side effects and provider file writes
 vi.mock('../commands/env', () => ({ envSync: vi.fn(async () => { /* no-op */ }) }))
-vi.mock('../core/provider-system/provider', () => ({
-  loadProvider: async (name: string) => ({
-    id: name,
-    async validateAuth() { /* no-op */ },
-    async generateConfig() { return 'noop' },
-    async open() { /* no-op */ },
-    getCapabilities: () => ({ name, supportsLocalBuild: true, supportsRemoteBuild: true, supportsStaticDeploy: true, supportsServerless: true, supportsEdgeFunctions: true, supportsSsr: true, hasProjectLinking: true, envContexts: ['preview','production'], supportsLogsFollow: true, supportsAliasDomains: true, supportsRollback: false })
-  })
-}))
+vi.mock('../core/provider-system/provider', async (orig) => {
+  // Prefer real loader (which respects OPD_PROVIDER_MODE=virtual) when virtual mode is enabled
+  const mode = String(process.env.OPD_PROVIDER_MODE ?? '').toLowerCase()
+  if (mode === 'virtual') {
+    const real = await orig<any>()
+    return real
+  }
+  return {
+    loadProvider: async (name: string) => ({
+      id: name,
+      async validateAuth() { /* no-op */ },
+      async generateConfig() { return 'noop' },
+      async open() { /* no-op */ },
+      getCapabilities: () => ({ name, supportsLocalBuild: true, supportsRemoteBuild: true, supportsStaticDeploy: true, supportsServerless: true, supportsEdgeFunctions: true, supportsSsr: true, hasProjectLinking: true, envContexts: ['preview','production'], supportsLogsFollow: true, supportsAliasDomains: true, supportsRollback: false })
+    })
+  }
+})
 vi.mock('../core/detectors/auto', () => ({ detectApp: vi.fn(async () => ({ framework: 'next', publishDir: 'dist' })) }))
 
 vi.mock('../utils/process', async (orig) => {

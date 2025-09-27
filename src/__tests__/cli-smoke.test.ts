@@ -11,7 +11,9 @@ function runCli(args: readonly string[], cwd: string): Promise<{ stdout: string;
       // Skip if not built
       return resolve({ stdout: '', stderr: 'dist/index.js missing; build first', code: 0 })
     }
-    const child = execFile(exe, [entry, ...args], { cwd }, (err, stdout, stderr) => {
+    // Prefer virtual provider for hermetic CLI smoke unless explicitly disabled
+    if (!process.env.OPD_PROVIDER_MODE) process.env.OPD_PROVIDER_MODE = 'virtual'
+    const child = execFile(exe, [entry, ...args], { cwd, env: process.env as any }, (err, stdout, stderr) => {
       let code = 0
       if (err) {
         const ec: unknown = (err as any).code

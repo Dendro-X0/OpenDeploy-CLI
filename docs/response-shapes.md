@@ -18,6 +18,15 @@ Notes:
 - Vercel `logsUrl` is the Inspect URL. If not printed by the deploy stream, the CLI falls back to `vercel inspect <url>`.
 - Netlify `logsUrl` is a dashboard link constructed from site name and the latest deploy id.
 
+## Schemas & Validation
+
+All commands emit a final JSON summary which is validated at runtime (Ajv 2020). Every final object is annotated with:
+
+- `schemaOk: boolean`
+- `schemaErrors: string[]` (empty when valid)
+
+Strict guardrail (CI-friendly): set `OPD_SCHEMA_STRICT=1` to cause a non-zero exit code when schema errors are present. The final JSON is still printed for diagnosis. See also: `docs/schemas.md`.
+
 ## start (wizard)
 
 The `start` wizard emits a final JSON summary and may emit intermediate NDJSON events when `--ndjson` (or `OPD_NDJSON=1`) is enabled.
@@ -319,14 +328,11 @@ Notes:
 
 ## JSON Schemas
 
-Draft JSON Schemas are provided under `schemas/`:
+Runtime validation uses TypeScript schema modules located at:
 
-- `schemas/up.schema.json`
-- `schemas/deploy.schema.json`
-- `schemas/promote.schema.json`
-- `schemas/rollback.schema.json`
+- `src/schemas/*.schema.ts`
 
-They can be used to validate outputs in CI pipelines.
+Final summaries are annotated with `schemaOk` and `schemaErrors`. In CI, `OPD_SCHEMA_STRICT=1` is enabled so any drift results in a non-zero exit code while preserving the final JSON output for debugging.
 
 ## Retries and Timeouts
 

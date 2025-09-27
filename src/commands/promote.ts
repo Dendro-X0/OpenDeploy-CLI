@@ -6,6 +6,8 @@ import { proc, runWithRetry } from '../utils/process'
  
 import { fsx } from '../utils/fs'
 import { printDeploySummary } from '../utils/summarize'
+import Ajv2020 from 'ajv/dist/2020'
+import { promoteSummarySchema } from '../schemas/promote-summary.schema'
 
 interface PromoteOptions {
   readonly alias?: string
@@ -28,6 +30,14 @@ interface PromoteOptions {
  * - Netlify: best-effort "promote" by deploying current code to production with build and optional --site.
  */
 export function registerPromoteCommand(program: Command): void {
+  const ajv = new Ajv2020({ allErrors: true, strict: false })
+  const validate = ajv.compile(promoteSummarySchema as unknown as object)
+  const annotate = (obj: Record<string, unknown>): Record<string, unknown> => {
+    const ok: boolean = validate(obj) as boolean
+    const errs: string[] = Array.isArray(validate.errors) ? validate.errors.map(e => `${e.instancePath || '/'} ${e.message ?? ''}`.trim()) : []
+    if (process.env.OPD_SCHEMA_STRICT === '1' && errs.length > 0) { process.exitCode = 1 }
+    return { ...obj, schemaOk: ok, schemaErrors: errs }
+  }
   program
     .command('promote')
     .description('Promote a preview to production (provider-specific)')
@@ -66,8 +76,8 @@ export function registerPromoteCommand(program: Command): void {
                   `netlify deploy --build --prod${opts.project ? ` --site ${opts.project}` : ''}`.trim()
               ]
           if (jsonMode) {
-            if (prov === 'vercel') logger.jsonPrint({ ...base, from: opts.from, alias: opts.alias ? `https://${opts.alias}` : undefined, cmdPlan, final: true })
-            else logger.jsonPrint({ ...base, from: opts.from, siteId: opts.project, cmdPlan, final: true })
+            if (prov === 'vercel') logger.jsonPrint(annotate({ ...base, from: opts.from, alias: opts.alias ? `https://${opts.alias}` : undefined, cmdPlan, final: true }))
+            else logger.jsonPrint(annotate({ ...base, from: opts.from, siteId: opts.project, cmdPlan, final: true }))
           } else {
             logger.info(`[dry-run] promote ${prov} ${prov === 'vercel' ? `(alias=${opts.alias ?? 'none'})` : ''}`)
           }
@@ -76,7 +86,7 @@ export function registerPromoteCommand(program: Command): void {
         if (provider === 'vercel') {
           if (!opts.alias) {
             const msg = 'Missing --alias <domain>. Provide the production domain to point to the preview.'
-            if (jsonMode) { logger.jsonPrint({ ok: false, action: 'promote' as const, provider: 'vercel' as const, message: msg, final: true }); return }
+            if (jsonMode) { logger.jsonPrint(annotate({ ok: false, action: 'promote' as const, provider: 'vercel' as const, message: msg, final: true })); return }
             logger.error(msg)
             return
           }
@@ -113,7 +123,7 @@ export function registerPromoteCommand(program: Command): void {
           if (opts.printCmd) logger.info(`$ ${aliasCmd}`)
           const set = await runWithRetry({ cmd: aliasCmd, cwd: targetCwd })
           if (!set.ok) throw new Error(set.stderr.trim() || set.stdout.trim() || 'Failed to set alias for preview')
-          if (jsonMode) { logger.jsonPrint({ ok: true, provider: 'vercel', action: 'promote', target: 'prod', from: previewUrl, url: `https://${opts.alias}`, alias: `https://${opts.alias}`, final: true }); return }
+          if (jsonMode) { logger.jsonPrint(annotate({ ok: true, provider: 'vercel', action: 'promote', target: 'prod', from: previewUrl, url: `https://${opts.alias}`, alias: `https://${opts.alias}`, final: true })); return }
           logger.success(`Promoted preview → ${opts.alias}`)
           printDeploySummary({ provider: 'vercel', target: 'prod', url: `https://${opts.alias}` })
           return
@@ -126,7 +136,7 @@ export function registerPromoteCommand(program: Command): void {
             if (opts.printCmd) logger.info(`$ ${restoreCmd}`)
             const restore = await runWithRetry({ cmd: restoreCmd, cwd: targetCwd })
             if (!restore.ok) throw new Error(restore.stderr.trim() || restore.stdout.trim() || 'Netlify restore failed')
-            if (jsonMode) { logger.jsonPrint({ ok: true, provider: 'netlify', action: 'promote', target: 'prod', deployId: opts.from, siteId: opts.project, final: true }); return }
+            if (jsonMode) { logger.jsonPrint(annotate({ ok: true, provider: 'netlify', action: 'promote', target: 'prod', deployId: opts.from, siteId: opts.project, final: true })); return }
             logger.success(`Requested restore of deploy ${opts.from}`)
             printDeploySummary({ provider: 'netlify', target: 'prod' })
             return
@@ -157,7 +167,7 @@ export function registerPromoteCommand(program: Command): void {
                 }
               }
             } catch { /* ignore */ }
-            if (jsonMode) { logger.jsonPrint({ ok: true, provider: 'netlify', action: 'promote', target: 'prod', url, logsUrl, siteId: opts.project, final: true }); return }
+            if (jsonMode) { logger.jsonPrint(annotate({ ok: true, provider: 'netlify', action: 'promote', target: 'prod', url, logsUrl, siteId: opts.project, final: true })); return }
             logger.success(url ? `Promoted to production: ${url}` : 'Promoted to production')
             printDeploySummary({ provider: 'netlify', target: 'prod', url })
             return
@@ -167,7 +177,7 @@ export function registerPromoteCommand(program: Command): void {
         process.exitCode = 1
       } catch (err) {
         const msg: string = err instanceof Error ? err.message : String(err)
-        if (isJsonMode(opts.json)) logger.jsonPrint({ ok: false, action: 'promote', provider, message: msg, final: true })
+        if (isJsonMode(opts.json)) logger.jsonPrint(annotate({ ok: false, action: 'promote', provider, message: msg, final: true }))
         logger.error(msg)
         process.exitCode = 1
       }

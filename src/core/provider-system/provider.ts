@@ -6,6 +6,11 @@ import type { Provider } from './provider-interface'
  */
 export async function loadProvider(id: string): Promise<Provider> {
   const normalized = id.toLowerCase()
+  // Virtual mode: force provider to 'virtual' for hermetic tests
+  if ((process.env.OPD_PROVIDER_MODE ?? '').toLowerCase() === 'virtual') {
+    const mod = await import('./providers/virtual')
+    return new mod.VirtualProvider(normalized)
+  }
   // Built-in providers
   if (normalized === 'vercel') {
     const mod = await import('./providers/vercel')
