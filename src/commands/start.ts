@@ -2,7 +2,8 @@ import { Command } from 'commander'
 import { join, isAbsolute } from 'node:path'
 import { logger, isJsonMode } from '../utils/logger'
 import { envSync } from './env'
-import { proc, runWithTimeout } from '../utils/process'
+import { proc, runWithTimeout, withTimeout } from '../utils/process'
+import { spawnStreamPreferred } from '../utils/process-pref'
 import { spinner } from '../utils/ui'
 import { computeRedactors } from '../utils/redaction'
 import { extractVercelInspectUrl } from '../utils/inspect'
@@ -25,7 +26,7 @@ import { loadProvider } from '../core/provider-system/provider'
 // Make sure to add it as a dependency: pnpm add @clack/prompts
 import { intro, outro, select, confirm as clackConfirm, isCancel, cancel, note } from '@clack/prompts'
 
-type Provider = 'vercel' | 'netlify'
+type Provider = 'vercel' | 'netlify' | 'cloudflare' | 'github'
 
 export interface StartOptions {
   readonly framework?: Framework
@@ -54,6 +55,28 @@ export interface StartOptions {
   readonly idleTimeout?: number | string
   readonly debugDetect?: boolean
   readonly generateConfigOnly?: boolean
+}
+
+function providerNiceName(p: Provider): string {
+  if (p === 'vercel') return 'Vercel'
+  if (p === 'netlify') return 'Netlify'
+  if (p === 'cloudflare') return 'Cloudflare Pages'
+  return 'GitHub Pages'
+}
+
+/**
+ * Render a clickable hyperlink when the terminal supports OSC 8.
+ * Falls back to plain URL otherwise.
+ */
+function makeHyperlink(url: string, label?: string): string {
+  const u: string = url
+  const text: string = label && label.length > 0 ? label : url
+  // Many terminals (Windows Terminal, iTerm2, modern VS Code) support OSC 8.
+  // Non-supporting terminals will show raw string, which is acceptable.
+  const OSC: string = '\u001B]8;;'
+  const BEL: string = '\u0007'
+  const ESC_CLOSE: string = '\u001B]8;;\u0007'
+  return `${OSC}${u}${BEL}${text}${ESC_CLOSE}`
 }
 
 // Read Netlify site id from .netlify/state.json (returns undefined if missing)
@@ -427,6 +450,21 @@ async function providerStatus(p: Provider): Promise<'logged in'|'login required'
       if (res.ok && /Logged in|You are logged in/i.test(res.stdout)) return 'logged in'
       return 'login required'
     }
+    if (p === 'cloudflare') {
+      // wrangler whoami prints the account; fallback to --version for availability
+      const who = await runWithTimeout({ cmd: 'wrangler whoami' }, 10_000)
+      if (who.ok && /[A-Za-z0-9_-]/.test(who.stdout)) return 'logged in'
+      const ver = await runWithTimeout({ cmd: 'wrangler --version' }, 10_000)
+      return ver.ok ? 'login required' : 'login required'
+    }
+    if (p === 'github') {
+      // Treat git+origin as readiness
+      const git = await runWithTimeout({ cmd: 'git --version' }, 10_000)
+      if (!git.ok) return 'login required'
+      const rem = await runWithTimeout({ cmd: 'git remote -v' }, 10_000)
+      if (rem.ok && /origin\s+.*github\.com/i.test(rem.stdout)) return 'logged in'
+      return 'login required'
+    }
   } catch { /* fallthrough */ }
   return 'login required'
 }
@@ -450,9 +488,9 @@ async function ensureProviderAuth(p: Provider, opts: StartOptions): Promise<void
   const ok: boolean = await tryValidate()
   if (ok) return
   if (opts.ci) throw new Error(`${p} login required`)
-  const want = await clackConfirm({ message: `${p === 'vercel' ? 'Vercel' : 'Netlify'} login required. Log in now?`, initialValue: true })
+  const want = await clackConfirm({ message: `${providerNiceName(p)} login required. Log in now?`, initialValue: true })
   if (isCancel(want) || want !== true) throw new Error(`${p} login required`)
-  const cmd: string = p === 'vercel' ? 'vercel login' : 'netlify login'
+  const cmd: string = p === 'vercel' ? 'vercel login' : p === 'netlify' ? 'netlify login' : p === 'cloudflare' ? 'wrangler login' : 'git remote -v'
   note(`Running: ${cmd}`, 'Auth')
   const res = await proc.run({ cmd })
   if (!res.ok) throw new Error(`${p} login failed`)
@@ -466,6 +504,70 @@ async function ensureProviderAuth(p: Provider, opts: StartOptions): Promise<void
  */
 async function runDeploy(args: { readonly provider: Provider; readonly env: 'prod' | 'preview'; readonly cwd: string; readonly json: boolean; readonly project?: string; readonly org?: string; readonly printCmd?: boolean; readonly publishDir?: string; readonly noBuild?: boolean; readonly alias?: string; readonly showLogs?: boolean; readonly timeoutSeconds?: number; readonly idleTimeoutSeconds?: number }): Promise<{ readonly url?: string; readonly logsUrl?: string; readonly alias?: string }> {
   const envTarget = args.env
+  // Cloudflare Pages via provider plugin
+  if (args.provider === 'cloudflare') {
+    const plugin = await loadProvider('cloudflare')
+    const phaseText: string = 'Cloudflare Pages'
+    let statusText = `deploying (${envTarget === 'prod' ? 'production' : 'preview'})`
+    const sp = spinner(phaseText)
+    const startAt = Date.now()
+    const hb = setInterval(() => { sp.update(`${phaseText}: ${statusText} — ${formatElapsed(Date.now() - startAt)}`) }, 1000)
+    const emitStatus = (status: string, extra?: Record<string, unknown>): void => {
+      statusText = status
+      if (process.env.OPD_NDJSON === '1') logger.json({ action: 'start', provider: 'cloudflare', target: envTarget, event: 'status', status, ...(extra ?? {}) })
+    }
+    try {
+      emitStatus('building')
+      const build = await plugin.build({ cwd: args.cwd, envTarget: (envTarget === 'prod' ? 'production' : 'preview'), publishDirHint: args.publishDir })
+      if (!build.ok) { sp.stop(); throw new Error(build.message || 'Cloudflare build failed') }
+      emitStatus('deploying')
+      const project = { projectId: args.project, orgId: args.org, slug: args.project }
+      const res = await plugin.deploy({ cwd: args.cwd, envTarget: (envTarget === 'prod' ? 'production' : 'preview'), project, artifactDir: build.artifactDir })
+      if (!res.ok) { sp.stop(); throw new Error(res.message || 'Cloudflare deploy failed') }
+      emitStatus('ready')
+      if (process.env.OPD_NDJSON === '1') logger.json({ action: 'start', provider: 'cloudflare', target: envTarget, event: 'done', ok: true, url: res.url })
+      clearInterval(hb); sp.stop();
+      return { url: res.url }
+    } catch (e) {
+      clearInterval(hb); sp.stop()
+      const err = new Error('Cloudflare deploy failed') as Error & { meta?: Record<string, unknown> }
+      err.meta = { provider: 'cloudflare', message: e instanceof Error ? e.message : String(e) }
+      if (process.env.OPD_NDJSON === '1') logger.json({ action: 'start', provider: 'cloudflare', target: envTarget, event: 'done', ok: false, message: err.meta.message })
+      throw err
+    }
+  }
+  // GitHub Pages via provider plugin
+  if (args.provider === 'github') {
+    const plugin = await loadProvider('github')
+    const phaseText: string = 'GitHub Pages'
+    let statusText = 'deploying (production)'
+    const sp = spinner(phaseText)
+    const startAt = Date.now()
+    const hb = setInterval(() => { sp.update(`${phaseText}: ${statusText} — ${formatElapsed(Date.now() - startAt)}`) }, 1000)
+    const emitStatus = (status: string, extra?: Record<string, unknown>): void => {
+      statusText = status
+      if (process.env.OPD_NDJSON === '1') logger.json({ action: 'start', provider: 'github', target: 'prod', event: 'status', status, ...(extra ?? {}) })
+    }
+    try {
+      emitStatus('building')
+      const build = await plugin.build({ cwd: args.cwd, envTarget: 'production', publishDirHint: args.publishDir })
+      if (!build.ok) { sp.stop(); throw new Error(build.message || 'GitHub Pages build failed') }
+      emitStatus('deploying')
+      const project = { projectId: args.project, orgId: args.org, slug: args.project }
+      const res = await plugin.deploy({ cwd: args.cwd, envTarget: 'production', project, artifactDir: build.artifactDir })
+      if (!res.ok) { sp.stop(); throw new Error(res.message || 'GitHub Pages deploy failed') }
+      emitStatus('ready')
+      if (process.env.OPD_NDJSON === '1') logger.json({ action: 'start', provider: 'github', target: 'prod', event: 'done', ok: true, url: res.url })
+      clearInterval(hb); sp.stop();
+      return { url: res.url }
+    } catch (e) {
+      clearInterval(hb); sp.stop()
+      const err = new Error('GitHub Pages deploy failed') as Error & { meta?: Record<string, unknown> }
+      err.meta = { provider: 'github', message: e instanceof Error ? e.message : String(e) }
+      if (process.env.OPD_NDJSON === '1') logger.json({ action: 'start', provider: 'github', target: 'prod', event: 'done', ok: false, message: err.meta.message })
+      throw err
+    }
+  }
   if (args.provider === 'vercel') {
     // Ensure linked when IDs provided
     if ((args.project || args.org) && !(await fsx.exists(join(args.cwd, '.vercel', 'project.json')))) {
@@ -501,9 +603,11 @@ async function runDeploy(args: { readonly provider: Provider; readonly env: 'pro
     if (args.printCmd) logger.info(`$ ${envTarget === 'prod' ? 'vercel deploy --prod --yes' : 'vercel deploy --yes'}`)
     let inspectPoll: NodeJS.Timeout | undefined
     let pnpmHintEmitted = false
-    const controller = proc.spawnStream({
+    const controller = spawnStreamPreferred({
       cmd: envTarget === 'prod' ? 'vercel deploy --prod --yes' : 'vercel deploy --yes',
       cwd: args.cwd,
+      timeoutSeconds: args.timeoutSeconds,
+      idleTimeoutSeconds: args.idleTimeoutSeconds,
       onStdout: (chunk: string): void => {
         lastActivity = Date.now()
         const m = chunk.match(urlRe)
@@ -656,9 +760,11 @@ async function runDeploy(args: { readonly provider: Provider; readonly env: 'pro
   }
   let stdoutBuf = ''
   let stderrBuf = ''
-  const controller = proc.spawnStream({
+  const controller = spawnStreamPreferred({
     cmd,
     cwd: args.cwd,
+    timeoutSeconds: args.timeoutSeconds,
+    idleTimeoutSeconds: args.idleTimeoutSeconds,
     onStdout: (chunk: string): void => {
       lastActivity = Date.now()
       const m = chunk.match(urlRe)
@@ -916,12 +1022,19 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
       if (opts.ci) {
         provider = 'vercel'
       } else {
-        const [vs, ns] = await Promise.all([providerStatus('vercel'), providerStatus('netlify')])
+        const [vs, ns, cs, gs] = await Promise.all([
+          providerStatus('vercel'),
+          providerStatus('netlify'),
+          providerStatus('cloudflare'),
+          providerStatus('github')
+        ])
         const choice = await select({
           message: 'Select deployment provider',
           options: [
             { value: 'vercel', label: `Vercel (${vs})` },
-            { value: 'netlify', label: `Netlify (${ns})` }
+            { value: 'netlify', label: `Netlify (${ns})` },
+            { value: 'cloudflare', label: `Cloudflare Pages (${cs})` },
+            { value: 'github', label: `GitHub Pages (${gs})` }
           ]
         })
         if (isCancel(choice)) { cancel('Cancelled'); return }
@@ -938,8 +1051,7 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
     if (!opts.generateConfigOnly) await ensureProviderAuth(provider!, opts)
 
     // Validate provider and show selection (human mode only)
-    if (provider !== 'vercel' && provider !== 'netlify') throw new Error('Provider selection failed (invalid value)')
-    humanNote(`${provider === 'vercel' ? 'Vercel' : 'Netlify'} selected`, 'Select deployment provider')
+    humanNote(`${providerNiceName(provider!)} selected`, 'Select deployment provider')
     // Also validate via provider plugin and enrich detection hints using capabilities
     try {
       const plugin = await loadProvider(provider)
@@ -954,8 +1066,8 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
     if (opts.generateConfigOnly === true) {
       try {
         const plugin = await loadProvider(provider)
-        await plugin.generateConfig({ detection, cwd: targetCwd, overwrite: false })
-        humanNote(provider === 'vercel' ? 'Ensured vercel.json' : 'Ensured netlify.toml', 'Config')
+        const cfgPath = await plugin.generateConfig({ detection, cwd: targetCwd, overwrite: false })
+        humanNote(`Ensured provider config: ${cfgPath}`, 'Config')
       } catch { /* ignore exists */ }
       const envTarget: 'prod' | 'preview' = (opts.env ?? 'preview') === 'prod' ? 'prod' : 'preview'
       if (isJsonMode(opts.json)) {
@@ -1121,7 +1233,11 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
         }
         try { const patterns = await computeRedactors({ cwd: targetCwd, envFiles: [chosenFile], includeProcessEnv: true }); if (patterns.length > 0) logger.setRedactors(patterns) } catch { /* ignore */ }
         humanNote(`Syncing ${chosenFile} → ${provider}`, 'Environment')
-        await envSync({ provider: provider!, cwd: targetCwd, file: chosenFile, env: envTarget, yes: true, ci: Boolean(opts.ci), json: false, projectId: effectiveProject, orgId: opts.org, ignore: [], only: [], optimizeWrites: true })
+        if (provider === 'vercel' || provider === 'netlify') {
+          await envSync({ provider, cwd: targetCwd, file: chosenFile, env: envTarget, yes: true, ci: Boolean(opts.ci), json: false, projectId: effectiveProject, orgId: opts.org, ignore: [], only: [], optimizeWrites: true })
+        } else {
+          note('Env sync not supported for this provider in the wizard (skipping)', 'Environment')
+        }
       } else {
         if (!machineMode) note('No local .env file found to sync', 'Environment')
       }
@@ -1276,6 +1392,12 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
         }
         if (url) logger.success(`${envTarget === 'prod' ? 'Production' : 'Preview'}: ${url}`)
         if (!machineMode) outro('Deployment complete')
+    setTimeout(() => { try { process.exit(0) } catch { /* ignore */ } }, 0)
+    // Final guard: some terminals on Windows may keep a stray handle open after shell openers.
+    // Exit cleanly after yielding the event loop once.
+    setTimeout(() => { try { process.exit(0) } catch { /* ignore */ } }, 0)
+        // Ensure the wizard terminates cleanly even if a stray handle remains (Windows shell/openers)
+        setTimeout(() => { try { process.exit(0) } catch { /* ignore */ } }, 0)
         return
       }
       // NDJSON parity: emit a logs event if available
@@ -1305,6 +1427,7 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
         }
         logger.jsonPrint(summary)
         if (!machineMode) outro('Prepared')
+        setTimeout(() => { try { process.exit(0) } catch { /* ignore */ } }, 0)
         return
       }
       // Human messaging with Git/CI recommendation and CI checklist
@@ -1375,18 +1498,24 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
         try { await clipboard.write(logsUrl); humanNote('Copied logs URL to clipboard', 'Command') } catch { /* ignore */ }
       }
     }
-    // Offer to open logs/dashboard
-    const openNow = await clackConfirm({ message: 'Open provider dashboard/logs now?', initialValue: false })
+    // Offer to open logs/dashboard (non-blocking with timeout)
+    const openMsg: string = logsUrl ? `Open provider dashboard/logs now?\n${makeHyperlink(logsUrl, 'Open logs in browser')}` : 'Open provider dashboard/logs now?'
+    const openNow = await clackConfirm({ message: openMsg, initialValue: false })
     if (!isCancel(openNow) && openNow) {
       try {
         if (logsUrl) {
-          const opener: string = process.platform === 'win32' ? `start "" "${logsUrl}"` : process.platform === 'darwin' ? `open "${logsUrl}"` : `xdg-open "${logsUrl}"`
-          await proc.run({ cmd: opener, cwd: targetCwd })
+          const opener: string = process.platform === 'win32'
+            ? `powershell -NoProfile -NonInteractive -Command Start-Process \"${logsUrl}\"`
+            : process.platform === 'darwin'
+              ? `open "${logsUrl}"`
+              : `xdg-open "${logsUrl}"`
+          // Do not hang the wizard if the OS opener stalls; give it up to 5s and continue.
+          try { await runWithTimeout({ cmd: opener, cwd: targetCwd }, 5_000) } catch { /* swallow */ }
         } else {
           try {
             const plugin = await loadProvider(provider)
-            await plugin.open({ projectId: effectiveProject, orgId: opts.org ?? saved.org })
-          } catch { /* ignore */ }
+            await withTimeout(plugin.open({ projectId: effectiveProject, orgId: opts.org ?? saved.org }), 5_000)
+          } catch { /* swallow */ }
         }
       } catch (e) {
         logger.warn(`Open logs failed: ${(e as Error).message}`)
@@ -1493,7 +1622,7 @@ export function registerStartCommand(program: Command): void {
     .command('start')
     .description('Guided deploy wizard (select framework, provider, env, and deploy)')
     .option('--framework <name>', 'Framework: next|astro|sveltekit|remix|expo')
-    .option('--provider <name>', 'Provider: vercel|netlify')
+    .option('--provider <name>', 'Provider: vercel|netlify|cloudflare|github')
     .option('--env <env>', 'Environment: prod|preview', 'preview')
     .option('--path <dir>', 'Path to app directory (monorepo)')
     .option('--project <id>', 'Provider project/site ID')

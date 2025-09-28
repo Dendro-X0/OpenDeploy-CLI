@@ -1,6 +1,6 @@
 {
   "name": "opendeploy-cli",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "OpenDeploy CLI — cross-provider deployment tool focused on Next.js first.",
   "type": "module",
   "bin": {
@@ -10,6 +10,9 @@
   },
   "scripts": {
     "build": "tsup",
+    "build:go": "node -e \"require('fs').mkdirSync('.bin',{recursive:true})\" && (go build -C ./go -o ../.bin/opd-go.exe ./cmd/opd-go || go build -C ./go -o ../.bin/opd-go ./cmd/opd-go)",
+    "build:go:win": "node -e \"require('fs').mkdirSync('.bin',{recursive:true})\" && go build -C ./go -o ../.bin/opd-go.exe ./cmd/opd-go",
+    "build:go:nix": "node -e \"require('fs').mkdirSync('.bin',{recursive:true})\" && go build -C ./go -o ../.bin/opd-go ./cmd/opd-go",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",

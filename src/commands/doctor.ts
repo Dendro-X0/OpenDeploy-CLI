@@ -1,3 +1,29 @@
+async function checkOpdGo(cwd: string, printCmd?: boolean): Promise<CheckResult> {
+  // Priority: OPD_GO_BIN -> ./.bin/opd-go(.exe) -> PATH
+  try {
+    const override: string | undefined = process.env.OPD_GO_BIN
+    if (override && override.length > 0) {
+      const exists = await fsx.exists(override)
+      return { name: 'opd-go (optional)', ok: exists, message: exists ? `OPD_GO_BIN=${override}` : `OPD_GO_BIN points to missing file: ${override}` }
+    }
+    const exe: string = process.platform === 'win32' ? 'opd-go.exe' : 'opd-go'
+    const local: string = join(cwd, '.bin', exe)
+    if (await fsx.exists(local)) {
+      return { name: 'opd-go (optional)', ok: true, message: `local .bin/${exe}` }
+    }
+    const pathCmd: string = process.platform === 'win32' ? 'where opd-go' : 'command -v opd-go'
+    if (printCmd) logger.info(`$ ${pathCmd}`)
+    const probe = await runWithRetry({ cmd: pathCmd, cwd })
+    if (probe.ok && probe.stdout.trim().length > 0) {
+      const first = probe.stdout.trim().split(/\r?\n/)[0] || 'opd-go'
+      return { name: 'opd-go (optional)', ok: true, message: first }
+    }
+    return { name: 'opd-go (optional)', ok: false, message: 'not found (build with: pnpm build:go or set OPD_GO_BIN)'}
+  } catch {
+    return { name: 'opd-go (optional)', ok: false, message: 'not found (build with: pnpm build:go or set OPD_GO_BIN)'}
+  }
+}
+
 import { Command } from 'commander'
 import { logger, isJsonMode } from '../utils/logger'
 import { proc, runWithRetry } from '../utils/process'
@@ -130,6 +156,9 @@ export function registerDoctorCommand(program: Command): void {
         const bunCandidates: readonly string[] = process.platform === 'win32' ? ['bun', 'bun.exe', 'bun.cmd'] : ['bun']
         const bunCli = await checkCmdAny(bunCandidates, 'bun', opts.printCmd)
         results.push(bunCli)
+        // Go sidecar (optional)
+        const goRunner = await checkOpdGo(process.cwd(), opts.printCmd)
+        results.push(goRunner)
         const vercelCandidates: readonly string[] = process.platform === 'win32' ? ['vercel', 'vercel.cmd'] : ['vercel']
         const vercelCli = await checkCmdAny(vercelCandidates, 'vercel', opts.printCmd)
         results.push(vercelCli)
@@ -291,6 +320,30 @@ export function registerDoctorCommand(program: Command): void {
         const okCount: number = results.filter(r => r.ok).length
         const failCount: number = total - okCount
         const failSamples = results.filter(r => !r.ok).slice(0, 5).map(r => ({ name: r.name, message: r.message }))
+        // If local .bin/opd-go exists but not on PATH and OPD_GO_BIN is unset, provide a hint to set OPD_GO_BIN
+        try {
+          const exe: string = process.platform === 'win32' ? 'opd-go.exe' : 'opd-go'
+          const local: string = join(cwd, '.bin', exe)
+          const localExists: boolean = await fsx.exists(local)
+          const envOverride = process.env.OPD_GO_BIN
+          let onPath = false
+          try {
+            const pathCmd: string = process.platform === 'win32' ? 'where opd-go' : 'command -v opd-go'
+            const probe = await runWithRetry({ cmd: pathCmd, cwd })
+            onPath = probe.ok && probe.stdout.trim().length > 0
+          } catch { onPath = false }
+          if (localExists && !onPath && (!envOverride || envOverride.length === 0)) {
+            const ps = `$env:OPD_GO_BIN = \"$PWD\\.bin\\${exe}\"`
+            const sh = `export OPD_GO_BIN=\"$PWD/.bin/${exe}\"`
+            suggestions.push(`Set OPD_GO_BIN (PowerShell): ${ps}`)
+            suggestions.push(`Set OPD_GO_BIN (Bash): ${sh}`)
+          }
+        } catch { /* ignore */ }
+        // Add suggestions for missing optional tools
+        try {
+          const hasOpdGo: boolean = results.find(r => r.name === 'opd-go (optional)')?.ok === true
+          if (!hasOpdGo) suggestions.push('pnpm run build:go')
+        } catch { /* ignore */ }
         printDoctorSummary({ total, okCount, failCount, failSamples })
         if (!ok) {
           logger.warn('Some checks failed. Run the suggested login/install commands and re-run doctor.')

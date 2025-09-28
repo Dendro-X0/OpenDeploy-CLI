@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process'
 import { dirname } from 'node:path'
 import { appendFile, mkdir, readFile } from 'node:fs/promises'
 
-interface RunArgs { readonly cmd: string; readonly cwd?: string; readonly stdin?: string; readonly env?: Readonly<Record<string, string>> }
+export interface RunArgs { readonly cmd: string; readonly cwd?: string; readonly stdin?: string; readonly env?: Readonly<Record<string, string>> }
 
 // ------- Minimal NDJSON record/replay (Phase 1) -------
 const recordFile: string | undefined = process.env.OPD_RECORD_FIXTURES
@@ -116,12 +116,12 @@ function spawnStream(args: RunStreamArgs): StreamController {
   }
   return { stop, done }
 }
-interface RunStreamArgs { readonly cmd: string; readonly cwd?: string; readonly env?: Readonly<Record<string, string>>; readonly onStdout?: (chunk: string) => void; readonly onStderr?: (chunk: string) => void; readonly timeoutMs?: number }
-interface StreamController { readonly stop: () => void; readonly done: Promise<{ readonly ok: boolean; readonly exitCode: number }> }
+export interface RunStreamArgs { readonly cmd: string; readonly cwd?: string; readonly env?: Readonly<Record<string, string>>; readonly onStdout?: (chunk: string) => void; readonly onStderr?: (chunk: string) => void; readonly timeoutMs?: number }
+export interface StreamController { readonly stop: () => void; readonly done: Promise<{ readonly ok: boolean; readonly exitCode: number }> }
 
-interface RunResult { readonly ok: boolean; readonly exitCode: number; readonly stdout: string; readonly stderr: string }
+export interface RunResult { readonly ok: boolean; readonly exitCode: number; readonly stdout: string; readonly stderr: string }
 
-interface ProcUtil {
+export interface ProcUtil {
   readonly run: (args: RunArgs) => Promise<RunResult>
   readonly runStream: (args: RunStreamArgs) => Promise<{ readonly ok: boolean; readonly exitCode: number }>
   readonly spawnStream: (args: RunStreamArgs) => StreamController
