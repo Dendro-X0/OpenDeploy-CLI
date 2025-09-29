@@ -42,7 +42,7 @@ import { readFile as readFileFs } from 'node:fs/promises'
 // ---- GitHub Pages + Next static export checks (best-effort, non-fatal) ----
 async function checkNextGithubPages(cwd: string): Promise<CheckResult[]> {
   const results: CheckResult[] = []
-  const push = (name: string, ok: boolean, message: string): void => results.push({ name, ok, message })
+  const push = (name: string, ok: boolean, message: string): void => { results.push({ name, ok, message }) }
   try {
     const hasNoJekyllPublic = await fsx.exists(join(cwd, 'public', '.nojekyll'))
     const hasNoJekyllOut = await fsx.exists(join(cwd, 'out', '.nojekyll'))

@@ -559,9 +559,9 @@ async function runDeploy(args: { readonly provider: Provider; readonly env: 'pro
       const res = await plugin.deploy({ cwd: args.cwd, envTarget: (envTarget === 'prod' ? 'production' : 'preview'), project, artifactDir: build.artifactDir })
       if (!res.ok) { sp.stop(); throw new Error(res.message || 'Cloudflare deploy failed') }
       emitStatus('ready')
-      if (process.env.OPD_NDJSON === '1') logger.json({ action: 'start', provider: 'cloudflare', target: envTarget, event: 'done', ok: true, url: res.url })
+      if (process.env.OPD_NDJSON === '1') logger.json({ action: 'start', provider: 'cloudflare', target: envTarget, event: 'done', ok: true, url: res.url, logsUrl: res.logsUrl })
       clearInterval(hb); sp.stop();
-      return { url: res.url }
+      return { url: res.url, logsUrl: res.logsUrl }
     } catch (e) {
       clearInterval(hb); sp.stop()
       const msg = e instanceof Error ? e.message : String(e)
@@ -663,6 +663,7 @@ async function runDeploy(args: { readonly provider: Provider; readonly env: 'pro
     const urlRe = /https?:\/\/[^\s]+vercel\.app/g
     
     let capturedUrl: string | undefined
+  let capturedLogsUrl: string | undefined
     let capturedInspect: string | undefined
     let emittedLogsEvent = false
     let lastActivity = Date.now()
@@ -815,6 +816,7 @@ async function runDeploy(args: { readonly provider: Provider; readonly env: 'pro
   const siteFlag: string = args.project ? ` --site ${args.project}` : ''
   const dirFlag: string = args.publishDir ? ` --dir ${args.publishDir}` : ''
   let capturedUrl: string | undefined
+  let capturedLogsUrl: string | undefined
   const urlRe = /https?:\/\/[^\s]+\.netlify\.app\b/g
   const buildPart = args.noBuild === true ? '' : ' --build'
   const jsonPart = args.json === true ? ' --json' : ''
@@ -851,6 +853,11 @@ async function runDeploy(args: { readonly provider: Provider; readonly env: 'pro
       if (process.env.OPD_JSON !== '1' && process.env.OPD_NDJSON !== '1' || args.showLogs === true) {
         const t = chunk.replace(/\s+$/, '')
         if (t.length > 0) logger.info(t)
+      }
+      // Try to capture logs URL directly from stdout
+      if (!capturedLogsUrl) {
+        const lm = chunk.match(/https?:\/\/app\.netlify\.com\/sites\/[a-z0-9-]+\/deploys\/[a-f0-9-]+/i)
+        if (lm && lm[0]) capturedLogsUrl = lm[0]
       }
       if (process.env.OPD_NDJSON === '1') {
         const data = truncateEventData(chunk)
@@ -952,10 +959,48 @@ async function runDeploy(args: { readonly provider: Provider; readonly env: 'pro
       }
     } catch { /* ignore */ }
   }
-  if (process.env.OPD_NDJSON === '1') {
-    logger.json({ action: 'start', provider: 'netlify', target: envTarget, event: 'done', ok: true, url: capturedUrl })
+  // Build a logs URL if not captured from stream
+  if (!capturedLogsUrl) {
+    try {
+      // If we have a site id, try to compute logs URL via API
+      let siteId: string | undefined = args.project
+      if (!siteId) {
+        try {
+          const raw = await readFile(join(args.cwd, '.netlify', 'state.json'), 'utf8')
+          const js = JSON.parse(raw) as { siteId?: string }
+          if (js && typeof js.siteId === 'string') siteId = js.siteId
+        } catch { /* ignore */ }
+      }
+      if (siteId) {
+        // Get site name or admin_url
+        let siteName: string | undefined
+        let adminUrl: string | undefined
+        try {
+          const siteRes = await proc.run({ cmd: `netlify api getSite --data '{"site_id":"${siteId}"}'`, cwd: args.cwd })
+          if (siteRes.ok) {
+            const info = JSON.parse(siteRes.stdout) as { name?: string; admin_url?: string }
+            if (typeof info.name === 'string') siteName = info.name
+            if (typeof info.admin_url === 'string') adminUrl = info.admin_url
+          }
+        } catch { /* ignore */ }
+        // Latest deploy id
+        let deployId: string | undefined
+        try {
+          const ls = await proc.run({ cmd: `netlify api listSiteDeploys --data '{"site_id":"${siteId}","per_page":1}'`, cwd: args.cwd })
+          if (ls.ok) {
+            const arr = JSON.parse(ls.stdout) as Array<{ id?: string }>
+            if (Array.isArray(arr) && arr.length > 0) deployId = arr[0]?.id
+          }
+        } catch { /* ignore */ }
+        if (siteName && deployId) capturedLogsUrl = `https://app.netlify.com/sites/${siteName}/deploys/${deployId}`
+        else if (adminUrl) capturedLogsUrl = `${adminUrl}/deploys`
+      }
+    } catch { /* ignore */ }
   }
-  return { url: capturedUrl }
+  if (process.env.OPD_NDJSON === '1') {
+    logger.json({ action: 'start', provider: 'netlify', target: envTarget, event: 'done', ok: true, url: capturedUrl, logsUrl: capturedLogsUrl })
+  }
+  return { url: capturedUrl, logsUrl: capturedLogsUrl }
 }
 
 export async function runStartWizard(opts: StartOptions): Promise<void> {

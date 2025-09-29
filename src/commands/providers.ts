@@ -4,6 +4,7 @@ import { loadProvider } from '../core/provider-system/provider'
 import { join } from 'node:path'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { fsx } from '../utils/fs'
+import { renderGithubPagesWorkflow } from '../utils/workflows'
 
 export function registerProvidersCommand(program: Command): void {
   program
@@ -67,67 +68,4 @@ export function registerProvidersCommand(program: Command): void {
         process.exitCode = 1
       }
     })
-}
-
-function renderGithubPagesWorkflow(args: { readonly basePath: string; readonly siteOrigin?: string }): string {
-  const origin = args.siteOrigin || 'https://<owner>.github.io'
-  return `name: Deploy Docs to GitHub Pages
-
-on:
-  push:
-    branches: [ main ]
-  workflow_dispatch: {}
-
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: "pages"
-  cancel-in-progress: false
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup PNPM
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: 'pnpm'
-
-      - name: Install deps
-        run: pnpm install --frozen-lockfile
-
-      - name: Build (Next 15 static export)
-        env:
-          NEXT_PUBLIC_SITE_ORIGIN: ${origin}
-          NEXT_BASE_PATH: ${args.basePath}
-        run: pnpm build
-
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: out
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: \\${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
-`
 }

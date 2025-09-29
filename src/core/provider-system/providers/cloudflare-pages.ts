@@ -156,11 +156,21 @@ export class CloudflarePagesProvider implements Provider {
     const projFlag = projectName ? ` --project-name ${projectName}` : ''
     const cmd = `${bin} pages deploy ${dir}${projFlag}`
     const out = await proc.run({ cmd, cwd: args.cwd })
-    if (!out.ok) return { ok: false, message: out.stderr.trim() || out.stdout.trim() || 'Cloudflare deploy failed' }
-    // Try to parse a URL from stdout
-    const m = out.stdout.match(/https?:\/\/[^\s]+/g)
-    const url = m && m.length > 0 ? m[0] : undefined
-    return { ok: true, url }
+    if (!out.ok) {
+      const msg = (out.stderr || out.stdout || '').trim() || 'Cloudflare deploy failed'
+      return { ok: false, message: msg }
+    }
+    // Try to parse deployment and dashboard URLs from stdout
+    const urls = (out.stdout.match(/https?:\/\/[^\s]+/g) || []) as string[]
+    const deployUrl = urls.find(u => /\.pages\.dev\b/i.test(u)) || urls[0]
+    // Best-effort dashboard/logs URL
+    let logsUrl: string | undefined
+    logsUrl = urls.find(u => /dash\.cloudflare\.com\//i.test(u))
+    if (!logsUrl && projectName) {
+      // Generic dashboard deep-link; account segment is resolved by Cloudflare automatically
+      logsUrl = `https://dash.cloudflare.com/?to=/:account/pages/view/${projectName}`
+    }
+    return { ok: true, url: deployUrl, logsUrl }
   }
 
   public async open(_project: ProjectRef): Promise<void> { return }
