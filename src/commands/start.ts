@@ -16,7 +16,7 @@ import { detectExpoApp } from '../core/detectors/expo'
 import { detectApp as autoDetect, detectCandidates as detectMarks } from '../core/detectors/auto'
 import { fsx } from '../utils/fs'
 import clipboard from 'clipboardy'
-import { readFile, readdir, writeFile } from 'node:fs/promises'
+import { readFile, readdir, writeFile, mkdir } from 'node:fs/promises'
 import type { DetectionResult } from '../types/detection-result'
 import type { Framework } from '../types/framework'
 // writeFile moved into fs/promises import above
@@ -278,6 +278,16 @@ function resolvePmBuildCmd(buildCommand: string, pkgMgr: string): string {
   return 'npm run build'
 }
 
+function wrapWithPmExec(cmd: string, pkgMgr: string): string {
+  const c = String(cmd).trim()
+  if (c.length === 0) return resolvePmBuildCmd('build', pkgMgr)
+  if (/^(pnpm|yarn|npm|bun)\b/i.test(c)) return c
+  if (pkgMgr === 'pnpm') return `pnpm exec ${c}`
+  if (pkgMgr === 'yarn') return `yarn ${c}`
+  if (pkgMgr === 'bun') return `bunx ${c}`
+  return `npx -y ${c}`
+}
+
 function formatElapsed(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000))
   const m = Math.floor(total / 60)
@@ -301,8 +311,18 @@ async function runBuildPreflight(args: { readonly detection: DetectionResult; re
   try {
     const startAt = Date.now()
     const hb = setInterval(() => { sp.update(`${phaseText} — ${formatElapsed(Date.now() - startAt)}`) }, 1000)
+    const pm = await detectPackageManager(cwd)
     const detected = String(detection.buildCommand || '').trim()
-    const cmd = detected.length > 0 ? detected : resolvePmBuildCmd('build', String((detection.packageManager as unknown)))
+    let hasBuildScript = false
+    try {
+      const pkg = await fsx.readJson<Record<string, unknown>>(join(cwd, 'package.json'))
+      hasBuildScript = typeof (pkg as any)?.scripts?.build === 'string'
+    } catch { /* ignore */ }
+    const cmd = /^(pnpm|yarn|npm|bun)\b/i.test(detected)
+      ? detected
+      : hasBuildScript
+        ? resolvePmBuildCmd('build', pm)
+        : (detected.length > 0 ? wrapWithPmExec(detected, pm) : resolvePmBuildCmd('build', pm))
     const out = await proc.run({ cmd, cwd })
     if (!out.ok) {
       clearInterval(hb)
@@ -319,6 +339,20 @@ async function runBuildPreflight(args: { readonly detection: DetectionResult; re
         clearInterval(hb)
         sp.stop()
         throw new Error(`Publish directory not found or empty: ${pub}. Ensure your build outputs static files there (e.g., adjust adapter or build command).`)
+      }
+    }
+    if (provider === 'github') {
+      const pub = ((): string => {
+        if ((detection.framework as string | undefined)?.toLowerCase() === 'next') return 'out'
+        return detection.publishDir ?? 'dist'
+      })()
+      const full = join(cwd, pub)
+      const exists = await fsx.exists(full)
+      const files = exists ? await countFiles(full) : 0
+      if (!exists || files === 0) {
+        clearInterval(hb)
+        sp.stop()
+        throw new Error(`No static files found in '${pub}'. For Next.js + GitHub Pages, enable static export (next.config.js: { output: 'export' }) or run 'next export'.`)
       }
     }
     clearInterval(hb)
@@ -530,8 +564,9 @@ async function runDeploy(args: { readonly provider: Provider; readonly env: 'pro
       return { url: res.url }
     } catch (e) {
       clearInterval(hb); sp.stop()
+      const msg = e instanceof Error ? e.message : String(e)
       const err = new Error('Cloudflare deploy failed') as Error & { meta?: Record<string, unknown> }
-      err.meta = { provider: 'cloudflare', message: e instanceof Error ? e.message : String(e) }
+      err.meta = { provider: 'cloudflare', message: msg, errorLogTail: [msg] }
       if (process.env.OPD_NDJSON === '1') logger.json({ action: 'start', provider: 'cloudflare', target: envTarget, event: 'done', ok: false, message: err.meta.message })
       throw err
     }
@@ -550,8 +585,49 @@ async function runDeploy(args: { readonly provider: Provider; readonly env: 'pro
     }
     try {
       emitStatus('building')
-      const build = await plugin.build({ cwd: args.cwd, envTarget: 'production', publishDirHint: args.publishDir })
-      if (!build.ok) { sp.stop(); throw new Error(build.message || 'GitHub Pages build failed') }
+      const build = await plugin.build({ cwd: args.cwd, envTarget: 'production', publishDirHint: ((): string => {
+        // Prefer 'out' for Next static export, else detection.publishDir, else dist
+        const hint = 'out'
+        return hint
+      })() })
+      // Offer choice: Actions workflow (recommended) vs Branch publish
+      try {
+        const modeVal = await select({
+          message: 'GitHub Pages publishing method',
+          options: [
+            { value: 'actions', label: 'GitHub Actions (recommended)' },
+            { value: 'branch', label: 'Branch publish (gh-pages)' },
+          ],
+          initialValue: 'actions'
+        }) as string
+        if (modeVal === 'actions') {
+          const pkgPath = join(args.cwd, 'package.json')
+          let basePath = '/site'
+          try {
+            const pkg = await fsx.readJson<Record<string, unknown>>(pkgPath)
+            const name = String((pkg as any)?.name || '').replace(/^@[^/]+\//, '')
+            if (name) basePath = `/${name}`
+          } catch { /* ignore */ }
+          // Derive owner for origin -> site origin https://<owner>.github.io
+          let siteOrigin: string | undefined
+          try {
+            const origin = await proc.run({ cmd: 'git remote get-url origin', cwd: args.cwd })
+            if (origin.ok) {
+              const t = origin.stdout.trim()
+              const m = t.match(/^https?:\/\/github\.com\/([^/]+)\//i) || t.match(/^git@github\.com:([^/]+)\//i)
+              if (m && m[1]) siteOrigin = `https://${m[1]}.github.io`
+            }
+          } catch { /* ignore */ }
+          const { renderGithubPagesWorkflow } = await import('../utils/workflows')
+          const wf = renderGithubPagesWorkflow({ basePath, siteOrigin })
+          const wfDir = join(args.cwd, '.github', 'workflows')
+          await mkdir(wfDir, { recursive: true })
+          const wfPath = join(wfDir, 'deploy-pages.yml')
+          await writeFile(wfPath, wf, 'utf8')
+          note(`Wrote GitHub Actions workflow to ${wfPath}`, 'Config')
+          return { url: undefined, logsUrl: undefined, alias: undefined }
+        }
+      } catch { /* ignore prompt errors and fall back to branch publish */ }
       emitStatus('deploying')
       const project = { projectId: args.project, orgId: args.org, slug: args.project }
       const res = await plugin.deploy({ cwd: args.cwd, envTarget: 'production', project, artifactDir: build.artifactDir })
@@ -562,8 +638,9 @@ async function runDeploy(args: { readonly provider: Provider; readonly env: 'pro
       return { url: res.url }
     } catch (e) {
       clearInterval(hb); sp.stop()
+      const msg = e instanceof Error ? e.message : String(e)
       const err = new Error('GitHub Pages deploy failed') as Error & { meta?: Record<string, unknown> }
-      err.meta = { provider: 'github', message: e instanceof Error ? e.message : String(e) }
+      err.meta = { provider: 'github', message: msg, errorLogTail: [msg] }
       if (process.env.OPD_NDJSON === '1') logger.json({ action: 'start', provider: 'github', target: 'prod', event: 'done', ok: false, message: err.meta.message })
       throw err
     }

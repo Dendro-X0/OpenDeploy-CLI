@@ -37,6 +37,47 @@ import { printDoctorSummary } from '../utils/summarize'
 import { writeFile } from 'node:fs/promises'
 import Ajv2020 from 'ajv/dist/2020'
 import { doctorSummarySchema } from '../schemas/doctor-summary.schema'
+import { readFile as readFileFs } from 'node:fs/promises'
+
+// ---- GitHub Pages + Next static export checks (best-effort, non-fatal) ----
+async function checkNextGithubPages(cwd: string): Promise<CheckResult[]> {
+  const results: CheckResult[] = []
+  const push = (name: string, ok: boolean, message: string): void => results.push({ name, ok, message })
+  try {
+    const hasNoJekyllPublic = await fsx.exists(join(cwd, 'public', '.nojekyll'))
+    const hasNoJekyllOut = await fsx.exists(join(cwd, 'out', '.nojekyll'))
+    push('.nojekyll (public/ or out/)', hasNoJekyllPublic || hasNoJekyllOut, hasNoJekyllPublic ? 'public/.nojekyll' : (hasNoJekyllOut ? 'out/.nojekyll' : 'missing'))
+  } catch { push('.nojekyll (public/ or out/)', false, 'error reading') }
+  try {
+    let cfg = ''
+    const candidates = ['next.config.ts', 'next.config.js', 'next.config.mjs']
+    for (const f of candidates) {
+      const p = join(cwd, f)
+      if (await fsx.exists(p)) { cfg = await readFileFs(p, 'utf8'); break }
+    }
+    if (cfg.length > 0) {
+      const hasExport = /output\s*:\s*['"]export['"]/m.test(cfg)
+      push("next.config: output: 'export'", hasExport, hasExport ? 'ok' : "missing (set output: 'export')")
+      const hasTrailing = /trailingSlash\s*:\s*true/m.test(cfg)
+      push('next.config: trailingSlash', hasTrailing, hasTrailing ? 'true' : 'not set (recommended true)')
+      const hasUnopt = /images\s*:\s*\{[^}]*unoptimized\s*:\s*true/m.test(cfg)
+      push('next.config: images.unoptimized', hasUnopt, hasUnopt ? 'true' : 'not set (recommended true)')
+      const hasBasePath = /basePath\s*:\s*['"][^'"]+['"]/m.test(cfg)
+      push('next.config: basePath', hasBasePath, hasBasePath ? 'present' : 'not set (recommended for Project Pages)')
+    } else {
+      push('next.config.* present', false, 'file not found')
+    }
+  } catch { push('next.config parse', false, 'error reading next.config.*') }
+  try {
+    const outDir = join(cwd, 'out')
+    if (await fsx.exists(outDir)) {
+      const staticDir = join(outDir, '_next', 'static')
+      const exists = await fsx.exists(staticDir)
+      push('export assets (_next/static)', exists, exists ? 'found' : 'missing')
+    }
+  } catch { /* ignore */ }
+  return results
+}
 
 interface DoctorOptions { readonly ci?: boolean; readonly json?: boolean; readonly verbose?: boolean; readonly fix?: boolean; readonly path?: string; readonly project?: string; readonly org?: string; readonly site?: string; readonly printCmd?: boolean }
 
@@ -301,6 +342,15 @@ export function registerDoctorCommand(program: Command): void {
           const ghBranchOk = ghChecks.find(r => r.name === 'gh-pages branch (remote)')?.ok === true
           if (!originOk) suggestions.push('git remote add origin <url> && git push -u origin main')
           if (!ghBranchOk) suggestions.push('opendeploy deploy github')
+          // Next + GH Pages checks
+          const nx = await checkNextGithubPages(cwd)
+          for (const r of nx) results.push(r as CheckResult)
+          const hasNoJ = nx.find(r => r.name.startsWith('.nojekyll'))?.ok
+          const hasExport = nx.find(r => r.name.includes("output: 'export'"))?.ok
+          const assetsOk = nx.find(r => r.name.startsWith('export assets'))?.ok
+          if (hasNoJ === false) suggestions.push('touch public/.nojekyll (or rely on CLI to add it during deploy)')
+          if (hasExport === false) suggestions.push("set output: 'export' in next.config.ts/js for static export")
+          if (assetsOk === false) suggestions.push('pnpm build (verify out/_next/static exists)')
         } catch { /* ignore */ }
 
         if (jsonMode) {
