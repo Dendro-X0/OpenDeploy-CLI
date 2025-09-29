@@ -575,24 +575,14 @@ async function runDeploy(args: { readonly provider: Provider; readonly env: 'pro
   if (args.provider === 'github') {
     const plugin = await loadProvider('github')
     const phaseText: string = 'GitHub Pages'
+    let sp: ReturnType<typeof spinner> | undefined
+    let hb: NodeJS.Timeout | undefined
     let statusText = 'deploying (production)'
-    const sp = spinner(phaseText)
-    const startAt = Date.now()
-    const hb = setInterval(() => { sp.update(`${phaseText}: ${statusText} — ${formatElapsed(Date.now() - startAt)}`) }, 1000)
-    const emitStatus = (status: string, extra?: Record<string, unknown>): void => {
-      statusText = status
-      if (process.env.OPD_NDJSON === '1') logger.json({ action: 'start', provider: 'github', target: 'prod', event: 'status', status, ...(extra ?? {}) })
-    }
     try {
-      emitStatus('building')
-      const build = await plugin.build({ cwd: args.cwd, envTarget: 'production', publishDirHint: ((): string => {
-        // Prefer 'out' for Next static export, else detection.publishDir, else dist
-        const hint = 'out'
-        return hint
-      })() })
       // Offer choice: Actions workflow (recommended) vs Branch publish
+      let modeVal: string = 'actions'
       try {
-        const modeVal = await select({
+        modeVal = await select({
           message: 'GitHub Pages publishing method',
           options: [
             { value: 'actions', label: 'GitHub Actions (recommended)' },
@@ -600,44 +590,58 @@ async function runDeploy(args: { readonly provider: Provider; readonly env: 'pro
           ],
           initialValue: 'actions'
         }) as string
-        if (modeVal === 'actions') {
-          const pkgPath = join(args.cwd, 'package.json')
-          let basePath = '/site'
-          try {
-            const pkg = await fsx.readJson<Record<string, unknown>>(pkgPath)
-            const name = String((pkg as any)?.name || '').replace(/^@[^/]+\//, '')
-            if (name) basePath = `/${name}`
-          } catch { /* ignore */ }
-          // Derive owner for origin -> site origin https://<owner>.github.io
-          let siteOrigin: string | undefined
-          try {
-            const origin = await proc.run({ cmd: 'git remote get-url origin', cwd: args.cwd })
-            if (origin.ok) {
-              const t = origin.stdout.trim()
-              const m = t.match(/^https?:\/\/github\.com\/([^/]+)\//i) || t.match(/^git@github\.com:([^/]+)\//i)
-              if (m && m[1]) siteOrigin = `https://${m[1]}.github.io`
-            }
-          } catch { /* ignore */ }
-          const { renderGithubPagesWorkflow } = await import('../utils/workflows')
-          const wf = renderGithubPagesWorkflow({ basePath, siteOrigin })
-          const wfDir = join(args.cwd, '.github', 'workflows')
-          await mkdir(wfDir, { recursive: true })
-          const wfPath = join(wfDir, 'deploy-pages.yml')
-          await writeFile(wfPath, wf, 'utf8')
-          note(`Wrote GitHub Actions workflow to ${wfPath}`, 'Config')
-          return { url: undefined, logsUrl: undefined, alias: undefined }
-        }
-      } catch { /* ignore prompt errors and fall back to branch publish */ }
+      } catch { /* default remains 'actions' on prompt failure */ }
+      if (modeVal === 'actions') {
+        const pkgPath = join(args.cwd, 'package.json')
+        let basePath = '/site'
+        try {
+          const pkg = await fsx.readJson<Record<string, unknown>>(pkgPath)
+          const name = String((pkg as any)?.name || '').replace(/^@[^/]+\//, '')
+          if (name) basePath = `/${name}`
+        } catch { /* ignore */ }
+        // Derive owner for origin -> site origin https://<owner>.github.io
+        let siteOrigin: string | undefined
+        try {
+          const origin = await proc.run({ cmd: 'git remote get-url origin', cwd: args.cwd })
+          if (origin.ok) {
+            const t = origin.stdout.trim()
+            const m = t.match(/^https?:\/\/github\.com\/([^/]+)\//i) || t.match(/^git@github\.com:([^/]+)\//i)
+            if (m && m[1]) siteOrigin = `https://${m[1]}.github.io`
+          }
+        } catch { /* ignore */ }
+        const { renderGithubPagesWorkflow } = await import('../utils/workflows')
+        const wf = renderGithubPagesWorkflow({ basePath, siteOrigin })
+        const wfDir = join(args.cwd, '.github', 'workflows')
+        await mkdir(wfDir, { recursive: true })
+        const wfPath = join(wfDir, 'deploy-pages.yml')
+        await writeFile(wfPath, wf, 'utf8')
+        return { url: undefined, logsUrl: undefined, alias: undefined }
+      }
+      // Branch publish path: perform local build then deploy (with spinner/status)
+      statusText = 'deploying (production)'
+      sp = spinner(phaseText)
+      const startAt = Date.now()
+      hb = setInterval(() => { sp!.update(`${phaseText}: ${statusText} — ${formatElapsed(Date.now() - startAt)}`) }, 1000)
+      const emitStatus = (status: string, extra?: Record<string, unknown>): void => {
+        statusText = status
+        if (process.env.OPD_NDJSON === '1') logger.json({ action: 'start', provider: 'github', target: 'prod', event: 'status', status, ...(extra ?? {}) })
+      }
+      emitStatus('building')
+      const build = await plugin.build({ cwd: args.cwd, envTarget: 'production', publishDirHint: ((): string => {
+        // Prefer 'out' for Next static export, else detection.publishDir, else dist
+        const hint = 'out'
+        return hint
+      })() })
       emitStatus('deploying')
       const project = { projectId: args.project, orgId: args.org, slug: args.project }
       const res = await plugin.deploy({ cwd: args.cwd, envTarget: 'production', project, artifactDir: build.artifactDir })
-      if (!res.ok) { sp.stop(); throw new Error(res.message || 'GitHub Pages deploy failed') }
+      if (!res.ok) { sp?.stop(); throw new Error(res.message || 'GitHub Pages deploy failed') }
       emitStatus('ready')
       if (process.env.OPD_NDJSON === '1') logger.json({ action: 'start', provider: 'github', target: 'prod', event: 'done', ok: true, url: res.url })
-      clearInterval(hb); sp.stop();
+      if (hb) clearInterval(hb); sp?.stop();
       return { url: res.url }
     } catch (e) {
-      clearInterval(hb); sp.stop()
+      if (hb) clearInterval(hb); sp?.stop()
       const msg = e instanceof Error ? e.message : String(e)
       const err = new Error('GitHub Pages deploy failed') as Error & { meta?: Record<string, unknown> }
       err.meta = { provider: 'github', message: msg, errorLogTail: [msg] }
@@ -793,6 +797,16 @@ async function runDeploy(args: { readonly provider: Provider; readonly env: 'pro
         logger.json({ action: 'start', provider: 'vercel', target: envTarget, event: 'done', ok: false, reason: err.meta.reason, url: capturedUrl, logsUrl: capturedInspect })
       }
       throw err
+    }
+    // Fallback: if inspect URL wasn't captured from stream but we have a URL, try `vercel inspect <url>`
+    if (!capturedInspect && capturedUrl) {
+      try {
+        const insp = await proc.run({ cmd: `vercel inspect ${capturedUrl}`, cwd: args.cwd })
+        if (insp.ok) {
+          const found = extractVercelInspectUrl(insp.stdout)
+          if (found) capturedInspect = found
+        }
+      } catch { /* ignore */ }
     }
     if (process.env.OPD_NDJSON === '1' && capturedInspect && !emittedLogsEvent) {
       logger.json({ action: 'start', provider: 'vercel', target: envTarget, event: 'logs', logsUrl: capturedInspect })
@@ -1574,8 +1588,85 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
       return
     }
 
+    // GitHub Pages special flow: decide Actions vs Branch before any deploy
+    if (provider === 'github') {
+      try {
+        const modeVal = await select({
+          message: 'GitHub Pages publishing method',
+          options: [
+            { value: 'actions', label: 'GitHub Actions (recommended)' },
+            { value: 'branch', label: 'Branch publish (gh-pages)' },
+          ],
+          initialValue: 'actions'
+        }) as string
+        if (modeVal === 'actions') {
+          // Render workflow and exit early
+          const pkgPath = join(targetCwd, 'package.json')
+          let basePath = '/site'
+          try {
+            const pkg = await fsx.readJson<Record<string, unknown>>(pkgPath)
+            const name = String((pkg as any)?.name || '').replace(/^@[^/]+\//, '')
+            if (name) basePath = `/${name}`
+          } catch { /* ignore */ }
+          let siteOrigin: string | undefined
+          try {
+            const origin = await proc.run({ cmd: 'git remote get-url origin', cwd: targetCwd })
+            if (origin.ok) {
+              const t = origin.stdout.trim()
+              const m = t.match(/^https?:\/\/github\.com\/([^/]+)\//i) || t.match(/^git@github\.com:([^/]+)\//i)
+              if (m && m[1]) siteOrigin = `https://${m[1]}.github.io`
+            }
+          } catch { /* ignore */ }
+          const { renderGithubPagesWorkflow } = await import('../utils/workflows')
+          const wf = renderGithubPagesWorkflow({ basePath, siteOrigin })
+          const wfDir = join(targetCwd, '.github', 'workflows')
+          await mkdir(wfDir, { recursive: true })
+          const wfPath = join(wfDir, 'deploy-pages.yml')
+          await writeFile(wfPath, wf, 'utf8')
+          // Print Actions deep-link
+          let actionsUrl: string | undefined
+          try {
+            const origin = await proc.run({ cmd: 'git remote get-url origin', cwd: targetCwd })
+            if (origin.ok) {
+              const t = origin.stdout.trim()
+              const m = t.match(/^https?:\/\/github\.com\/([^/]+)\/([^/.]+)(?:\.git)?/i) || t.match(/^git@github\.com:([^/]+)\/([^/.]+)(?:\.git)?/i)
+              if (m && m[1] && m[2]) actionsUrl = `https://github.com/${m[1]}/${m[2]}/actions/workflows/deploy-pages.yml`
+            }
+          } catch { /* ignore */ }
+          if (isJsonMode(opts.json)) {
+            logger.json({ ok: true, action: 'start', provider, target: envTarget, mode: 'workflow-only', workflowPath: wfPath, actionsUrl, cwd: targetCwd, final: true })
+            if (!machineMode) outro('Workflow generated')
+            return
+          }
+          humanNote(`Wrote GitHub Actions workflow to ${wfPath}`, 'Config')
+          if (actionsUrl) humanNote(`Open Actions to view runs:\n${actionsUrl}`, 'GitHub')
+          humanNote('Commit and push the workflow to trigger a deploy.', 'Next step')
+          if (!machineMode) outro('Workflow generated')
+          return
+        }
+      } catch { /* fall through to branch publish */ }
+    }
+
+    // Cloudflare Pages deploy path
+    if (provider === 'cloudflare') {
+      const idleSeconds = Number(opts.idleTimeout)
+      const effIdle: number | undefined = Number.isFinite(idleSeconds) && idleSeconds > 0 ? Math.floor(idleSeconds) : (opts.ci ? 45 : undefined)
+      const { url, logsUrl } = await runDeploy({ provider: provider!, env: envTarget, cwd: targetCwd, json: Boolean(opts.json), project: effectiveProject, printCmd: opts.printCmd === true, timeoutSeconds: effectiveTimeout, idleTimeoutSeconds: effIdle })
+      if (isJsonMode(opts.json)) {
+        logger.json({ ok: true, action: 'start', provider, target: envTarget, mode: 'deploy', url, logsUrl, cwd: targetCwd, final: true })
+        if (!machineMode) outro('Done')
+        return
+      }
+      if (url) logger.success(`${envTarget === 'prod' ? 'Production' : 'Preview'}: ${url}`)
+      if (logsUrl) logger.note(`Logs: ${logsUrl}`)
+      if (!machineMode) outro('Deployment complete')
+      return
+    }
+
     // Ensure vercel.json for Vercel
-    try { const p = await loadProvider('vercel'); await p.generateConfig({ detection, cwd: targetCwd, overwrite: false }); humanNote('Ensured vercel.json', 'Config') } catch { /* ignore if exists */ }
+    if (provider === 'vercel') {
+      try { const p = await loadProvider('vercel'); await p.generateConfig({ detection, cwd: targetCwd, overwrite: false }); humanNote('Ensured vercel.json', 'Config') } catch { /* ignore if exists */ }
+    }
 
     // Vercel deploy path
     const idleSeconds = Number(opts.idleTimeout)
@@ -1594,6 +1685,31 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
         envKeysExample = keys.slice(0, 10)
       }
     } catch { /* ignore */ }
+    // Special handling: GitHub Actions workflow-only path (no local deploy performed)
+    if (provider === 'github' && !url && !logsUrl) {
+      // Attempt to derive the repo owner/name for deep links
+      let actionsUrl: string | undefined
+      try {
+        const origin = await proc.run({ cmd: 'git remote get-url origin', cwd: targetCwd })
+        if (origin.ok) {
+          const t = origin.stdout.trim()
+          const m = t.match(/^https?:\/\/github\.com\/([^/]+)\/([^/.]+)(?:\.git)?/i) || t.match(/^git@github\.com:([^/]+)\/([^/.]+)(?:\.git)?/i)
+          if (m && m[1] && m[2]) actionsUrl = `https://github.com/${m[1]}/${m[2]}/actions/workflows/deploy-pages.yml`
+        }
+      } catch { /* ignore */ }
+      const wfPath = join(targetCwd, '.github', 'workflows', 'deploy-pages.yml')
+      if (isJsonMode(opts.json)) {
+        logger.json({ ok: true, action: 'start', provider, target: envTarget, mode: 'workflow-only', workflowPath: wfPath, actionsUrl, cwd: targetCwd, final: true })
+        if (!machineMode) outro('Workflow generated')
+        return
+      }
+      humanNote(`Wrote GitHub Actions workflow to ${wfPath}`, 'Config')
+      if (actionsUrl) humanNote(`Open Actions to view runs:\n${actionsUrl}`, 'GitHub')
+      humanNote('Commit and push the workflow to trigger a deploy.', 'Next step')
+      if (!machineMode) outro('Workflow generated')
+      return
+    }
+
     if (isJsonMode(opts.json)) {
       logger.json({ ok: true, action: 'start', provider, target: envTarget, mode: 'deploy', url, logsUrl, alias, cmd, ciChecklist: { buildCommand, envFile: ciEnvFile, exampleKeys: envKeysExample }, cwd: targetCwd, final: true })
       if (!machineMode) outro('Done');
