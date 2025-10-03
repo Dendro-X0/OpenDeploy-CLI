@@ -20,13 +20,14 @@ import { registerStartCommand } from './commands/start'
 import { registerTestMatrixCommand } from './commands/test-matrix'
 import { computeRedactors } from './utils/redaction'
 
-const VERSION: string = '1.0.0-beta'
+const VERSION: string = '1.1.1'
 
 function main(): void {
   const program: Command = new Command()
   program.name('opendeploy')
-  program.description('OpenDeploy CLI — Next.js-first, cross-provider deployment assistant')
-  program.version(VERSION)
+  program.description('OpenDeploy CLI — cross-provider deployment assistant for the modern web stack')
+  // Expose lowercase -v as a shorthand in addition to default -V
+  program.version(VERSION, '-v, --version', 'output the version number')
   // Global options (parsed by Commander, but we set verbosity pre-parse for early logs as well)
   program.option('--verbose', 'Verbose output')
   program.option('--json', 'JSON-only output (suppresses non-JSON logs)')
@@ -41,6 +42,13 @@ function main(): void {
   program.option('--ndjson-file [path]', 'Also write NDJSON output lines to file (appends)')
   program.option('--gha-annotations <mode>', 'GitHub annotations: error|warning|off', 'warning')
   program.option('--gha', 'GitHub Actions-friendly defaults (implies --json --summary-only --timestamps, sets annotation/file sinks)')
+  // Shorthand: run wizard with -s / --start
+  if (process.argv.includes('-s') || process.argv.includes('--start')) {
+    const ix = process.argv.findIndex((a) => a === '-s' || a === '--start')
+    if (ix !== -1) process.argv.splice(ix, 1)
+    // inject 'start' as the first subcommand argument position
+    if (!process.argv.slice(2).includes('start')) process.argv.splice(2, 0, 'start')
+  }
   // Pre-parse lightweight check to set verbose level for early output
   if (process.argv.includes('--verbose')) {
     logger.setLevel('debug')

@@ -42,7 +42,7 @@ jobs:
       - name: Build (Next 15 static export)
         env:
           NEXT_PUBLIC_SITE_ORIGIN: ${origin}
-          NEXT_BASE_PATH: ${args.basePath}
+          NEXT_PUBLIC_BASE_PATH: ${args.basePath}
         run: pnpm build
 
       - name: Upload artifact
