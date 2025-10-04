@@ -31,16 +31,14 @@ jobs:
 
       - name: Install deps (CLI)
         run: pnpm install --frozen-lockfile
-        working-directory: "OpenDeploy CLI"
 
       - name: Build (CLI)
         run: pnpm build
-        working-directory: "OpenDeploy CLI"
 
       - name: Prepare artifacts
         run: |
           mkdir -p artifacts
-          cp "OpenDeploy CLI/dist/index.js" artifacts/opd.js
+          cp dist/index.js artifacts/opd.js || echo "No Node dist/index.js found; skipping JS artifact"
           if command -v sha256sum >/dev/null 2>&1; then
             sha256sum artifacts/opd.js > artifacts/checksums.txt
           else
@@ -71,12 +69,12 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.25'
-      - name: GoReleaser (build & upload opd-go)
+      - name: GoReleaser (build & upload opd binaries)
         uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
           version: latest
-          workdir: "./OpenDeploy CLI"
+          workdir: "."
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

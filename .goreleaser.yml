@@ -1,15 +1,15 @@
-project_name: opd-go
-# Output Go archives under artifacts/opd-go to avoid colliding with existing artifacts/*
-dist: artifacts/opd-go
+project_name: opd
+# Output artifacts under ./artifacts
+dist: artifacts
 
 before:
   hooks:
     - go mod tidy
 
 builds:
-  - id: opd-go
+  - id: opd
     main: ./go/cmd/opd-go/main.go
-    binary: opd-go
+    binary: opd
     env:
       - CGO_ENABLED=0
     goos:
@@ -25,18 +25,17 @@ builds:
       - -s -w
 
 archives:
-  - id: archive
+  - id: binaries
     builds:
-      - opd-go
-    format_overrides:
-      - goos: windows
-        format: zip
-    # e.g. opd-go_v1.2.3_windows_amd64.zip
-    name_template: "opd-go_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}"
+      - opd
+    format: binary
+    # Output names: opd-windows-x64.exe, opd-darwin-arm64, opd-linux-x64, etc.
+    name_template: >-
+      opd-{{ .Os }}-{{- if eq .Arch "amd64" -}}x64{{- else -}}{{ .Arch }}{{- end -}}{{ if eq .Os "windows" }}.exe{{ end }}
     wrap_in_directory: false
 
 checksums:
-  name_template: "opd-go_checksums.txt"
+  name_template: "opd_checksums.txt"
 
 changelog:
   disable: true
