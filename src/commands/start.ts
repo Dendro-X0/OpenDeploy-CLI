@@ -3,6 +3,7 @@ import { join, isAbsolute } from 'node:path'
 import { logger, isJsonMode } from '../utils/logger'
 import { envSync } from './env'
 import { proc, runWithTimeout, withTimeout } from '../utils/process'
+import { goZipDir, goChecksumFile, goNetlifyDeployDir } from '../utils/process-go'
 import { spawnStreamPreferred } from '../utils/process-pref'
 import { spinner } from '../utils/ui'
 import { computeRedactors } from '../utils/redaction'
@@ -832,10 +833,52 @@ async function runDeploy(args: { readonly provider: Provider; readonly env: 'pro
   let capturedUrl: string | undefined
   let capturedLogsUrl: string | undefined
   const urlRe = /https?:\/\/[^\s]+\.netlify\.app\b/g
+  // Experimental: direct deploy via Netlify API with Go sidecar (no CLI). Guarded by OPD_NETLIFY_DIRECT=1.
+  if (process.env.OPD_NETLIFY_DIRECT === '1' && args.publishDir && args.project) {
+    try {
+      const srcDir = join(args.cwd, args.publishDir)
+      const startAt = Date.now()
+      const hb = setInterval(() => { sp.update(`${phaseText}: uploading — ${formatElapsed(Date.now() - startAt)}`) }, 1000)
+      const direct = await goNetlifyDeployDir({ src: srcDir, site: args.project, prod: envTarget === 'prod', cwd: args.cwd })
+      clearInterval(hb)
+      sp.stop()
+      if (!direct.ok) {
+        const err = new Error('Netlify direct deploy failed') as Error & { meta?: Record<string, unknown> }
+        err.meta = { provider: 'netlify', reason: direct.reason }
+        if (process.env.OPD_NDJSON === '1') logger.json({ action: 'start', provider: 'netlify', target: envTarget, event: 'done', ok: false, reason: direct.reason })
+        throw err
+      }
+      capturedUrl = direct.url
+      capturedLogsUrl = direct.logsUrl
+      if (process.env.OPD_NDJSON === '1') logger.json({ action: 'start', provider: 'netlify', target: envTarget, event: 'done', ok: true, url: capturedUrl, logsUrl: capturedLogsUrl })
+      return { url: capturedUrl, logsUrl: capturedLogsUrl, alias: undefined }
+    } catch (e) {
+      // Fall through to CLI path on error
+      // Provide minimal visibility but avoid failing the entire command when experimental path fails
+      if ((process.env.OPD_JSON !== '1' && process.env.OPD_NDJSON !== '1') || args.showLogs === true) {
+        logger.warn('[experimental] Netlify direct deploy failed; falling back to CLI path')
+      }
+    }
+  }
   const buildPart = args.noBuild === true ? '' : ' --build'
   const jsonPart = args.json === true ? ' --json' : ''
   const cmd = `netlify deploy${buildPart}${envTarget === 'prod' ? ' --prod' : ''}${dirFlag}${siteFlag}${jsonPart}`.trim()
   if (args.printCmd) logger.info(`$ ${cmd}`)
+  // Optional experimental packaging: package publishDir into a zip and compute checksum for diagnostics.
+  // Guarded by OPD_PACKAGE=zip to avoid overhead in default path.
+  if (process.env.OPD_PACKAGE === 'zip' && args.publishDir) {
+    try {
+      const ts = new Date().toISOString().replace(/[:.]/g, '-')
+      const dest = join(process.cwd(), '.artifacts', `netlify-${envTarget}-${ts}.zip`)
+      try { await mkdir(join(process.cwd(), '.artifacts'), { recursive: true }) } catch {}
+      const z = await goZipDir({ src: join(args.cwd, args.publishDir), dest })
+      if (z.ok && z.dest) {
+        const sum = await goChecksumFile({ src: z.dest })
+        if (process.env.OPD_NDJSON === '1') logger.json({ action: 'start', provider: 'netlify', target: envTarget, event: 'artifact', path: z.dest, checksum: sum.digest })
+        else if (args.printCmd) logger.info(`artifact: ${z.dest}${sum.digest ? ` (sha256:${sum.digest})` : ''}`)
+      }
+    } catch { /* ignore packaging errors */ }
+  }
   const startAt = Date.now()
   let statusText = envTarget === 'prod' ? 'production' : 'preview'
   const hb = setInterval(() => { sp.update(`${phaseText}: ${statusText} — ${formatElapsed(Date.now() - startAt)}`) }, 1000)

@@ -63,6 +63,19 @@ The CLI also derives base64 versions of literal values from env files/process.en
 - `--timestamps`: include ISO timestamps in JSON objects
  - `--gha`: GitHub Actions‑friendly preset. Implies `--json --summary-only --timestamps`, sets default sinks under `./.artifacts/`, and enables GitHub annotations defaults.
 
+## Go sidecar and experimental flags
+
+You can opt into the Go sidecar for improved reliability/performance and try experimental provider paths.
+
+Environment variables:
+
+- `OPD_GO_FORCE=1` — force using the Go sidecar when present
+- `OPD_GO_DISABLE=1` — disable the Go sidecar (use Node runner)
+- `OPD_PTY=1|0` — force PTY on/off; defaults to on for interactive terminals, off in CI/JSON modes
+- `OPD_PACKAGE=zip` — pre-package `publishDir` into a zip before Netlify deploy; emits an `artifact` NDJSON event
+- `OPD_NETLIFY_DIRECT=1` — use Netlify Direct Deploy (no CLI). Requires `NETLIFY_AUTH_TOKEN` and a known `publishDir` + `--project`.
+- `NETLIFY_AUTH_TOKEN` — Netlify API token for direct deploys
+
 ### Reliability knobs
 
 Provider subprocess invocations honor these environment variables (also configurable via flags on supported commands: `--retries`, `--timeout-ms`, `--base-delay-ms`):

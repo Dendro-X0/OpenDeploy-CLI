@@ -126,9 +126,22 @@ Behavior:
 - Preflight: optionally runs a local build (skipped in `--ci`) and validates that Netlify publishDir contains output for non‑Next frameworks.
 - Vercel: performs the deploy (preview/prod) and prints `url`/`logsUrl`. When `--alias` is provided, the wizard attempts to alias the deployment to the given domain.
 - Netlify: prepare‑only by default. The wizard generates config and prints recommended `netlify deploy` commands (preview/prod) with an inferred `--dir`. Optionally, pass `--deploy` to execute a real deploy inside the wizard. With `--no-build`, the wizard deploys prebuilt artifacts from `--dir`.
+  - Experimental: When `OPD_NETLIFY_DIRECT=1` is set and both `--project` (site id/name) and a known `publishDir` exist, the wizard attempts a direct deploy via the Go sidecar (no Netlify CLI required). Requires `NETLIFY_AUTH_TOKEN`. Falls back to the CLI path on error.
 - After Vercel deploy (only), the wizard prints a copyable non‑interactive command and offers to copy the logs URL.
 - With `--json`, prints a final summary. For Netlify, `{ ok, provider, target, mode: 'prepare-only'|'deploy', projectId?, siteId?, siteName?, publishDir?, logsUrl?, recommend?, final: true }`.
 - With `--dry-run`, prints `{ ok: true, mode: 'dry-run', cmd, final: true }` and exits before syncing/deploying.
+
+#### Sidecar & experimental flags
+
+You can optionally enable the Go sidecar and experimental provider features:
+
+- `OPD_GO_FORCE=1` — prefer the Go sidecar when present (more reliable process control)
+- `OPD_GO_DISABLE=1` — disable the sidecar and use the Node runner
+- `OPD_PTY=1|0` — force PTY usage on/off; by default, PTY is used in interactive terminals but disabled in CI/JSON modes
+- `OPD_PACKAGE=zip` — pre-package Netlify `publishDir` as a `.zip` and emit an `artifact` event with a checksum
+- `OPD_NETLIFY_DIRECT=1` — attempt a direct Netlify deploy via API (no CLI). Requires `NETLIFY_AUTH_TOKEN` and a known `publishDir` + `--project`
+
+See also: `docs/development/opd-go-protocol.md` and `docs/providers/netlify.md`.
 
 ### Troubleshooting and Logs
 

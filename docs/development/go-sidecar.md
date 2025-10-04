@@ -28,6 +28,8 @@ The CLI core remains TypeScript, but for robust process control we optionally us
 { "action": "go", "event": "done", "ok": true, "exitCode": 0, "final": true }
 ```
 
+For the full v1 contract, including the initial `hello` handshake and `reason` fields on termination, see `docs/development/opd-go-protocol.md`.
+
 ## Local build
 - Windows:
 ```
@@ -60,6 +62,13 @@ To disable the sidecar:
 ```
 OPD_GO_DISABLE=1 opd start
 ```
+
+### Environment flags
+
+- `OPD_GO_FORCE=1` — force using the sidecar when present
+- `OPD_PTY=1|0` — force PTY on/off (auto-detected by default; off in CI/JSON modes)
+- `OPD_PACKAGE=zip` — pre-package artifacts for Netlify before deploy
+- `OPD_NETLIFY_DIRECT=1` — use the experimental Netlify direct deploy path (requires `NETLIFY_AUTH_TOKEN`)
 
 ## Quick smoke test
 You can invoke the sidecar directly:

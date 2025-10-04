@@ -43,6 +43,7 @@ jobs:
         env:
           NEXT_PUBLIC_SITE_ORIGIN: ${origin}
           NEXT_PUBLIC_BASE_PATH: ${args.basePath}
+          NEXT_BASE_PATH: ${args.basePath}
         run: pnpm build
 
       - name: Upload artifact

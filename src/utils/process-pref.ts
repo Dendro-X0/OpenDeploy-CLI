@@ -8,7 +8,8 @@ import { spawn } from 'node:child_process'
  * otherwise fall back to the built-in Node runner.
  */
 export function spawnStreamPreferred(args: RunStreamArgs & { readonly timeoutSeconds?: number; readonly idleTimeoutSeconds?: number }): StreamController {
-  const useGo = process.env.OPD_GO_DISABLE !== '1' && hasGoSidecar()
+  const forceGo = process.env.OPD_GO_FORCE === '1'
+  const useGo = process.env.OPD_GO_DISABLE !== '1' && (forceGo || hasGoSidecar())
   if (useGo) {
     const goArgs: GoRunStreamArgs = {
       ...args,

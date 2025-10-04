@@ -1,3 +1,7 @@
+## Provider Docs Index
+
+- Netlify: `docs/providers/netlify.md`
+
 ### React Router v7 (Netlify)
 
 - The CLI sets `[build] publish = "build/client"` and a safe `command` based on detection.
