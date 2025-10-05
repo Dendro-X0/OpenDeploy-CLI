@@ -35,8 +35,12 @@ Invoke-WebRequest -UseBasicParsing -Uri "$UrlBase/$Asset" -OutFile $assetTmp
 try {
   Write-Log 'Verifying checksum ...'
   $checks = Invoke-WebRequest -UseBasicParsing -Uri "$UrlBase/checksums.txt" | Select-Object -ExpandProperty Content
-  $hash = (Get-FileHash -Algorithm SHA256 $assetTmp).Hash.ToLower()
-  if (-not ($checks -match "$hash\s+$Asset")) { throw 'Checksum mismatch' }
+  if ($checks) {
+    $hash = (Get-FileHash -Algorithm SHA256 $assetTmp).Hash.ToLower()
+    if (-not ($checks -match "$hash\s+$Asset")) { throw 'Checksum mismatch' }
+  } else {
+    Write-Log 'Skipping checksum verification (checksums.txt not found)'
+  }
 } catch {
   Write-Log 'Skipping checksum verification (unavailable or mismatch check skipped)'
 }
