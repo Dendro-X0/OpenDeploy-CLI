@@ -20,7 +20,7 @@ import { registerStartCommand } from './commands/start'
 import { registerTestMatrixCommand } from './commands/test-matrix'
 import { computeRedactors } from './utils/redaction'
 
-const VERSION: string = '1.1.1'
+const VERSION: string = '1.2.0-rc.2'
 
 function main(): void {
   const program: Command = new Command()

@@ -1,0 +1,60 @@
+name: Install Smoke (All OS)
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to install (e.g., v1.2.0-rc.2). If omitted on manual run, latest is used.'
+        required: false
+        type: string
+
+concurrency:
+  group: install-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  install-smoke:
+    name: Install smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    env:
+      # Prefer the release tag name; fallback to manual input; otherwise 'latest'
+      TAG: ${{ github.event.release.tag_name || inputs.tag || 'latest' }}
+    steps:
+      - name: Print tag (bash)
+        if: ${{ runner.os != 'Windows' }}
+        shell: bash
+        run: |
+          echo "Installing tag: ${TAG}"
+
+      - name: Print tag (pwsh)
+        if: ${{ runner.os == 'Windows' }}
+        shell: pwsh
+        run: |
+          echo "Installing tag: $env:TAG"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Linux/macOS install
+        if: ${{ runner.os != 'Windows' }}
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export OPD_VERSION="${TAG}"
+          curl -fsSL "https://raw.githubusercontent.com/Dendro-X0/OpenDeploy-CLI/main/OpenDeploy%20CLI/install/install.sh" | bash
+          ~/.opd/opd -v
+
+      - name: Windows install
+        if: ${{ runner.os == 'Windows' }}
+        shell: pwsh
+        run: |
+          $env:OPD_VERSION = "${{ env.TAG }}"
+          iwr "https://raw.githubusercontent.com/Dendro-X0/OpenDeploy-CLI/main/OpenDeploy%20CLI/install/install.ps1" -UseBasicParsing | iex
+          & "$env:USERPROFILE\.opd\opd.cmd" -v

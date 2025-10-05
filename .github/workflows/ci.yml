@@ -18,7 +18,6 @@ jobs:
       FORCE_COLOR: '0'
       OPD_SCHEMA_STRICT: '1'
       OPD_TEST_NO_SPAWN: '1'
-      OPD_PROVIDER_MODE: 'virtual'
       OPD_FORCE_CI: '1'
       TZ: 'UTC'
       LC_ALL: 'C'
@@ -31,24 +30,31 @@ jobs:
         run: |
           corepack enable
           corepack prepare pnpm@10.13.1 --activate
+        working-directory: OpenDeploy CLI
       - name: Install deps
         run: pnpm install --frozen-lockfile
+        working-directory: OpenDeploy CLI
       - name: Typecheck
         run: pnpm typecheck
+        working-directory: OpenDeploy CLI
       - name: Build
         run: pnpm build
+        working-directory: OpenDeploy CLI
       - name: Test
         run: pnpm test -- --reporter=dot
+        working-directory: OpenDeploy CLI
       - name: Capture CI environment snapshot
         run: node dist/index.js doctor env-snapshot --out ./.artifacts/ci.snapshot.json
+        working-directory: OpenDeploy CLI
       - name: Upload artifacts (JSON/NDJSON)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: opd-artifacts-ci
           path: |
-            ./.artifacts/**/*.json
-            ./.artifacts/**/*.ndjson
+            OpenDeploy CLI/.artifacts/**/*.json
+            OpenDeploy CLI/.artifacts/**/*.ndjson
           if-no-files-found: ignore
       - name: Docs link check
         run: pnpm run ci:docs-links
+        working-directory: OpenDeploy CLI
