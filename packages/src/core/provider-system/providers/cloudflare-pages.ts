@@ -3,8 +3,9 @@
  * This implementation favors local builds (static) and deploys via `wrangler pages deploy`.
  */
 import { join } from 'node:path'
-import { stat, writeFile } from 'node:fs/promises'
+import { stat, writeFile, rm, readFile } from 'node:fs/promises'
 import { proc } from '../../../utils/process'
+import { logger } from '../../../utils/logger'
 import type { Provider } from '../provider-interface'
 import type { DetectionResult } from '../../../types/detection-result'
 import type { ProviderCapabilities } from '../provider-capabilities'
@@ -134,7 +135,88 @@ export class CloudflarePagesProvider implements Provider {
    * when necessary. We return an artifactDir derived from publishDirHint when available.
    */
   public async build(args: BuildInputs): Promise<BuildResult> {
-    // We do not run user builds here; we only resolve an artifact directory.
+    // Optional builder: for Next.js SSR/hybrid on Cloudflare Pages, use Next on Pages to produce .vercel/output/static
+    try {
+      const wantBuild: boolean = args.noBuild !== true
+      let fw: string | undefined = args.framework
+      if (!fw) {
+        try { const det = await autoDetect({ cwd: args.cwd }); fw = det.framework } catch { /* ignore */ }
+      }
+      const isNext: boolean = (fw || '').toLowerCase() === 'next'
+      if (wantBuild && isNext) {
+        logger.note('Cloudflare Pages: building with @cloudflare/next-on-pages')
+        // Clean previous build artifacts to prevent stale basePath/assetPrefix carry-over
+        try { await rm(join(args.cwd, '.vercel', 'output'), { recursive: true, force: true }) } catch { /* ignore */ }
+        try { await rm(join(args.cwd, '.next'), { recursive: true, force: true }) } catch { /* ignore */ }
+        const env = { ...process.env, DEPLOY_TARGET: 'cloudflare', NEXT_PUBLIC_BASE_PATH: '' }
+        const localCmd = process.platform === 'win32' ? 'node_modules/.bin/next-on-pages.cmd' : 'node_modules/.bin/next-on-pages'
+        // Ensure DEPLOY_TARGET is visible to Next even if sub-processes miss env: write .env.production
+        const envFile = join(args.cwd, '.env.production')
+        let prevEnv: string | null = null
+        let hadPrev = false
+        try { prevEnv = await readFile(envFile, 'utf8'); hadPrev = true } catch { /* no previous */ }
+        const enforcedEnv = `DEPLOY_TARGET=cloudflare\nNEXT_PUBLIC_BASE_PATH=\nNEXT_IGNORE_BUILD_CACHE=1\n`
+        try { await writeFile(envFile, hadPrev ? `${prevEnv}\n${enforcedEnv}` : enforcedEnv, 'utf8') } catch { /* ignore */ }
+        const candidates: string[] = [
+          localCmd,
+          'pnpm exec @cloudflare/next-on-pages',
+          process.platform === 'win32' ? 'pnpm.cmd exec @cloudflare/next-on-pages' : '',
+          'npx -y @cloudflare/next-on-pages@1',
+          process.platform === 'win32' ? 'npx.cmd -y @cloudflare/next-on-pages@1' : ''
+        ].filter(Boolean)
+        let built = false
+        for (const cmd of candidates) {
+          const res = await proc.run({ cmd, cwd: args.cwd, env })
+          if (res.ok) { built = true; break }
+        }
+        // Restore previous env file
+        try {
+          if (hadPrev && prevEnv !== null) await writeFile(envFile, prevEnv, 'utf8')
+          else await rm(envFile, { force: true })
+        } catch { /* ignore */ }
+        const cfStatic = join(args.cwd, '.vercel', 'output', 'static')
+        const exists = await fsx.exists(cfStatic)
+        if (!built || !exists) {
+          const msg = 'Next on Pages build did not produce .vercel/output/static. Ensure @cloudflare/next-on-pages is installed and compatible, and try again.'
+          logger.warn(msg)
+          return { ok: false, message: msg }
+        }
+        // Optionally add _redirects: opt-in via env or auto-detect stale GH subpath references
+        try {
+          const want = process.env.OPD_CF_ADD_SUBPATH_REDIRECTS === '1'
+          let detected = false
+          if (!want) {
+            const candidates: string[] = [
+              join(cfStatic, 'index.html'),
+              join(cfStatic, 'docs', 'index.html')
+            ]
+            for (const f of candidates) {
+              try {
+                const ok = await fsx.exists(f)
+                if (!ok) continue
+                const html = await readFile(f, 'utf8')
+                if (html.includes('/opendeploy-cli-docs-site/')) { detected = true; break }
+              } catch { /* ignore */ }
+            }
+          }
+          if (want || detected) {
+            const redirects = [
+              '/opendeploy-cli-docs-site     /   301',
+              '/opendeploy-cli-docs-site/*   /:splat   301',
+              '/opendeploy-cli-docs-site/_next/*   /_next/:splat   200',
+              '/opendeploy-cli-docs-site/docs/*   /docs/:splat   200',
+              '/opendeploy-cli-docs-site/data/*   /data/:splat   200'
+            ].join('\n') + '\n'
+            await writeFile(join(cfStatic, '_redirects'), redirects, 'utf8')
+            logger.note('Added Cloudflare _redirects to normalize subpath links to root (opt-in/detected)')
+          } else {
+            logger.info('Skipping _redirects generation (no stale subpath references detected)')
+          }
+        } catch { /* ignore */ }
+        return { ok: true, artifactDir: cfStatic }
+      }
+    } catch { /* ignore, fall through to generic discovery for non-Next */ }
+    // We do not run other user builds here; we only resolve an artifact directory.
     const candidates: string[] = []
     if (args.publishDirHint) candidates.push(args.publishDirHint)
     candidates.push('dist', 'build', 'out', 'public')
@@ -142,7 +224,7 @@ export class CloudflarePagesProvider implements Provider {
       const full = join(args.cwd, c)
       try { if (await fsx.exists(full)) return { ok: true, artifactDir: full } } catch { /* ignore */ }
     }
-    // If nothing exists yet, return hint-based path or default dist
+    // If nothing exists yet, return hint-based path or default dist (non-Next only)
     const hint = args.publishDirHint ? join(args.cwd, args.publishDirHint) : join(args.cwd, 'dist')
     return { ok: true, artifactDir: hint }
   }

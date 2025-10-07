@@ -26,7 +26,7 @@ vi.mock('../core/provider-system/provider', () => ({
 }))
 
 describe('up cloudflare emits logsUrl in JSON', () => {
-  beforeEach(() => { jsonSpy = vi.spyOn(logger, 'jsonPrint').mockImplementation(() => { /* swallow */ }) })
+  beforeEach(() => { process.env.OPD_SKIP_ASSET_SANITY = '1'; jsonSpy = vi.spyOn(logger, 'jsonPrint').mockImplementation(() => { /* swallow */ }) })
   afterEach(() => { jsonSpy.mockRestore() })
   it('includes logsUrl in summary', async () => {
     const program = new Command()

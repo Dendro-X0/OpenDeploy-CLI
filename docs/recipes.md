@@ -12,21 +12,13 @@ opd start --provider vercel --env preview \
 # Vercel: NDJSON progress (human suppressed)
 OPD_NDJSON=1 opd start --provider vercel --env preview --ci
 
-# Netlify: prepare-only (JSON summary with recommend + logsUrl)
-opd start --provider netlify --env preview \
-  --project <SITE_ID> --json
-
-# Netlify: deploy prebuilt artifacts (no build)
-opd start --provider netlify --env preview \
-  --project <SITE_ID> --deploy --no-build --json --print-cmd
-
 # Monorepo: choose app directory for deploy
 opd start --provider vercel --path apps/web --env preview --json
 ```
 
 ## Remix family deploys (React Router v7)
 
-This recipe shows how to deploy a React Router v7 app (Remix family) to Vercel and Netlify using OpenDeploy.
+This recipe shows how to deploy a React Router v7 app (Remix family) to Vercel using OpenDeploy.
 
 Prerequisites:
 - Scripts include `react-router build`.
@@ -36,13 +28,9 @@ Steps:
 1. Detect and generate config (idempotent):
    - `opd detect`
    - `opd generate vercel` (writes `vercel.json` with `outputDirectory: build/client`)
-   - `opd generate netlify` (writes `netlify.toml` with `publish = build/client`)
+   - (Optional) Cloudflare Pages/GitHub Pages: use their respective workflows.
 
-2. Netlify prepare-only via wizard (recommended first run):
-   - `opd start --provider netlify --framework remix`
-   - The wizard will preflight build and recommend:
-     - `netlify deploy --dir build/client`
-     - `netlify deploy --prod --dir build/client`
+2. Vercel prepare or deploy via wizard.
 
 3. Vercel deploy:
    - Preview: `opd up vercel --env preview`
@@ -71,14 +59,7 @@ opd up vercel \
   --ndjson --timestamps --ndjson-file
 ```
 
-### Netlify (Production)
-
-```bash
-opd up netlify \
-  --env prod \
-  --project "$NETLIFY_SITE_ID" \
-  --ndjson --timestamps --ndjson-file
-```
+<!-- Netlify removed -->
 
 Notes:
 
@@ -86,48 +67,7 @@ Notes:
 - Respects filtering/strict flags configured for `env` commands when invoked underneath `up`.
 - Use `--json-file`/`--ndjson-file` without a path to write to default `./.artifacts/*` files.
 
-## Netlify Up (CI)
-
-Use `opd up netlify` to sync env and deploy in a single CI step with streaming NDJSON and artifact sinks.
-
-```yaml
-name: Netlify Up (CI)
-
-on:
-  push:
-    branches: [main]
-
-jobs:
-  up-netlify:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'pnpm'
-      - run: corepack enable && corepack prepare pnpm@10.13.1 --activate
-      - run: pnpm install --frozen-lockfile
-      - run: mkdir -p ./.artifacts
-      - name: Build OpenDeploy
-        run: pnpm --filter "OpenDeploy CLI" -C "OpenDeploy CLI" build
-      - name: Up (env sync + deploy)
-        env:
-          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
-          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
-        run: |
-          opd up netlify \
-            --env prod \
-            --project "$NETLIFY_SITE_ID" \
-            --ndjson --timestamps \
-            --ndjson-file ./.artifacts/up.ndjson
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: opd-up-netlify
-          path: ./.artifacts
-          if-no-files-found: ignore
-```
+<!-- Netlify removed -->
 
 ### GitHub Actions Preset (`--gha`)
 
@@ -199,54 +139,13 @@ jobs:
             --ignore NEXT_PUBLIC_* --fail-on-add --fail-on-remove --json --ci
 ```
 
-## Netlify: Validate + Deploy (CI)
-
-Use env validation composition and deploy to Netlify. Requires `netlify-cli` and a linked site ID.
-
-```yaml
-name: Netlify Validate + Deploy
-
-on:
-  push:
-    branches: [main]
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'pnpm'
-      - run: corepack enable && corepack prepare pnpm@10.13.1 --activate
-      - run: pnpm install --frozen-lockfile
-      - name: Validate env (composition)
-        run: |
-          opd env validate \
-            --file ./apps/web/.env.local \
-            --schema builtin:google-oauth,builtin:github-oauth,builtin:resend-plus,builtin:s3-compat \
-            --json --ci
-      - name: Deploy to Netlify
-        env:
-          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
-        run: |
-          opd deploy netlify \
-            --path apps/web \
-            --env prod \
-            --project ${{ secrets.NETLIFY_SITE_ID }} \
             --json
 ```
 
-## Netlify publishDir troubleshooting
-
-When using Netlify via `opd start --provider netlify` (or `opd start` in the installed CLI), the wizard infers a `publishDir` and prints recommended commands. If your deploy fails or the `publishDir` is empty/missing, check the framework notes below:
+<!-- Netlify publishDir troubleshooting removed -->
 
 - Next.js
-  - Preferred: install Netlify Next Runtime for optimal SSR/Edge.
-    - `pnpm add -D @netlify/next`
-    - Publish: `.next`
-  - Fallback: legacy plugin `@netlify/plugin-nextjs` (auto-detected when runtime missing).
+  - Publish: `.next`
 
 - Astro (static)
   - Build: `astro build`
@@ -259,13 +158,7 @@ When using Netlify via `opd start --provider netlify` (or `opd start` in the ins
 - Remix (React Router v7 family)
   - Build: `react-router build`
   - Publish: `build/client`
-  - SPA routing (static): add redirect in `netlify.toml`:
-    ```toml
-    [[redirects]]
-      from = "/*"
-      to = "/index.html"
-      status = 200
-    ```
+  - SPA routing (static): add a SPA fallback per provider (e.g., Vercel rewrites, Cloudflare Pages routing config).
 
 - Nuxt
   - Build: `npx nuxi build`
@@ -273,15 +166,7 @@ When using Netlify via `opd start --provider netlify` (or `opd start` in the ins
 
 General tips
 - Inspect wizard JSON: `publishDirExists` and `publishDirFileCount` fields indicate directory status.
-- Prebuild locally then deploy artifacts:
-  ```bash
-  pnpm build
-  opd start --provider netlify --env preview --deploy --no-build --project <SITE_ID> --print-cmd
-  ```
-- To generate `netlify.toml` only:
-  ```bash
-  opd start --provider netlify --generate-config-only
-  ```
+<!-- Netlify removed -->
 
 ## CI Output & Annotations
 

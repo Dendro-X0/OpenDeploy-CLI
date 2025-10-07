@@ -539,6 +539,10 @@ async function ensureProviderAuth(p: Provider, opts: StartOptions): Promise<void
  */
 async function runDeploy(args: { readonly provider: Provider; readonly env: 'prod' | 'preview'; readonly cwd: string; readonly json: boolean; readonly project?: string; readonly org?: string; readonly printCmd?: boolean; readonly publishDir?: string; readonly noBuild?: boolean; readonly alias?: string; readonly showLogs?: boolean; readonly timeoutSeconds?: number; readonly idleTimeoutSeconds?: number }): Promise<{ readonly url?: string; readonly logsUrl?: string; readonly alias?: string }> {
   const envTarget = args.env
+  // Netlify is not supported.
+  if (args.provider === 'netlify') {
+    throw new Error('Netlify is not supported by OpenDeploy. Please use the official Netlify CLI.')
+  }
   // Cloudflare Pages via provider plugin
   if (args.provider === 'cloudflare') {
     const plugin = await loadProvider('cloudflare')
@@ -1167,7 +1171,7 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
       lines.push(`Path: ${rel.length === 0 ? '.' : rel}`)
       lines.push(`Framework: ${framework}`)
       if (detection.buildCommand) lines.push(`Build: ${detection.buildCommand}`)
-      if (publishSuggestion) lines.push(`Publish (Netlify): ${publishSuggestion}`)
+      if (publishSuggestion) lines.push(`Publish dir: ${publishSuggestion}`)
       lines.push(`Package manager: ${pkgMgr}`)
       lines.push(`Runtime: ${runtime}`)
       if (workspaceGlobs.length > 0) {
@@ -1201,9 +1205,8 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
       if (opts.ci) {
         provider = 'vercel'
       } else {
-        const [vs, ns, cs, gs] = await Promise.all([
+        const [vs, cs, gs] = await Promise.all([
           providerStatus('vercel'),
-          providerStatus('netlify'),
           providerStatus('cloudflare'),
           providerStatus('github')
         ])
@@ -1211,7 +1214,6 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
           message: 'Select deployment provider',
           options: [
             { value: 'vercel', label: `Vercel (${vs})` },
-            { value: 'netlify', label: `Netlify (${ns})` },
             { value: 'cloudflare', label: `Cloudflare Pages (${cs})` },
             { value: 'github', label: `GitHub Pages (${gs})` }
           ]
@@ -1226,6 +1228,14 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
     // Help unit tests capture a clear signal that preflight succeeded
     try { /* eslint-disable-next-line no-console */ console.log('Build validated') } catch { /* ignore */ }
 
+    // If a removed provider was chosen, exit early.
+    if (provider === 'netlify') {
+      const msg = 'Netlify is not supported by OpenDeploy. Please use the official Netlify CLI.'
+      if (isJsonMode(opts.json)) { logger.json({ ok: false, action: 'start', provider, message: msg, final: true }) }
+      else { logger.error(msg) }
+      process.exitCode = 1
+      return
+    }
     // One-click login when missing (skip when generating config only)
     if (!opts.generateConfigOnly) await ensureProviderAuth(provider!, opts)
 
@@ -1288,7 +1298,7 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
     const userTimeout: number = Number(opts.timeout)
     const effectiveTimeout: number | undefined = Number.isFinite(userTimeout) && userTimeout > 0 ? Math.floor(userTimeout) : (opts.ci ? 900 : undefined)
 
-    if (provider === 'netlify') {
+    if (false) {
       const existingSiteId: string | undefined = await readNetlifySiteId(targetCwd)
       let linked: boolean = typeof existingSiteId === 'string' && existingSiteId.length > 0
       // Validate that the linked site actually exists and is accessible; otherwise, treat as unlinked
@@ -1365,7 +1375,7 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
 
     // Compute effective project as early as possible (needed for env sync)
     let effectiveProject: string | undefined
-    if (provider === 'netlify') {
+    if (false) {
       const stateSiteId: string | undefined = await readNetlifySiteId(targetCwd)
       effectiveProject = opts.project ?? createdSiteId ?? stateSiteId ?? (saved.project as string | undefined)
     } else {
@@ -1384,7 +1394,7 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
     }
 
     // If using Netlify and no effective project yet, auto-create and link now to unblock env sync and deploy
-    if (provider === 'netlify' && !effectiveProject) {
+    if (false) {
       const base = targetCwd.split(/[\\/]/).pop() ?? 'site'
       const name = base.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-{2,}/g, '-').replace(/^-+|-+$/g, '') || 'site'
       note(`Creating Netlify site for env sync: ${name}`, 'Create')
@@ -1412,7 +1422,7 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
         }
         try { const patterns = await computeRedactors({ cwd: targetCwd, envFiles: [chosenFile], includeProcessEnv: true }); if (patterns.length > 0) logger.setRedactors(patterns) } catch { /* ignore */ }
         humanNote(`Syncing ${chosenFile} → ${provider}`, 'Environment')
-        if (provider === 'vercel' || provider === 'netlify') {
+        if (provider === 'vercel') {
           await envSync({ provider, cwd: targetCwd, file: chosenFile, env: envTarget, yes: true, ci: Boolean(opts.ci), json: false, projectId: effectiveProject, orgId: opts.org, ignore: [], only: [], optimizeWrites: true })
         } else {
           note('Env sync not supported for this provider in the wizard (skipping)', 'Environment')
@@ -1432,13 +1442,13 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
     // (preflight already executed above)
 
     // Deploy / Prepare
-    // Ensure a netlify.toml via adapter for all frameworks (prepare-only flow)
-    if (provider === 'netlify') {
+    // Netlify removed
+    if (false) {
       try { const p = await loadProvider('netlify'); await p.generateConfig({ detection, cwd: targetCwd, overwrite: false }); humanNote('Ensured netlify.toml', 'Config') } catch { /* ignore if exists */ }
     }
     // effectiveProject already computed above
 
-    if (provider === 'netlify') {
+    if (false) {
       // Detect Netlify Next Runtime presence for Next.js projects first
       let netlifyNextRuntime: boolean | undefined
       try {

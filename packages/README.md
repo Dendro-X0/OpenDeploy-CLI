@@ -14,7 +14,7 @@ OpenDeploy is a web‑focused, cross‑provider deployment CLI. It detects your 
 
 - Stack detection (framework, router, package manager, monorepo)
 - Environment management: sync, pull, diff, validate (strict flags, dry‑run, JSON/NDJSON)
-- Deploy streaming with Inspect/logsUrl capture (Vercel, Netlify)
+- Deploy streaming with Inspect/logsUrl capture (Vercel). Cloudflare Pages and GitHub Pages supported.
 - Monorepo‑aware flows and doctor checks
 - CI ergonomics: deterministic summaries, sinks, timestamps, annotations
 

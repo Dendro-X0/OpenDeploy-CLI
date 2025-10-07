@@ -59,7 +59,7 @@ env diff:
   "ok": false,
   "action": "env",
   "subcommand": "diff",
-  "provider": "netlify",
+  "provider": "vercel",
   "added": [{"key": "NEW", "value": "x"}],
   "removed": [],
   "changed": [],

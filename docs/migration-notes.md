@@ -48,6 +48,38 @@ This document summarizes the migration from legacy provider adapters/shims to th
 - `generate <provider>` calls `provider.generateConfig({ detection, cwd, overwrite })`.
 - `up` and `deploy` use provider plugins for deploys; Netlify `--no-build` path is supported.
 
+## Netlify Support Removal (2025-10-05)
+
+OpenDeploy CLI no longer supports Netlify. This change simplifies maintenance, avoids user confusion around partial/legacy flows, and directs Netlify users to the official, fully featured tooling.
+
+Rationale:
+
+- Reduce complexity and maintenance burden across multiple rapidly changing provider CLIs and APIs.
+- Prevent confusing partial support (e.g., prepare-only flows) and surface a consistent UX across supported providers.
+- Encourage best practices by using the official Netlify CLI and documentation for Netlify-specific workflows.
+
+Impact:
+
+- The CLI will error when `provider: 'netlify'` is selected or passed.
+- Docs and examples have been updated to focus on Vercel, Cloudflare Pages, and GitHub Pages.
+
+Migration Guidance:
+
+- Keep your existing `netlify.toml` in the repository when applicable.
+- Use the official Netlify CLI for deploys and environment management:
+  - Install: `npm i -g netlify-cli`
+  - Login: `netlify login`
+  - Link: `netlify link --id <SITE_ID>`
+  - Deploy (preview): `netlify deploy --dir <publishDir>`
+  - Deploy (production): `netlify deploy --build --prod`
+  - Env (list/set): `netlify env:list`, `netlify env:set KEY value`
+- For CI, prefer Netlify’s official Actions or CI integrations.
+
+Notes:
+
+- For framework-specific publish directories (e.g., Next.js `.next`, Astro `dist`, SvelteKit `build`), consult Netlify’s official adapters/runtimes and documentation.
+- If you previously relied on OpenDeploy to infer `publishDir`, mirror the same directory in your Netlify CLI commands.
+
 ## Removed artifacts
 - Files removed:
   - `src/providers/vercel/adapter.ts`, `src/providers/netlify/adapter.ts`

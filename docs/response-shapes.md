@@ -6,17 +6,16 @@ This page documents the JSON outputs emitted by the CLI when `--json` (or `--ndj
 
 | Field     | Type                     | Required | Description |
 |-----------|--------------------------|----------|-------------|
-| provider  | `"vercel" | "netlify"`  | Yes      | Provider name |
+| provider  | `"vercel"`               | Yes      | Provider name |
 | target    | `"prod" | "preview"`    | Varies   | Present on `up`/`deploy`/`promote`/`rollback` where relevant |
 | action    | `string`                 | Varies   | e.g. `promote`, `rollback` |
 | url       | `string`                 | No       | Deployment/production URL |
-| logsUrl   | `string`                 | No       | Inspect (Vercel) or dashboard (Netlify) URL |
+| logsUrl   | `string`                 | No       | Inspect URL |
 | ok        | `boolean`                | Varies   | Explicit success/failure indicator on some commands |
 | final     | `true`                   | Yes      | Present on top-level summaries |
 
 Notes:
 - Vercel `logsUrl` is the Inspect URL. If not printed by the deploy stream, the CLI falls back to `vercel inspect <url>`.
-- Netlify `logsUrl` is a dashboard link constructed from site name and the latest deploy id.
 
 ## Schemas & Validation
 
@@ -36,20 +35,17 @@ Common summary fields:
 | Field       | Type                       | Required | Notes |
 |-------------|----------------------------|----------|-------|
 | action      | const                      | Yes      | `start` |
-| provider    | enum                       | Yes      | `vercel` or `netlify` |
+| provider    | enum                       | Yes      | `vercel` |
 | target      | enum                       | Yes      | `prod` or `preview` |
 | mode        | enum                       | Yes      | `deploy` or `prepare-only` |
-| url         | string                     | No       | When a deploy is executed (e.g., Vercel; Netlify when `--deploy`) |
-| logsUrl     | string                     | No       | Inspect (Vercel) or dashboard (Netlify) |
-| publishDir  | string                     | No       | Netlify only |
-| recommend   | object                     | No       | Netlify only; `{ previewCmd, prodCmd }` |
+| url         | string                     | No       | When a deploy is executed |
+| logsUrl     | string                     | No       | Inspect URL |
 | ciChecklist | object                     | Yes      | `{ buildCommand, publishDir?, envFile?, exampleKeys? }` |
 | cwd         | string                     | No       | The chosen working directory for the wizard |
 | final       | true                       | Yes      | Present on the summary object |
 
 Notes:
 
-- Netlify defaults to `mode: "prepare-only"` and prints recommended `netlify deploy` commands. Pass `--deploy` to execute a deploy in-wizard (supports `--no-build`).
 - Vercel uses `mode: "deploy"` and prints both `url` and `logsUrl`. When `--alias` is provided, the CLI attempts to alias the deployment and includes it in the human logs.
 
 Examples:
@@ -71,47 +67,6 @@ Vercel (deploy):
 }
 ```
 
-Netlify (prepare-only):
-
-```json
-{
-  "ok": true,
-  "action": "start",
-  "provider": "netlify",
-  "target": "preview",
-  "mode": "prepare-only",
-  "projectId": "site_123",
-  "siteId": "site_123",
-  "siteName": "mysite",
-  "publishDir": "dist",
-  "recommend": { "previewCmd": "netlify deploy --dir dist --site site_123", "prodCmd": "netlify deploy --build --prod --dir dist --site site_123" },
-  "ciChecklist": { "buildCommand": "npm run build", "publishDir": "dist", "envFile": ".env.local" },
-  "logsUrl": "https://app.netlify.com/sites/mysite/deploys",
-  "cwd": "/path/to/app",
-  "final": true
-}
-```
-
-Netlify (deploy):
-
-```json
-{
-  "ok": true,
-  "action": "start",
-  "provider": "netlify",
-  "target": "preview",
-  "mode": "deploy",
-  "projectId": "site_123",
-  "siteId": "site_123",
-  "siteName": "mysite",
-  "url": "https://mysite.netlify.app",
-  "logsUrl": "https://app.netlify.com/sites/mysite/deploys",
-  "ciChecklist": { "buildCommand": "npm run build", "publishDir": "dist" },
-  "cwd": "/path/to/app",
-  "final": true
-}
-```
-
 NDJSON events:
 
 - When `--ndjson`/`OPD_NDJSON=1` is enabled, the wizard may emit non-final progress events prior to the summary. A cross-provider logs event is emitted when a dashboard/inspect URL is available:
@@ -120,15 +75,13 @@ NDJSON events:
 {"action":"start","provider":"vercel","target":"preview","event":"logs","logsUrl":"https://vercel.com/acme/app/inspections/dep_123"}
 ```
 
-```json
-{"action":"start","provider":"netlify","target":"preview","event":"logs","logsUrl":"https://app.netlify.com/sites/mysite/deploys"}
-```
+<!-- Netlify logs event removed -->
 
 ## up
 
 | Field     | Type                    | Required | Notes |
 |-----------|-------------------------|----------|-------|
-| provider  | enum                    | Yes      | `vercel` or `netlify` |
+| provider  | enum                    | Yes      | `vercel` |
 | target    | enum                    | Yes      | `prod` or `preview` |
 | url       | string                  | No       | Preview/prod URL |
 | logsUrl   | string                  | No       | Inspect/dashboard URL |
@@ -146,21 +99,13 @@ NDJSON events:
 }
 ```
 
-```json
-{
-  "provider": "netlify",
-  "target": "prod",
-  "url": "https://my-site.netlify.app",
-  "logsUrl": "https://app.netlify.com/sites/my-site/deploys/dep_abc123",
-  "final": true
-}
-```
+<!-- Netlify up example removed -->
 
 ## deploy
 
 | Field      | Type                    | Required | Notes |
 |------------|-------------------------|----------|-------|
-| provider   | enum                    | Yes      | `vercel` or `netlify` |
+| provider   | enum                    | Yes      | `vercel` |
 | target     | enum                    | Yes      | `prod` or `preview` |
 | url        | string                  | No       | Deployment URL |
 | logsUrl    | string                  | No       | Inspect/dashboard URL |
@@ -180,29 +125,9 @@ NDJSON events:
 }
 ```
 
-```json
-{
-  "provider": "netlify",
-  "target": "prod",
-  "url": "https://my-site.netlify.app",
-  "logsUrl": "https://app.netlify.com/sites/my-site/deploys/dep_def456",
-  "final": true
-}
-```
+<!-- Netlify deploy example removed -->
 
-When using direct restore on Netlify (`--from <deployId>`):
-
-```json
-{
-  "ok": true,
-  "provider": "netlify",
-  "action": "promote",
-  "target": "prod",
-  "siteId": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
-  "deployId": "dep_abc123",
-  "final": true
-}
-```
+<!-- Netlify promote example removed -->
 
 ### NDJSON Progress Events
 
@@ -234,15 +159,13 @@ Notes:
 | Field    | Type     | Required | Notes |
 |----------|----------|----------|-------|
 | ok       | boolean  | No       | Present for explicit success/failure |
-| provider | enum     | Yes      | `vercel` or `netlify` |
+| provider | enum     | Yes      | `vercel` |
 | action   | const    | Yes      | `promote` |
 | target   | const    | Yes      | `prod` |
 | from     | string   | No       | Vercel: preview URL promoted |
 | url      | string   | No       | Production URL |
 | alias    | string   | No       | Vercel: production alias |
-| logsUrl  | string   | No       | Netlify: dashboard URL |
-| siteId   | string   | No       | Netlify site ID when available |
-| deployId | string   | No       | Netlify: restored deploy id (when using direct restore) |
+| logsUrl  | string   | No       | Inspect URL |
 | final    | true     | Yes      | |
 
 ```json
@@ -258,25 +181,14 @@ Notes:
 }
 ```
 
-```json
-{
-  "ok": true,
-  "provider": "netlify",
-  "action": "promote",
-  "target": "prod",
-  "url": "https://my-site.netlify.app",
-  "logsUrl": "https://app.netlify.com/sites/my-site/deploys/dep_ghi789",
-  "siteId": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
-  "final": true
-}
-```
+<!-- Netlify promote example removed -->
 
 ## rollback
 
 | Field      | Type     | Required | Notes |
 |------------|----------|----------|-------|
 | ok         | boolean  | No       | Presence varies by branch |
-| provider   | enum     | Yes      | `vercel` or `netlify` |
+| provider   | enum     | Yes      | `vercel` |
 | action     | const    | Yes      | `rollback` |
 | target     | const    | Yes      | `prod` |
 | to         | string   | No       | Vercel: target URL for rollback |
@@ -284,9 +196,9 @@ Notes:
 | alias      | string   | No       | Vercel: production alias |
 | candidate  | string   | No       | Vercel: suggested target when `--alias` not passed |
 | needsAlias | boolean  | No       | Vercel: true when alias required |
-| message    | string   | No       | Netlify: failure message |
-| dashboard  | string   | No       | Netlify: dashboard link |
-| deployId   | string   | No       | Netlify: restored deploy id |
+| message    | string   | No       | Failure message |
+| dashboard  | string   | No       | Dashboard link |
+| deployId   | string   | No       | Restored deploy id |
 | final      | true     | Yes      | |
 
 ```json
@@ -314,17 +226,7 @@ Notes:
 }
 ```
 
-```json
-{
-  "ok": false,
-  "provider": "netlify",
-  "action": "rollback",
-  "target": "prod",
-  "message": "Restore failed. Use dashboard to restore.",
-  "dashboard": "https://app.netlify.com/sites/my-site/deploys/dep_abc123",
-  "final": true
-}
-```
+<!-- Netlify rollback example removed -->
 
 ## JSON Schemas
 

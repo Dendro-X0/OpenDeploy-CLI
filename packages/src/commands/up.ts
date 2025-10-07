@@ -4,6 +4,7 @@ import { logger, isJsonMode } from '../utils/logger'
 import { fsx } from '../utils/fs'
 import { spinner } from '../utils/ui'
 import { startHeartbeat, type Stopper } from '../utils/progress'
+import { readFile as readFileFs } from 'node:fs/promises'
 import { proc, runWithRetry } from '../utils/process'
 import { envSync } from './env'
 import { printDeploySummary } from '../utils/summarize'
@@ -34,6 +35,9 @@ interface UpOptions {
   readonly baseDelayMs?: string
   readonly ndjson?: boolean
   readonly noBuild?: boolean
+  readonly preflightOnly?: boolean
+  readonly strictPreflight?: boolean
+  readonly preflightArtifactsOnly?: boolean
 }
 
 function inferPublishDir(fw: Framework): string {
@@ -83,12 +87,17 @@ export function registerUpCommand(program: Command): void {
     .option('--base-delay-ms <ms>', 'Base delay for exponential backoff with jitter (default 300)')
     .option('--ndjson', 'Output NDJSON events for progress')
     .option('--no-build', 'Skip local build; deploy existing publish directory (Netlify)')
+    .option('--preflight-only', 'Run preflight checks and exit without building/publishing (GitHub Pages)')
+    .option('--strict-preflight', 'Treat preflight warnings as errors (GitHub/Cloudflare)')
+    .option('--preflight-artifacts-only', 'Run provider build and asset sanity, then exit without deploying (Cloudflare/GitHub)')
     .action(async (provider: string | undefined, opts: UpOptions): Promise<void> => {
       const rootCwd: string = process.cwd()
       const targetCwd: string = opts.path ? (isAbsolute(opts.path) ? opts.path : join(rootCwd, opts.path)) : rootCwd
       try {
         const jsonMode: boolean = isJsonMode(opts.json)
-        const ndjsonOn: boolean = opts.ndjson === true || process.env.OPD_NDJSON === '1'
+        const ndjsonOn: boolean = opts.ndjson === true
+        // Structured preflight capture for JSON consumers
+        const preflight: Array<{ readonly name: string; readonly ok: boolean; readonly level: 'warn' | 'note'; readonly message?: string }> = []
         if (jsonMode) logger.setJsonOnly(true)
         if (jsonMode || ndjsonOn || opts.ci === true) process.env.OPD_FORCE_CI = '1'
         if (opts.retries) process.env.OPD_RETRIES = String(Math.max(0, Number(opts.retries) || 0))
@@ -124,11 +133,43 @@ export function registerUpCommand(program: Command): void {
                 cmdPlan.push(`netlify build --context ${ctx}`.trim())
                 cmdPlan.push(`netlify deploy --no-build${envShort === 'prod' ? ' --prod' : ''} --dir ${publishDir}${opts.project ? ` --site ${opts.project}` : ''}`.trim())
               } else if (prov === 'cloudflare') {
-                let publishDir = 'dist'
-                try { const det = await detectApp({ cwd: targetCwd }); publishDir = det.publishDir ?? 'dist' } catch { /* ignore */ }
-                cmdPlan.push(`wrangler pages deploy ${publishDir}`.trim())
+                // Choose publish dir by framework; add guidance for Next.js
+                try {
+                  const det = await detectApp({ cwd: targetCwd })
+                  const fw = det.framework as Framework
+                  let dir = det.publishDir
+                  if (!dir) {
+                    if (fw === 'astro') dir = 'dist'
+                    else if (fw === 'sveltekit') dir = 'build'
+                    else if (fw === 'next') dir = 'out' // static export path; requires next export or next-on-pages
+                    else dir = 'dist'
+                  }
+                  if (fw === 'next') {
+                    cmdPlan.push('# Next.js on Cloudflare Pages requires static export or next-on-pages (SSR). Consider Vercel for hybrid/SSR.')
+                  }
+                  cmdPlan.push(`wrangler pages deploy ${dir}`.trim())
+                } catch {
+                  cmdPlan.push('wrangler pages deploy dist')
+                }
               } else if (prov === 'github') {
-                cmdPlan.push('next export && gh-pages -d out')
+                // Framework-aware GitHub Pages plan
+                try {
+                  const det = await detectApp({ cwd: targetCwd })
+                  const fw = det.framework as Framework
+                  if (fw === 'astro') {
+                    cmdPlan.push('gh-pages -d dist')
+                  } else if (fw === 'sveltekit') {
+                    cmdPlan.push('gh-pages -d build')
+                  } else if (fw === 'next') {
+                    cmdPlan.push('# Next.js on GitHub Pages requires static export (next.config.js: output: "export").')
+                    cmdPlan.push('next export && gh-pages -d out')
+                  } else {
+                    const dir = det.publishDir ?? 'dist'
+                    cmdPlan.push(`gh-pages -d ${dir}`)
+                  }
+                } catch {
+                  cmdPlan.push('gh-pages -d dist')
+                }
               }
               logger.jsonPrint(annotate({ ok: true, action: 'up' as const, provider: prov, target: envShort, mode: 'dry-run', cmdPlan, final: true }))
               return
@@ -160,16 +201,164 @@ export function registerUpCommand(program: Command): void {
           let publishDirHint: string | undefined
           let frameworkHint: string | undefined
           try { const d = await p.detect(targetCwd); publishDirHint = d.publishDir; frameworkHint = d.framework } catch { /* ignore */ }
+          // Fallback: global auto-detect when provider-specific detection did not identify the framework
+          if (!frameworkHint) {
+            try { const d2 = await detectApp({ cwd: targetCwd }); publishDirHint = publishDirHint ?? d2.publishDir; frameworkHint = d2.framework } catch { /* ignore */ }
+          }
+          // Detect presence of next.config.* to strengthen preflight triggers
+          let hasNextConfig = false
+          try {
+            const cands = ['next.config.ts', 'next.config.js', 'next.config.mjs']
+            for (const f of cands) { if (await fsx.exists(join(targetCwd, f))) { hasNextConfig = true; break } }
+          } catch { /* ignore */ }
+          // Preflight: Next.js on GitHub Pages requires basePath/assetPrefix matching repo and static export
+          if (prov === 'github' && (((frameworkHint || '').toLowerCase() === 'next') || hasNextConfig)) {
+            try {
+              let warned = false
+              // Derive repo name from git origin
+              let repo: string | undefined
+              try {
+                const origin = await proc.run({ cmd: 'git remote get-url origin', cwd: targetCwd })
+                if (origin.ok) {
+                  const t = origin.stdout.trim()
+                  const httpsRe = /^https?:\/\/github\.com\/(.+?)\/(.+?)(?:\.git)?$/i
+                  const sshRe = /^git@github\.com:(.+?)\/(.+?)(?:\.git)?$/i
+                  const m1 = t.match(httpsRe); const m2 = t.match(sshRe)
+                  const r = (m1?.[2] || m2?.[2] || '').trim()
+                  if (r) repo = r
+                }
+              } catch { /* ignore */ }
+              // Read next.config.* best-effort
+              let cfg = ''
+              const candidates = ['next.config.ts', 'next.config.js', 'next.config.mjs']
+              for (const f of candidates) {
+                const pth = join(targetCwd, f)
+                if (await fsx.exists(pth)) { cfg = await readFileFs(pth, 'utf8'); break }
+              }
+              const needsExport: boolean = cfg.length > 0 ? !/output\s*:\s*['"]export['"]/m.test(cfg) : true
+              if (needsExport) { logger.warn("Next.js → GitHub Pages: set next.config output: 'export' for static export."); preflight.push({ name: "github: next.config output 'export'", ok: false, level: 'warn', message: "set output: 'export'" }); warned = true }
+              const unoptOk: boolean = cfg.length > 0 ? /images\s*:\s*\{[^}]*unoptimized\s*:\s*true/m.test(cfg) : false
+              if (!unoptOk) { logger.warn('Next.js → GitHub Pages: set images.unoptimized: true to avoid runtime optimization.'); preflight.push({ name: 'github: images.unoptimized true', ok: false, level: 'warn', message: 'set images.unoptimized: true' }); warned = true }
+              const trailingOk: boolean = cfg.length > 0 ? /trailingSlash\s*:\s*true/m.test(cfg) : false
+              if (!trailingOk) { logger.note('Next.js → GitHub Pages: trailingSlash: true is recommended for static hosting.'); preflight.push({ name: 'github: trailingSlash recommended', ok: true, level: 'note', message: 'set trailingSlash: true' }) }
+              if (repo) {
+                const repoPath = `/${repo}`
+                const baseMatch = cfg.length > 0 ? new RegExp(`basePath\\s*:\\s*['\"]${repoPath}['\"]`, 'm').test(cfg) : false
+                if (!baseMatch) { logger.warn(`Next.js → GitHub Pages: set basePath to '${repoPath}'.`); preflight.push({ name: 'github: basePath matches repo', ok: false, level: 'warn', message: `set basePath: '${repoPath}'` }); warned = true }
+                const assetPresent = cfg.length > 0 ? /assetPrefix\s*:\s*['"][^'"]+['"]/m.test(cfg) : false
+                const assetMatch = cfg.length > 0 ? new RegExp(`assetPrefix\\s*:\\s*['\"]${repoPath}\/['\"]`, 'm').test(cfg) : false
+                if (!assetPresent || !assetMatch) { logger.note(`Next.js → GitHub Pages: set assetPrefix to '${repoPath}/' (recommended).`); preflight.push({ name: 'github: assetPrefix recommended', ok: true, level: 'note', message: `set assetPrefix: '${repoPath}/'` }) }
+              } else {
+                logger.note('Next.js → GitHub Pages: could not derive repo name from git origin; basePath/assetPrefix check skipped.')
+                preflight.push({ name: 'github: derive repo name', ok: true, level: 'note', message: 'cannot derive repo from git origin' })
+              }
+              if (opts.strictPreflight && warned) {
+                const targetShort: 'prod' | 'preview' = envTargetUp === 'production' ? 'prod' : 'preview'
+                const message = 'Preflight failed (strict): resolve Next.js GitHub Pages warnings.'
+                if (jsonMode) { logger.jsonPrint({ ok: false, action: 'up' as const, provider: 'github' as const, target: targetShort, message, preflightOnly: true, final: true }); return }
+                throw new Error(message)
+              }
+              // If only preflight requested, exit early
+              if (opts.preflightOnly === true) {
+                const targetShort: 'prod' | 'preview' = envTargetUp === 'production' ? 'prod' : 'preview'
+                if (jsonMode) { logger.jsonPrint({ ok: true, action: 'up' as const, provider: 'github' as const, target: targetShort, preflightOnly: true, preflight, final: true }); return }
+                logger.success('Preflight checks completed (GitHub Pages). No build/publish performed.')
+                return
+              }
+            } catch { /* ignore preflight errors */ }
+          }
+          // Preflight: Next.js on Cloudflare Pages (Next on Pages) should NOT use basePath/assetPrefix or output: 'export'
+          if (prov === 'cloudflare' && (((frameworkHint || '').toLowerCase() === 'next') || hasNextConfig)) {
+            try {
+              let warned = false
+              // Read next.config.* best-effort
+              let cfg = ''
+              const candidates = ['next.config.ts', 'next.config.js', 'next.config.mjs']
+              for (const f of candidates) {
+                const pth = join(targetCwd, f)
+                if (await fsx.exists(pth)) { cfg = await readFileFs(pth, 'utf8'); break }
+              }
+              if (cfg.length > 0) {
+                const hasOutputExport: boolean = /output\s*:\s*['"]export['"]/m.test(cfg)
+                if (hasOutputExport) { logger.note('Next.js → Cloudflare Pages: omit output: "export" when using Next on Pages (SSR/hybrid).'); preflight.push({ name: 'cloudflare: next.config output export omitted', ok: false, level: 'warn', message: 'remove output: "export"' }); warned = true }
+                const hasAssetPrefix: boolean = /assetPrefix\s*:\s*['"][^'\"]+['"]/m.test(cfg)
+                if (hasAssetPrefix) { logger.warn('Next.js → Cloudflare Pages: remove assetPrefix; serve at root for Next on Pages.'); preflight.push({ name: 'cloudflare: assetPrefix absent', ok: false, level: 'warn', message: 'remove assetPrefix' }); warned = true }
+                const basePathMatch = cfg.match(/basePath\s*:\s*['"]([^'\"]*)['"]/m)
+                if (basePathMatch && basePathMatch[1] && basePathMatch[1] !== '') { logger.warn('Next.js → Cloudflare Pages: basePath should be empty for Next on Pages.'); preflight.push({ name: 'cloudflare: basePath empty', ok: false, level: 'warn', message: 'set basePath to ""' }); warned = true }
+                const trailingTrue: boolean = /trailingSlash\s*:\s*true/m.test(cfg)
+                if (trailingTrue) { logger.note('Next.js → Cloudflare Pages: trailingSlash: false is recommended.'); preflight.push({ name: 'cloudflare: trailingSlash recommended false', ok: true, level: 'note', message: 'set trailingSlash: false' }) }
+              }
+              // wrangler.toml checks
+              const wranglerPath = join(targetCwd, 'wrangler.toml')
+              if (await fsx.exists(wranglerPath)) {
+                const raw = await readFileFs(wranglerPath, 'utf8')
+                if (!/pages_build_output_dir\s*=\s*"\.vercel\/output\/static"/m.test(raw)) { logger.warn('Cloudflare Pages: set pages_build_output_dir = ".vercel/output/static".'); preflight.push({ name: 'cloudflare: wrangler pages_build_output_dir', ok: false, level: 'warn', message: 'set to .vercel/output/static' }); warned = true }
+                if (!/pages_functions_directory\s*=\s*"\.vercel\/output\/functions"/m.test(raw)) { logger.note('Cloudflare Pages: set pages_functions_directory = ".vercel/output/functions".'); preflight.push({ name: 'cloudflare: wrangler pages_functions_directory', ok: true, level: 'note', message: 'set to .vercel/output/functions' }) }
+                if (!/compatibility_flags\s*=\s*\[.*"nodejs_compat".*\]/m.test(raw)) { logger.note('Cloudflare Pages: add compatibility_flags = ["nodejs_compat"].'); preflight.push({ name: 'cloudflare: wrangler nodejs_compat flag', ok: true, level: 'note', message: 'add compatibility_flags = ["nodejs_compat"]' }) }
+              } else {
+                logger.note('Cloudflare Pages: missing wrangler.toml (generate with: opd generate cloudflare --next-on-pages).')
+                preflight.push({ name: 'cloudflare: wrangler.toml present', ok: false, level: 'warn', message: 'missing wrangler.toml' })
+              }
+              // Windows guidance
+              if (process.platform === 'win32') { logger.note('Tip: Next on Pages is more reliable in CI/Linux or WSL. Consider using the provided GitHub Actions workflow.'); preflight.push({ name: 'cloudflare: windows guidance', ok: true, level: 'note', message: 'prefer CI/Linux or WSL' }) }
+              if (opts.strictPreflight && warned) {
+                const targetShort: 'prod' | 'preview' = envTargetUp === 'production' ? 'prod' : 'preview'
+                const message = 'Preflight failed (strict): resolve Next.js Cloudflare Pages warnings.'
+                if (jsonMode) { logger.jsonPrint({ ok: false, action: 'up' as const, provider: 'cloudflare' as const, target: targetShort, message, preflightOnly: true, preflight, final: true }); return }
+                throw new Error(message)
+              }
+              // If only preflight requested, exit early
+              if (opts.preflightOnly === true) {
+                const targetShort: 'prod' | 'preview' = envTargetUp === 'production' ? 'prod' : 'preview'
+                if (jsonMode) { logger.jsonPrint({ ok: true, action: 'up' as const, provider: 'cloudflare' as const, target: targetShort, preflightOnly: true, preflight, final: true }); return }
+                logger.success('Preflight checks completed (Cloudflare Pages). No build/publish performed.')
+                return
+              }
+            } catch { /* ignore preflight errors */ }
+          }
           const t0 = Date.now()
           const buildRes = await p.build({ cwd: targetCwd, framework: frameworkHint, envTarget: envTargetUp, publishDirHint, noBuild: Boolean(opts.noBuild) })
           const buildSchemaOk: boolean = validateBuild(buildRes as unknown as Record<string, unknown>) as boolean
           const buildSchemaErrors: string[] = Array.isArray(validateBuild.errors) ? validateBuild.errors.map(e => `${e.instancePath || '/'} ${e.message ?? ''}`.trim()) : []
+          // Failure propagation: abort on provider build failure
+          if (!buildRes.ok) {
+            const targetShort: 'prod' | 'preview' = envTargetUp === 'production' ? 'prod' : 'preview'
+            const message: string = buildRes.message || 'Build failed'
+            if (jsonMode) { logger.jsonPrint(annotate({ ok: false, action: 'up' as const, provider: prov, target: targetShort, message, preflight, buildSchemaOk, buildSchemaErrors, final: true })); return }
+            throw new Error(message)
+          }
+          // Asset sanity: for Next.js ensure _next/static exists in artifact
+          const skipAssetSanity: boolean = process.env.OPD_SKIP_ASSET_SANITY === '1'
+          try {
+            const fwLower = (frameworkHint || '').toLowerCase()
+            if (!skipAssetSanity && fwLower === 'next' && typeof buildRes.artifactDir === 'string' && buildRes.artifactDir.length > 0) {
+              const assetsDir = join(buildRes.artifactDir, '_next', 'static')
+              const exists = await fsx.exists(assetsDir)
+              if (!exists) {
+                const expected = prov === 'cloudflare' ? '.vercel/output/static/_next/static' : 'out/_next/static'
+                const why = `Asset check failed: ${expected} missing in artifactDir=${buildRes.artifactDir}. Ensure the build produced Next static assets.`
+                throw new Error(why)
+              }
+            }
+          } catch (e) {
+            const targetShort: 'prod' | 'preview' = envTargetUp === 'production' ? 'prod' : 'preview'
+            const message: string = (e as Error).message
+            if (jsonMode) { logger.jsonPrint(annotate({ ok: false, action: 'up' as const, provider: prov, target: targetShort, message, preflight, buildSchemaOk, buildSchemaErrors, final: true })); return }
+            throw e
+          }
+          // If only preflight of artifacts was requested, exit early (no deploy)
+          if (opts.preflightArtifactsOnly === true) {
+            const targetShort: 'prod' | 'preview' = envTargetUp === 'production' ? 'prod' : 'preview'
+            if (jsonMode) { logger.jsonPrint(annotate({ ok: true, action: 'up' as const, provider: prov, target: targetShort, preflightArtifactsOnly: true, artifactDir: buildRes.artifactDir, preflight, final: true })); return }
+            logger.success('Artifact preflight completed. No deploy performed.')
+            return
+          }
           const deployRes = await p.deploy({ cwd: targetCwd, envTarget: envTargetUp, project: linked, artifactDir: buildRes.artifactDir, alias: opts.alias })
           const deploySchemaOk: boolean = validateDeploy(deployRes as unknown as Record<string, unknown>) as boolean
           const deploySchemaErrors: string[] = Array.isArray(validateDeploy.errors) ? validateDeploy.errors.map(e => `${e.instancePath || '/'} ${e.message ?? ''}`.trim()) : []
           const durationMs = Date.now() - t0
           const targetShort: 'prod' | 'preview' = envTargetUp === 'production' ? 'prod' : 'preview'
-          if (jsonMode) { logger.jsonPrint(annotate({ ok: true, action: 'up' as const, provider: prov, target: targetShort, url: deployRes.url, logsUrl: deployRes.logsUrl, durationMs, buildSchemaOk, buildSchemaErrors, deploySchemaOk, deploySchemaErrors, final: true })); return }
+          if (jsonMode) { logger.jsonPrint(annotate({ ok: true, action: 'up' as const, provider: prov, target: targetShort, url: deployRes.url, logsUrl: deployRes.logsUrl, durationMs, preflight, buildSchemaOk, buildSchemaErrors, deploySchemaOk, deploySchemaErrors, final: true })); return }
           if (deployRes.ok) {
             if (deployRes.url) logger.success(`${opts.env === 'prod' ? 'Production' : 'Preview'}: ${deployRes.url}`)
             else logger.success(`${opts.env === 'prod' ? 'Production' : 'Preview'} deploy complete`)

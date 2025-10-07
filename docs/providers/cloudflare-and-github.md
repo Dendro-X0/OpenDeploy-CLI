@@ -1,6 +1,6 @@
 # Cloudflare Pages and GitHub Pages (Wizard)
 
-OpenDeploy CLI supports Cloudflare Pages and GitHub Pages in the Start wizard alongside Vercel and Netlify.
+OpenDeploy CLI supports Cloudflare Pages and GitHub Pages in the Start wizard alongside Vercel.
 
 ## Requirements
 - Cloudflare Pages

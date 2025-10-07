@@ -16,10 +16,17 @@ interface ExplainOptions {
 }
 
 export function registerExplainCommand(program: Command): void {
+  // Fallback printer for JSON to ensure output is emitted even if logger sinks are misconfigured
+  const printJson = (val: unknown): void => {
+    try {
+      // eslint-disable-next-line no-console
+      console.log(JSON.stringify(val))
+    } catch { /* ignore */ }
+  }
   program
     .command('explain')
     .description('Show what will happen for a deploy, without executing anything')
-    .argument('<provider>', 'Target provider: vercel | netlify | cloudflare | github')
+    .argument('<provider>', 'Target provider: vercel | cloudflare | github')
     .option('--env <env>', 'Environment: prod | preview', 'preview')
     .option('--path <dir>', 'Path to app directory (for monorepos)')
     .option('--json', 'Output JSON plan')
@@ -32,8 +39,9 @@ export function registerExplainCommand(program: Command): void {
       const targetCwd: string = opts.path ? join(rootCwd, opts.path) : rootCwd
       try {
         if (opts.json === true) logger.setJsonOnly(true)
-        const allowed = new Set(['vercel', 'netlify', 'cloudflare', 'github'])
+        const allowed = new Set(['vercel', 'cloudflare', 'github'])
         if (!allowed.has(provider)) {
+          if (opts.json === true) { const o = { ok: false, action: 'explain', provider, message: `Unknown provider: ${provider}`, final: true } as const; logger.jsonPrint(o); printJson(o); return }
           logger.error(`Unknown provider: ${provider}`)
           process.exitCode = 1
           return
@@ -57,8 +65,6 @@ export function registerExplainCommand(program: Command): void {
         planSteps.push({ id: 'detect', title: 'Detect app and project metadata', kind: 'detect' })
         if (provider === 'vercel') {
           planSteps.push({ id: 'link', title: 'Ensure Vercel link (project/org)', kind: 'link' })
-        } else if (provider === 'netlify') {
-          planSteps.push({ id: 'link', title: 'Ensure Netlify link (site)', kind: 'link' })
         } else if (provider === 'cloudflare') {
           planSteps.push({ id: 'link', title: 'Ensure Pages project (name)', kind: 'link' })
         } else if (provider === 'github') {
@@ -70,8 +76,6 @@ export function registerExplainCommand(program: Command): void {
         }
         if (provider === 'vercel') {
           planSteps.push({ id: 'deploy', title: `vercel deploy (${target === 'prod' ? 'production' : 'preview'})`, kind: 'deploy' })
-        } else if (provider === 'netlify') {
-          planSteps.push({ id: 'deploy', title: `netlify build && netlify deploy --no-build${target === 'prod' ? ' --prod' : ''}`, kind: 'deploy' })
         } else if (provider === 'cloudflare') {
           const pub = detection.publishDir ?? 'dist'
           planSteps.push({ id: 'deploy', title: `wrangler pages deploy ${pub}`, kind: 'deploy' })
@@ -89,7 +93,7 @@ export function registerExplainCommand(program: Command): void {
             strictGuards: opts.ci ? ['fail-on-add', 'fail-on-remove'] : [],
           },
         }
-        if (opts.json === true) { logger.json({ ok: true, plan, final: true }); return }
+        if (opts.json === true) { const o = { ok: true, action: 'explain', plan, final: true } as const; logger.jsonPrint(o); printJson(o); return }
         logger.section('Plan')
         logger.note(`${provider} | ${target} | cwd=${runCwd}`)
         for (const s of plan.steps) logger.info(`• ${s.title}`)
@@ -97,7 +101,7 @@ export function registerExplainCommand(program: Command): void {
         if (plan.envSummary.strictGuards.length > 0) logger.info(`Strict: ${plan.envSummary.strictGuards.join(', ')}`)
       } catch (err) {
         const msg: string = err instanceof Error ? err.message : String(err)
-        if (opts.json === true) logger.json({ ok: false, message: msg, final: true })
+        if (opts.json === true) { const o = { ok: false, action: 'explain', message: msg, final: true } as const; logger.jsonPrint(o); printJson(o); return }
         logger.error(msg)
         process.exitCode = 1
       }

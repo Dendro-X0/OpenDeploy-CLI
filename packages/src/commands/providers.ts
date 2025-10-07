@@ -11,7 +11,7 @@ export function registerProvidersCommand(program: Command): void {
     .command('providers')
     .description('List and inspect provider plugins')
     .option('--json', 'Output JSON')
-    .option('--id <name>', 'Show info for a specific provider (e.g., vercel, netlify, cloudflare, github)')
+    .option('--id <name>', 'Show info for a specific provider (e.g., vercel, cloudflare, github)')
     .option('--emit-workflow', 'When --id=github, write a GitHub Pages deploy workflow to .github/workflows/deploy-pages.yml')
     .option('--base-path <path>', 'Base path for site (e.g., /repo). Overrides auto-inference from package name')
     .option('--site-origin <url>', 'Public site origin (e.g., https://<owner>.github.io)')
@@ -19,10 +19,11 @@ export function registerProvidersCommand(program: Command): void {
       try {
         const jsonMode = isJsonMode(opts.json)
         if (jsonMode) logger.setJsonOnly(true)
-        const candidates: readonly string[] = opts.id ? [opts.id] : ['vercel', 'netlify', 'cloudflare', 'github']
+        const candidates: readonly string[] = opts.id ? [opts.id] : ['vercel', 'cloudflare', 'github']
         const results: Array<{ id: string; ok: boolean; error?: string; capabilities?: unknown }> = []
         for (const id of candidates) {
           try {
+            if (id.toLowerCase() === 'netlify') throw new Error('Netlify is not supported by OpenDeploy. Please use the official Netlify CLI.')
             const p = await loadProvider(id)
             results.push({ id, ok: true, capabilities: p.getCapabilities() })
           } catch (e) {

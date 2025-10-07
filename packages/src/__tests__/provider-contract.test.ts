@@ -14,11 +14,8 @@ describe('provider contract (load + capabilities)', () => {
     expect(caps).toHaveProperty('name')
   })
 
-  it('netlify provider loads and declares capabilities', async () => {
-    const p = await loadProvider('netlify')
-    expect(p.id.startsWith('netlify')).toBe(true)
-    const caps = p.getCapabilities()
-    expect(caps).toHaveProperty('name')
+  it.skip('netlify provider loads and declares capabilities', async () => {
+    // Netlify support removed; this test is intentionally skipped.
   })
 
   it('cloudflare provider loads and declares capabilities', async () => {

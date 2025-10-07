@@ -1,24 +1,20 @@
 ## generate
 
-Generate configuration files for the detected app (Vercel, Netlify) or a Turborepo pipeline.
+Generate configuration files for the detected app (Vercel) or a Turborepo pipeline.
 
 Usage:
 ```bash
-opd generate <vercel|netlify|turbo> [--overwrite] [--json]
+opd generate <vercel|turbo> [--overwrite] [--json]
 ```
 
 Behavior:
 - Idempotent: existing files are kept unless `--overwrite` is passed.
 - `vercel`: writes a minimal `vercel.json` with `version`, optional `buildCommand`, and `outputDirectory` when `publishDir` is detected.
-- `netlify`: writes `netlify.toml` with a safe build:
-  - Next.js: uses Netlify Next Runtime when installed, otherwise falls back to `@netlify/plugin-nextjs` (legacy plugin) and sets `publish = ".next"`.
-  - Nuxt: sets `command = "npx nuxi build"` and `publish = ".output/public"`.
-  - Other frameworks (Astro, SvelteKit static, Remix static): uses detected `buildCommand` and `publishDir`.
 - `turbo`: writes a minimal `turbo.json` with cached outputs for `.next/**` (excluding `.next/cache/**`) and `dist/**`.
 
 JSON summary:
 ```json
-{ "ok": true, "action": "generate", "provider": "vercel|netlify|turbo", "path": "STRING", "final": true }
+{ "ok": true, "action": "generate", "provider": "vercel|turbo", "path": "STRING", "final": true }
 ```
 
 ## Global Output & CI Flags
@@ -39,8 +35,8 @@ opd init [--json]
 ```
 
 Behavior:
-- Prompts to select Vercel and/or Netlify.
-- Generates `vercel.json`/`netlify.toml` (idempotent) via provider plugins.
+- Prompts to select Vercel.
+- Generates `vercel.json` (idempotent) via provider plugin.
 - Writes `opd.config.json` with your env policy (auto‑sync on/off, filters).
 
 Use these flags with any command to tailor output for CI or local use:
@@ -111,7 +107,7 @@ Guided wizard for selecting framework, provider, environment, optional env sync,
 Usage:
 ```bash
 opd start [--framework <next|astro|sveltekit|remix|expo>] \
-  [--provider <vercel|netlify>] [--env <prod|preview>] \
+  [--provider <vercel|cloudflare|github>] [--env <prod|preview>] \
   [--path <dir>] [--project <id>] [--org <id>] \
   [--sync-env] [--dry-run] [--json] [--ci] [--no-save-defaults] \
   [--deploy] [--no-build] [--alias <domain>] [--print-cmd]
@@ -120,15 +116,14 @@ opd start [--framework <next|astro|sveltekit|remix|expo>] \
 Behavior:
 - Auto-detects frameworks when possible; otherwise prompts for a choice.
 - Shows provider login status and offers one‑click login if required.
-- If `--project/--org` (Vercel) or `--project` (Netlify) is provided and the directory is not linked yet, the wizard offers to run `vercel link` / `netlify link` inline.
+- If `--project/--org` (Vercel) is provided and the directory is not linked yet, the wizard offers to run `vercel link` inline.
 - Env sync is optional; when enabled, the wizard chooses a sensible `.env` file per target.
-- Config generation: ensures minimal `vercel.json` (Vercel) and a safe `netlify.toml` when applicable. For Next.js on Netlify, the provider plugin applies the official Next runtime/plugin when installed, otherwise falls back to the legacy plugin.
-- Preflight: optionally runs a local build (skipped in `--ci`) and validates that Netlify publishDir contains output for non‑Next frameworks.
+- Config generation: ensures minimal `vercel.json` (Vercel).
+- Preflight: optionally runs a local build (skipped in `--ci`).
 - Vercel: performs the deploy (preview/prod) and prints `url`/`logsUrl`. When `--alias` is provided, the wizard attempts to alias the deployment to the given domain.
-- Netlify: prepare‑only by default. The wizard generates config and prints recommended `netlify deploy` commands (preview/prod) with an inferred `--dir`. Optionally, pass `--deploy` to execute a real deploy inside the wizard. With `--no-build`, the wizard deploys prebuilt artifacts from `--dir`.
   - Experimental: When `OPD_NETLIFY_DIRECT=1` is set and both `--project` (site id/name) and a known `publishDir` exist, the wizard attempts a direct deploy via the Go sidecar (no Netlify CLI required). Requires `NETLIFY_AUTH_TOKEN`. Falls back to the CLI path on error.
 - After Vercel deploy (only), the wizard prints a copyable non‑interactive command and offers to copy the logs URL.
-- With `--json`, prints a final summary. For Netlify, `{ ok, provider, target, mode: 'prepare-only'|'deploy', projectId?, siteId?, siteName?, publishDir?, logsUrl?, recommend?, final: true }`.
+- With `--json`, prints a final summary.
 - With `--dry-run`, prints `{ ok: true, mode: 'dry-run', cmd, final: true }` and exits before syncing/deploying.
 
 #### Sidecar & experimental flags
@@ -186,21 +181,13 @@ When `--ndjson` is active (or `OPD_NDJSON=1`), the wizard emits compact one-line
 {"action":"start","provider":"vercel","target":"preview","event":"logs","logsUrl":"https://vercel.com/acme/app/inspections/dep_123"}
 ```
 
-```json
-{"action":"start","provider":"netlify","target":"preview","event":"logs","logsUrl":"https://app.netlify.com/sites/mysite/deploys"}
-```
+<!-- Netlify removed -->
 
 Examples:
 
 ```bash
 # Vercel preview deploy with alias
 opd start --provider vercel --env preview --alias preview.example.com --json
-
-# Netlify prepare-only (print recommended commands)
-opd start --provider netlify --env preview --project <SITE_ID> --json
-
-# Netlify deploy without building (use prebuilt artifacts in publishDir)
-opd start --provider netlify --env preview --project <SITE_ID> --deploy --no-build --json --print-cmd
 
 # Monorepo: deploy from apps/web
 opd start --provider vercel --path apps/web --env preview --json
@@ -263,16 +250,7 @@ Notes:
 - With `--from`, you can point the production alias at a specific preview URL (or SHA that corresponds to a preview). Without `--from`, the CLI resolves the most recent ready preview.
 - Final JSON contains `{ ok, provider: 'vercel', action: 'promote', target: 'prod', from, url, alias, final: true }`.
 
-Usage (Netlify):
-
-```bash
-opd promote netlify --project <SITE_ID> [--from <deployId>] [--print-cmd] [--json] [--dry-run]
-```
-
-Notes:
-
-- With `--from <deployId>`, the CLI requests a direct restore of that deploy (no rebuild). Without `--from`, it runs a production deploy (build) and prints the resulting URL.
-- Final JSON contains either `{ ok, provider: 'netlify', action: 'promote', target: 'prod', deployId, siteId, final: true }` for restore, or `{ ok, url, logsUrl, siteId, final: true }` for build-based promote.
+<!-- Netlify removed -->
 
 Reliability knobs:
 
@@ -293,16 +271,7 @@ Notes:
 - When `--to` is omitted, the CLI lists production history and suggests a candidate. With `--to`, it will attempt to repoint the alias directly.
 - Final JSON includes `{ ok, provider: 'vercel', action: 'rollback', target: 'prod', to|candidate, alias, final: true }`.
 
-Usage (Netlify):
-
-```bash
-opd rollback netlify --project <SITE_ID> [--print-cmd] [--json] [--dry-run]
-```
-
-Notes:
-
-- Rollback restores are performed via the Netlify dashboard or API. The CLI provides a suggested `restoreDeploy` command and summarizes results in JSON.
-- Final JSON contains `{ ok, provider: 'netlify', action: 'rollback', target: 'prod', deployId?, dashboard?, final: true }`.
+<!-- Netlify removed -->
  - Reliability knobs: `--retries`, `--timeout-ms`, and `--base-delay-ms` apply here as well.
 ```
 
@@ -378,12 +347,12 @@ Validate local environment and provider CLIs.
 
 Usage:
 ```bash
-opd doctor [--ci] [--json] [--verbose] [--fix] [--path <dir>] [--project <vercelProjectId>] [--org <orgId>] [--site <netlifySiteId>]
+opd doctor [--ci] [--json] [--verbose] [--fix] [--path <dir>] [--project <vercelProjectId>] [--org <orgId>]
 ```
 Checks:
 - Node version
-- pnpm, bun, vercel, netlify CLIs
-- Auth for Vercel/Netlify
+- pnpm, bun, vercel, wrangler, git CLIs
+- Auth for Vercel
 - Monorepo sanity (workspace lockfile, `.vercel/project.json`, optional root `vercel.json`)
 - Monorepo linked apps scan (`apps/*`) and chosen deploy cwd advisories for common paths (e.g., `apps/web`).
 
@@ -391,7 +360,6 @@ Notes:
 - With `--json`, only JSON is printed. `--ci` exits non‑zero if any check fails.
 - With `--fix`, the CLI attempts best‑effort linking fixes:
   - Vercel: `vercel link --yes --project <id> [--org <id>]` when `--project` is provided
-  - Netlify: `netlify link --id <siteId>` when `--site` is provided
 
 Examples:
 
@@ -399,8 +367,7 @@ Examples:
 # Fix Vercel linking in a monorepo app directory
 opd doctor --fix --path apps/web --project <VERCEL_PROJECT_ID> --org <ORG_ID>
 
-# Fix Netlify linking for a site
-opd doctor --fix --path apps/web --site <NETLIFY_SITE_ID>
+<!-- Netlify removed -->
 ```
 
 ### JSON output (schema)

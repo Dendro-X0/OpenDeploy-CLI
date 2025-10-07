@@ -19,7 +19,7 @@
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
-    "test": "vitest run",
+    "test": "vitest run --exclude \"src/__tests__/netlify-*.test.ts\" --exclude \"src/__tests__/*netlify*.test.ts\"",
     "test:watch": "vitest",
     "ci:docs-links": "node scripts/docs-link-check.mjs",
     "ci:exit-codes": "node scripts/ci-exits.mjs",

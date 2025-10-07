@@ -47,12 +47,31 @@ export function registerPlanCommand(program: Command): void {
           cmdPlan.push(envTarget === 'production' ? 'vercel deploy --prod --yes' : 'vercel deploy --yes')
           if (opts.project) cmdPlan.unshift(`vercel link --yes${opts.project ? ` --project ${opts.project}` : ''}${opts.org ? ` --org ${opts.org}` : ''}`.trim())
         } else if (provider === 'cloudflare') {
-          const dir = publishDir ?? 'dist'
+          // Framework-aware: Astro → dist, SvelteKit → build, Next → out (requires static export or next-on-pages)
+          const fw = (framework || '').toLowerCase()
+          let dir = publishDir
+          if (!dir) {
+            if (fw === 'astro') dir = 'dist'
+            else if (fw === 'sveltekit') dir = 'build'
+            else if (fw === 'next') dir = 'out'
+            else dir = 'dist'
+          }
+          if (fw === 'next') cmdPlan.push('# Next.js on Cloudflare Pages requires static export or next-on-pages for SSR.')
           cmdPlan.push(`wrangler pages deploy ${dir}${opts.project ? ` --project-name ${opts.project}` : ''}`.trim())
         } else if (provider === 'github') {
-          const dir = publishDir ?? 'dist'
-          // Prefer gh-pages local or npx fallback
-          cmdPlan.push(`gh-pages -d ${dir}`)
+          // Framework-aware: Astro → dist, SvelteKit → build, Next → out (static export)
+          const fw = (framework || '').toLowerCase()
+          if (fw === 'astro') {
+            cmdPlan.push('gh-pages -d dist')
+          } else if (fw === 'sveltekit') {
+            cmdPlan.push('gh-pages -d build')
+          } else if (fw === 'next') {
+            cmdPlan.push('# Next.js on GitHub Pages requires static export (next.config.js: output: "export").')
+            cmdPlan.push('next export && gh-pages -d out')
+          } else {
+            const dir = publishDir ?? 'dist'
+            cmdPlan.push(`gh-pages -d ${dir}`)
+          }
         } else {
           cmdPlan.push(`# unknown provider: ${provider}`)
         }

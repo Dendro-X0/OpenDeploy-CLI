@@ -4,6 +4,7 @@
  */
 import { join } from 'node:path'
 import { proc } from '../../../utils/process'
+import { logger } from '../../../utils/logger'
 import type { Provider } from '../provider-interface'
 import type { ProviderCapabilities } from '../provider-capabilities'
 import type { ProjectRef, BuildInputs, BuildResult, DeployInputs, DeployResult } from '../provider-types'
@@ -138,6 +139,45 @@ export class GithubPagesProvider implements Provider {
    * Resolve an artifact directory. Does not run a user build.
    */
   public async build(args: BuildInputs): Promise<BuildResult> {
+    // Optionally run a framework-aware static build for GitHub Pages when not disabled
+    try {
+      const wantBuild: boolean = args.noBuild !== true
+      // Detect framework if not provided
+      let fw: string | undefined = args.framework
+      let publishHint: string | undefined = args.publishDirHint
+      if (!fw || !publishHint) {
+        try {
+          const det = await autoDetect({ cwd: args.cwd })
+          fw = fw || det.framework
+          publishHint = publishHint || det.publishDir
+        } catch { /* ignore */ }
+      }
+      if (wantBuild) {
+        const lower = (fw || '').toLowerCase()
+        if (lower === 'next') {
+          // Next.js: require static export for GitHub Pages
+          logger.note('GitHub Pages: building Next.js for static export (next build && next export)')
+          const b = await proc.run({ cmd: 'npx -y next build', cwd: args.cwd, env: { ...process.env, DEPLOY_TARGET: 'github' } })
+          if (!b.ok) logger.warn(b.stderr.trim() || b.stdout.trim() || 'next build failed')
+          const ex = await proc.run({ cmd: 'npx -y next export', cwd: args.cwd, env: { ...process.env, DEPLOY_TARGET: 'github' } })
+          if (!ex.ok) logger.warn(ex.stderr.trim() || ex.stdout.trim() || 'next export failed')
+          // Validate expected artifact
+          const outDir = join(args.cwd, 'out')
+          try { if (!(await fsx.exists(outDir))) logger.warn('Next.js export did not produce ./out. Ensure next.config.js uses output: "export" and images.unoptimized: true.') } catch { /* ignore */ }
+          // Additional sanity: check for _next/static
+          try { if (!(await fsx.exists(join(outDir, '_next')))) logger.warn('Missing ./out/_next assets. Set basePath/assetPrefix for GitHub Pages and enable trailingSlash: true.') } catch { /* ignore */ }
+        } else if (lower === 'astro') {
+          logger.note('GitHub Pages: building Astro (astro build)')
+          const ex = await proc.run({ cmd: 'npx -y astro build', cwd: args.cwd })
+          if (!ex.ok) logger.warn(ex.stderr.trim() || ex.stdout.trim() || 'astro build failed')
+        } else if (lower === 'sveltekit') {
+          logger.note('GitHub Pages: building SvelteKit (vite build)')
+          const ex = await proc.run({ cmd: 'npx -y vite build', cwd: args.cwd })
+          if (!ex.ok) logger.warn(ex.stderr.trim() || ex.stdout.trim() || 'vite build failed')
+        }
+      }
+    } catch { /* best effort build; fall back to artifact discovery */ }
+
     // Reuse existing artifact if present; otherwise point to hint/default
     const candidates: string[] = []
     if (args.publishDirHint) candidates.push(args.publishDirHint)

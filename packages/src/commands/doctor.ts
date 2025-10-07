@@ -43,7 +43,20 @@ import { readFile as readFileFs } from 'node:fs/promises'
 async function checkNextGithubPages(cwd: string): Promise<CheckResult[]> {
   const results: CheckResult[] = []
   const push = (name: string, ok: boolean, message: string): void => { results.push({ name, ok, message }) }
+  let repo: string | undefined
   try {
+    // Discover repo name from git origin for basePath/assetPrefix validation
+    try {
+      const origin = await proc.run({ cmd: 'git remote get-url origin', cwd })
+      if (origin.ok) {
+        const t = origin.stdout.trim()
+        const httpsRe = /^https?:\/\/github\.com\/(.+?)\/(.+?)(?:\.git)?$/i
+        const sshRe = /^git@github\.com:(.+?)\/(.+?)(?:\.git)?$/i
+        const m1 = t.match(httpsRe); const m2 = t.match(sshRe)
+        const r = (m1?.[2] || m2?.[2] || '').trim()
+        if (r) repo = r
+      }
+    } catch { /* ignore */ }
     const hasNoJekyllPublic = await fsx.exists(join(cwd, 'public', '.nojekyll'))
     const hasNoJekyllOut = await fsx.exists(join(cwd, 'out', '.nojekyll'))
     push('.nojekyll (public/ or out/)', hasNoJekyllPublic || hasNoJekyllOut, hasNoJekyllPublic ? 'public/.nojekyll' : (hasNoJekyllOut ? 'out/.nojekyll' : 'missing'))
@@ -64,6 +77,15 @@ async function checkNextGithubPages(cwd: string): Promise<CheckResult[]> {
       push('next.config: images.unoptimized', hasUnopt, hasUnopt ? 'true' : 'not set (recommended true)')
       const hasBasePath = /basePath\s*:\s*['"][^'"]+['"]/m.test(cfg)
       push('next.config: basePath', hasBasePath, hasBasePath ? 'present' : 'not set (recommended for Project Pages)')
+      // Validate basePath/assetPrefix against repo path when available
+      if (repo) {
+        const repoPath = `/${repo}`
+        const basePathMatch = new RegExp(`basePath\\s*:\\s*['\"]${repoPath}['\"]`, 'm').test(cfg)
+        push('next.config: basePath matches repo', basePathMatch, basePathMatch ? 'ok' : (hasBasePath ? `mismatch (expected ${repoPath})` : 'not set'))
+        const assetPrefixPresent = /assetPrefix\s*:\s*['"][^'"]+['"]/m.test(cfg)
+        const assetPrefixMatch = new RegExp(`assetPrefix\\s*:\\s*['\"]${repoPath}\/['\"]`, 'm').test(cfg)
+        push('next.config: assetPrefix matches repo', assetPrefixMatch, assetPrefixPresent ? (assetPrefixMatch ? 'ok' : `mismatch (expected ${repoPath}/)`) : 'not set (recommended)')
+      }
     } else {
       push('next.config.* present', false, 'file not found')
     }
@@ -79,7 +101,7 @@ async function checkNextGithubPages(cwd: string): Promise<CheckResult[]> {
   return results
 }
 
-interface DoctorOptions { readonly ci?: boolean; readonly json?: boolean; readonly verbose?: boolean; readonly fix?: boolean; readonly path?: string; readonly project?: string; readonly org?: string; readonly site?: string; readonly printCmd?: boolean }
+interface DoctorOptions { readonly ci?: boolean; readonly json?: boolean; readonly verbose?: boolean; readonly fix?: boolean; readonly path?: string; readonly project?: string; readonly org?: string; readonly site?: string; readonly printCmd?: boolean; readonly strict?: boolean }
 
 interface CheckResult { readonly name: string; readonly ok: boolean; readonly message: string }
 
@@ -183,6 +205,7 @@ export function registerDoctorCommand(program: Command): void {
     .option('--org <id>', 'Vercel org/team ID (for linking)')
     .option('--site <siteId>', 'Netlify site ID (for linking)')
     .option('--print-cmd', 'Print underlying provider commands that will be executed')
+    .option('--strict', 'Exit non-zero when any checks fail')
     .action(async (opts: DoctorOptions): Promise<void> => {
       try {
         const jsonMode: boolean = isJsonMode(opts.json)
@@ -333,6 +356,18 @@ export function registerDoctorCommand(program: Command): void {
             } catch { /* ignore */ }
           }
         }
+        // GitHub Pages fix: ensure .nojekyll exists to allow _next assets (applies regardless of monorepo)
+        if (opts.fix === true) {
+          try {
+            const pubNoJ = join(cwd, 'public', '.nojekyll')
+            const outDir = join(cwd, 'out')
+            const outNoJ = join(outDir, '.nojekyll')
+            let wrote = false
+            try { if (!(await fsx.exists(pubNoJ))) { await writeFile(pubNoJ, '', 'utf8'); wrote = true } } catch { /* ignore */ }
+            try { if (await fsx.exists(outDir) && !(await fsx.exists(outNoJ))) { await writeFile(outNoJ, '', 'utf8'); wrote = true } } catch { /* ignore */ }
+            results.push({ name: 'GitHub Pages .nojekyll (fix)', ok: true, message: wrote ? 'written' : 'present' })
+          } catch { results.push({ name: 'GitHub Pages .nojekyll (fix)', ok: false, message: 'failed to write' }) }
+        }
         const ok: boolean = results.every(r => r.ok)
         // GitHub Pages readiness (best-effort)
         try {
@@ -348,9 +383,65 @@ export function registerDoctorCommand(program: Command): void {
           const hasNoJ = nx.find(r => r.name.startsWith('.nojekyll'))?.ok
           const hasExport = nx.find(r => r.name.includes("output: 'export'"))?.ok
           const assetsOk = nx.find(r => r.name.startsWith('export assets'))?.ok
+          const baseMatch = nx.find(r => r.name === 'next.config: basePath matches repo')
+          const assetMatch = nx.find(r => r.name === 'next.config: assetPrefix matches repo')
           if (hasNoJ === false) suggestions.push('touch public/.nojekyll (or rely on CLI to add it during deploy)')
           if (hasExport === false) suggestions.push("set output: 'export' in next.config.ts/js for static export")
           if (assetsOk === false) suggestions.push('pnpm build (verify out/_next/static exists)')
+          if (baseMatch && baseMatch.ok === false) suggestions.push(`set basePath in next.config to ${baseMatch.message.includes('expected') ? baseMatch.message.replace('mismatch (expected ', '').replace(')', '') : "'/<repo>'"}`)
+          if (assetMatch && assetMatch.ok === false) suggestions.push(`set assetPrefix in next.config to ${assetMatch.message.includes('expected') ? assetMatch.message.replace('mismatch (expected ', '').replace(')', '') : "'/<repo>/'"} (recommended) `)
+        } catch { /* ignore */ }
+
+        // Cloudflare Pages (Next on Pages) preflight for Next.js apps
+        try {
+          // Detect Next.js by presence of next.config.* and/or dependency
+          let cfg = ''
+          const nxcands = ['next.config.ts', 'next.config.js', 'next.config.mjs']
+          for (const f of nxcands) {
+            const pth = join(cwd, f)
+            if (await fsx.exists(pth)) { try { cfg = await readFileFs(pth, 'utf8') } catch { /* ignore */ } break }
+          }
+          const pkgPath = join(cwd, 'package.json')
+          let hasNextDep = false
+          try { const raw = await readFileFs(pkgPath, 'utf8'); const js = JSON.parse(raw) as { dependencies?: Record<string,string> }; hasNextDep = Boolean(js.dependencies?.next) } catch { /* ignore */ }
+          const isNext = cfg.length > 0 || hasNextDep
+          if (isNext) {
+            // next.config sanity for Cloudflare: no output:'export', no assetPrefix, basePath empty, trailingSlash false recommended
+            if (cfg.length > 0) {
+              const hasOutputExport: boolean = /output\s*:\s*['"]export['"]/m.test(cfg)
+              results.push({ name: "cloudflare: next.config omits output: 'export'", ok: !hasOutputExport, message: hasOutputExport ? 'found (remove for Next on Pages)' : 'ok' })
+              const hasAssetPrefix: boolean = /assetPrefix\s*:\s*['"][^'\"]+['"]/m.test(cfg)
+              results.push({ name: 'cloudflare: next.config assetPrefix absent', ok: !hasAssetPrefix, message: hasAssetPrefix ? 'found (remove for root-serving)' : 'ok' })
+              const baseMatch = cfg.match(/basePath\s*:\s*['"]([^'\"]*)['"]/m)
+              const baseEmpty = !baseMatch || (baseMatch && (!baseMatch[1] || baseMatch[1] === ''))
+              results.push({ name: 'cloudflare: next.config basePath empty', ok: baseEmpty, message: baseEmpty ? 'ok' : 'non-empty (set to "")' })
+              const trailingTrue: boolean = /trailingSlash\s*:\s*true/m.test(cfg)
+              results.push({ name: 'cloudflare: next.config trailingSlash false (recommended)', ok: !trailingTrue, message: trailingTrue ? 'true (set false)' : 'ok' })
+              if (hasOutputExport) suggestions.push('Cloudflare Pages: remove output: "export" from next.config when using Next on Pages')
+              if (hasAssetPrefix) suggestions.push('Cloudflare Pages: remove assetPrefix from next.config (serve at root)')
+              if (!baseEmpty) suggestions.push('Cloudflare Pages: set basePath to empty ("") in next.config')
+              if (trailingTrue) suggestions.push('Cloudflare Pages: set trailingSlash: false (recommended)')
+            }
+            // wrangler.toml checks
+            const wranglerPath = join(cwd, 'wrangler.toml')
+            if (await fsx.exists(wranglerPath)) {
+              try {
+                const raw = await readFileFs(wranglerPath, 'utf8')
+                const hasOut = /pages_build_output_dir\s*=\s*"\.vercel\/output\/static"/m.test(raw)
+                const hasFns = /pages_functions_directory\s*=\s*"\.vercel\/output\/functions"/m.test(raw)
+                const hasCompat = /compatibility_flags\s*=\s*\[.*"nodejs_compat".*\]/m.test(raw)
+                results.push({ name: 'cloudflare: wrangler pages_build_output_dir', ok: hasOut, message: hasOut ? 'ok' : 'set to .vercel/output/static' })
+                results.push({ name: 'cloudflare: wrangler pages_functions_directory', ok: hasFns, message: hasFns ? 'ok' : 'set to .vercel/output/functions' })
+                results.push({ name: 'cloudflare: wrangler nodejs_compat flag', ok: hasCompat, message: hasCompat ? 'ok' : 'add compatibility_flags = ["nodejs_compat"]' })
+                if (!hasOut) suggestions.push('Cloudflare Pages: set pages_build_output_dir = ".vercel/output/static" in wrangler.toml')
+                if (!hasFns) suggestions.push('Cloudflare Pages: set pages_functions_directory = ".vercel/output/functions" in wrangler.toml')
+                if (!hasCompat) suggestions.push('Cloudflare Pages: add compatibility_flags = ["nodejs_compat"] in wrangler.toml')
+              } catch { /* ignore */ }
+            } else {
+              results.push({ name: 'cloudflare: wrangler.toml present', ok: false, message: 'missing (generate with: opd generate cloudflare --next-on-pages)' })
+              suggestions.push('opd generate cloudflare --next-on-pages')
+            }
+          }
         } catch { /* ignore */ }
 
         if (jsonMode) {
@@ -370,6 +461,10 @@ export function registerDoctorCommand(program: Command): void {
         const okCount: number = results.filter(r => r.ok).length
         const failCount: number = total - okCount
         const failSamples = results.filter(r => !r.ok).slice(0, 5).map(r => ({ name: r.name, message: r.message }))
+        // Strict mode: set exit code non-zero when any failures present
+        if (opts.strict === true) {
+          if (!ok) process.exitCode = 1
+        }
         // If local .bin/opd-go exists but not on PATH and OPD_GO_BIN is unset, provide a hint to set OPD_GO_BIN
         try {
           const exe: string = process.platform === 'win32' ? 'opd-go.exe' : 'opd-go'
