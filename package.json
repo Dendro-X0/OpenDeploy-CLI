@@ -10,6 +10,7 @@
     "lint": "pnpm -r lint",
     "format": "pnpm -r format",
     "ci:watch": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\.bin\\ci-watch.ps1",
+    "ci:watch:ci": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\.bin\\ci-watch.ps1 -Workflow ci.yml",
     "ci:dispatch": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\.bin\\ci-dispatch.ps1",
     "ci:last": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\.bin\\ci-last.ps1",
     "ci:logs": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\.bin\\ci-logs.ps1",
