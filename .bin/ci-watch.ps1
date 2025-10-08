@@ -49,7 +49,7 @@ $branch = (& git rev-parse --abbrev-ref HEAD).Trim()
 Write-Host "Watching latest workflow run for workflow '$Workflow' on branch '$branch'..." -ForegroundColor Cyan
 
 # Resolve the latest run ID for this branch and workflow
-$listJson = & $gh run list --repo $repo -b $branch --workflow $Workflow -L 1 --json databaseId,status,conclusion,headBranch 2>$null
+$listJson = & $gh run list --repo $repo -b $branch --workflow $Workflow -L 20 --json databaseId,status,conclusion,headBranch 2>$null
 if (-not $listJson) {
   # Fallback: try without workflow filter in case of name mismatch
   $listJson = & $gh run list --repo $repo -b $branch -L 1 --json databaseId,status,conclusion,headBranch 2>$null
@@ -59,11 +59,15 @@ if (-not $listJson) {
   }
 }
 $runs = $listJson | ConvertFrom-Json
-if (-not $runs -or $runs.Count -eq 0) {
+if (-not $runs) { $runs = @() }
+if ($runs -is [System.Collections.IDictionary]) { $runs = @($runs) }
+if ($runs.Count -eq 0) {
   Write-Host "No runs found for branch '$branch'. Trigger a workflow first (e.g., pnpm run ci:dispatch)." -ForegroundColor Yellow
   exit 2
 }
-$runId = $runs[0].databaseId
+# Prefer an active run (in_progress or queued); otherwise fallback to most recent
+$active = @($runs | Where-Object { $_.status -in @('in_progress','queued') })
+if ($active.Count -gt 0) { $runId = $active[0].databaseId } else { $runId = $runs[0].databaseId }
 Write-Host "Following run ID: $runId" -ForegroundColor Gray
 
 # Watch until completion; exit code reflects run conclusion

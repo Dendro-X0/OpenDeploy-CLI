@@ -1,8 +1,6 @@
 name: Non-deploy Smoke Tests
 
 on:
-  pull_request:
-    branches: [ main ]
   workflow_dispatch:
 
 concurrency:
