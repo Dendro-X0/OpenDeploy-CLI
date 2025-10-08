@@ -48,7 +48,7 @@ jobs:
         run: |
           set -euxo pipefail
           export OPD_VERSION="${TAG}"
-          curl -fsSL "https://raw.githubusercontent.com/Dendro-X0/OpenDeploy-CLI/main/OpenDeploy%20CLI/install/install.sh" | bash
+          curl -fsSL "https://raw.githubusercontent.com/Dendro-X0/OpenDeploy-CLI/main/packages/cli/install/install.sh" | bash
           ~/.opd/opd -v
 
       - name: Windows install
@@ -56,5 +56,5 @@ jobs:
         shell: pwsh
         run: |
           $env:OPD_VERSION = "${{ env.TAG }}"
-          iwr "https://raw.githubusercontent.com/Dendro-X0/OpenDeploy-CLI/main/OpenDeploy%20CLI/install/install.ps1" -UseBasicParsing | iex
+          iwr "https://raw.githubusercontent.com/Dendro-X0/OpenDeploy-CLI/main/packages/cli/install/install.ps1" -UseBasicParsing | iex
           & "$env:USERPROFILE\.opd\opd.cmd" -v

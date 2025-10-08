@@ -92,7 +92,7 @@ jobs:
       - run: corepack enable && corepack prepare pnpm@10.13.1 --activate
       - run: pnpm install --frozen-lockfile
       - name: Build OpenDeploy
-        run: pnpm --filter "OpenDeploy CLI" -C "OpenDeploy CLI" build
+        run: pnpm --filter "./packages/cli" build
       - name: Up (preview)
         run: |
           opd --gha up vercel --env preview

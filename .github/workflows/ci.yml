@@ -30,31 +30,27 @@ jobs:
         run: |
           corepack enable
           corepack prepare pnpm@10.13.1 --activate
-        working-directory: OpenDeploy CLI
+      - name: Approve native build scripts
+        run: pnpm approve-builds @tailwindcss/oxide esbuild sharp workerd
       - name: Install deps
         run: pnpm install --frozen-lockfile
-        working-directory: OpenDeploy CLI
-      - name: Typecheck
-        run: pnpm typecheck
-        working-directory: OpenDeploy CLI
+      - name: Typecheck (if present)
+        run: pnpm -r --if-present typecheck
       - name: Build
         run: pnpm build
-        working-directory: OpenDeploy CLI
       - name: Test
         run: pnpm test -- --reporter=dot
-        working-directory: OpenDeploy CLI
       - name: Capture CI environment snapshot
-        run: node dist/index.js doctor env-snapshot --out ./.artifacts/ci.snapshot.json
-        working-directory: OpenDeploy CLI
+        run: node packages/cli/dist/index.js doctor env-snapshot --out ./.artifacts/ci.snapshot.json
       - name: Upload artifacts (JSON/NDJSON)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: opd-artifacts-ci
           path: |
-            OpenDeploy CLI/.artifacts/**/*.json
-            OpenDeploy CLI/.artifacts/**/*.ndjson
+            ./.artifacts/**/*.json
+            ./.artifacts/**/*.ndjson
           if-no-files-found: ignore
-      - name: Docs link check
-        run: pnpm run ci:docs-links
-        working-directory: OpenDeploy CLI
+      # Docs link check disabled until monorepo script is ported
+      # - name: Docs link check
+      #   run: pnpm run ci:docs-links

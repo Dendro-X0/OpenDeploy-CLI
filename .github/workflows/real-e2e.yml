@@ -17,10 +17,10 @@ jobs:
         run: |
           corepack enable && corepack prepare pnpm@10.13.1 --activate
           pnpm install --frozen-lockfile
-        working-directory: OpenDeploy CLI
+      - name: Approve native build scripts
+        run: pnpm approve-builds @tailwindcss/oxide esbuild sharp workerd
       - name: Build CLI
         run: pnpm build
-        working-directory: OpenDeploy CLI
       - name: Scaffold Next.js app
         run: |
           npx create-next-app@latest smoke-next --ts --eslint --src-dir --app --tailwind --use-pnpm --no-git --import-alias @/*
@@ -32,7 +32,7 @@ jobs:
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
-          node "OpenDeploy CLI/dist/index.js" up vercel \
+          node packages/cli/dist/index.js up vercel \
             --env preview \
             --project-id "${{ secrets.VERCEL_PROJECT_ID }}" \
             --org-id "${{ secrets.VERCEL_ORG_ID }}" \
@@ -59,10 +59,8 @@ jobs:
         run: |
           corepack enable && corepack prepare pnpm@10.13.1 --activate
           pnpm install --frozen-lockfile
-        working-directory: OpenDeploy CLI
       - name: Build CLI
         run: pnpm build
-        working-directory: OpenDeploy CLI
       - name: Scaffold Astro app
         run: |
           npm create astro@latest -- --template basics --skip-install --git false --yes
@@ -75,7 +73,7 @@ jobs:
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
         run: |
-          node "OpenDeploy CLI/dist/index.js" up netlify \
+          node packages/cli/dist/index.js up netlify \
             --env preview \
             --project "${{ secrets.NETLIFY_SITE_ID }}" \
             --no-build \

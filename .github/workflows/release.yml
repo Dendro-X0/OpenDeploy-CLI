@@ -34,33 +34,29 @@ jobs:
         run: |
           corepack enable
           corepack prepare pnpm@10.13.1 --activate
-        working-directory: OpenDeploy CLI
 
       - name: Install deps (CLI)
         run: pnpm install --frozen-lockfile
-        working-directory: OpenDeploy CLI
 
       - name: Build (CLI)
         run: pnpm build
-        working-directory: OpenDeploy CLI
 
       - name: Prepare artifacts
         run: |
           mkdir -p artifacts
-          cp dist/index.js artifacts/opd.js || echo "No Node dist/index.js found; skipping JS artifact"
+          cp packages/cli/dist/index.js artifacts/opd.js || echo "No Node dist found; skipping JS artifact"
           if command -v sha256sum >/dev/null 2>&1; then
             sha256sum artifacts/opd.js > artifacts/checksums.txt
           else
             shasum -a 256 artifacts/opd.js > artifacts/checksums.txt
           fi
-        working-directory: OpenDeploy CLI
 
       - name: Create GitHub Release
         uses: ncipollo/release-action@v1
         with:
           tag: ${{ github.event.inputs.tag || github.ref_name }}
           name: ${{ github.event.inputs.tag || github.ref_name }}
-          artifacts: "OpenDeploy CLI/artifacts/*"
+          artifacts: "artifacts/*"
           allowUpdates: true
           artifactErrorsFailBuild: true
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -94,7 +90,7 @@ jobs:
         with:
           distribution: goreleaser
           version: latest
-          args: release --clean -f "OpenDeploy CLI/.goreleaser.yml"
+          args: release --clean -f "packages/cli/.goreleaser.yml"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -118,8 +114,8 @@ jobs:
       - name: Build and Push Docker image
         uses: docker/build-push-action@v6
         with:
-          context: "OpenDeploy CLI"
-          file: "OpenDeploy CLI/Dockerfile"
+          context: "."
+          file: "packages/cli/Dockerfile"
           push: true
           tags: |
             ghcr.io/${{ github.repository_owner }}/opd:latest
