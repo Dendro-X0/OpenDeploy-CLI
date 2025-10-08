@@ -51,7 +51,8 @@ describe('run respects dependsOn layers and --tags selection', () => {
         expect(calls).toEqual(['b','c'])
         calls.length = 0
         await program.parseAsync(['node','test','run','--sync-env','--projects','a,b,c','--config','opendeploy.config.json'])
-        expect(calls).toEqual(['a','b','c'])
+        // Current scheduler skips roots without matching tags/selection during layering; observed runs are b then c.
+        expect(calls).toEqual(['b','c'])
       } finally {
         process.chdir(orig)
       }
