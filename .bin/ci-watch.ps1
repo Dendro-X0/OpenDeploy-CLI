@@ -1,3 +1,7 @@
+param(
+  [string]$Workflow = 'ci.yml'
+)
+
 $ErrorActionPreference = 'Stop'
 
 function Resolve-Gh {
@@ -42,13 +46,17 @@ function Resolve-Repo {
 $repo = Resolve-Repo
 
 $branch = (& git rev-parse --abbrev-ref HEAD).Trim()
-Write-Host "Watching latest workflow run on branch '$branch'..." -ForegroundColor Cyan
+Write-Host "Watching latest workflow run for workflow '$Workflow' on branch '$branch'..." -ForegroundColor Cyan
 
-# Resolve the latest run ID for this branch
-$listJson = & $gh run list --repo $repo -b $branch -L 1 --json databaseId,status,conclusion,headBranch 2>$null
+# Resolve the latest run ID for this branch and workflow
+$listJson = & $gh run list --repo $repo -b $branch --workflow $Workflow -L 1 --json databaseId,status,conclusion,headBranch 2>$null
 if (-not $listJson) {
-  Write-Host "No runs found for branch '$branch'. Trigger a workflow first (e.g., pnpm run ci:dispatch)." -ForegroundColor Yellow
-  exit 2
+  # Fallback: try without workflow filter in case of name mismatch
+  $listJson = & $gh run list --repo $repo -b $branch -L 1 --json databaseId,status,conclusion,headBranch 2>$null
+  if (-not $listJson) {
+    Write-Host "No runs found for branch '$branch'. Trigger a workflow first (e.g., pnpm run ci:dispatch)." -ForegroundColor Yellow
+    exit 2
+  }
 }
 $runs = $listJson | ConvertFrom-Json
 if (-not $runs -or $runs.Count -eq 0) {
