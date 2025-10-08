@@ -28,7 +28,7 @@ import { Command } from 'commander'
 import { logger, isJsonMode } from '../utils/logger'
 import { proc, runWithRetry } from '../utils/process'
 import { join, dirname } from 'node:path'
-import { readdir, stat as fsStat } from 'node:fs/promises'
+import { readdir, stat as fsStat, mkdir } from 'node:fs/promises'
 import { fsx } from '../utils/fs'
 import { detectMonorepo } from '../core/detectors/monorepo'
 import { detectPackageManager } from '../core/detectors/package-manager'
@@ -523,7 +523,7 @@ export function registerDoctorCommand(program: Command): void {
         const json: string = JSON.stringify(snap, null, 2) + '\n'
         // Ensure parent directory exists for output path
         const outDir: string = dirname(opts.out)
-        await fsx.ensureDir(outDir)
+        await mkdir(outDir, { recursive: true })
         await writeFile(opts.out, json, 'utf8')
         logger.success(`Environment snapshot written to ${opts.out}`)
       } catch (err) {
