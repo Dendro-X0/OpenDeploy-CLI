@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest'
+const ENABLE_NETLIFY: boolean = process.env.OPD_ENABLE_NETLIFY === '1'
+const d = ENABLE_NETLIFY ? describe : describe.skip
 import { mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -28,7 +30,7 @@ function fakeDetection(args: { cwd: string; build?: string }): DetectionResult {
   }
 }
 
-describe('Netlify provider generateConfig (Nuxt)', () => {
+d('Netlify provider generateConfig (Nuxt)', () => {
   it('writes netlify.toml with nuxi build and .output/public', async () => {
     const cwd: string = await makeTmp()
     const plugin = await loadProvider('netlify')

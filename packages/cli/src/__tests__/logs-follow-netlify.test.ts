@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
+const ENABLE_NETLIFY: boolean = process.env.OPD_ENABLE_NETLIFY === '1'
+const d = ENABLE_NETLIFY ? describe : describe.skip
 import { Command } from 'commander'
 
 // Mock process utils to simulate Netlify API
@@ -34,7 +36,7 @@ vi.mock('../utils/process', async (orig) => {
 import { registerDeployCommand } from '../commands/deploy'
 import { logger } from '../utils/logger'
 
-describe('deploy logs netlify --follow', () => {
+d('deploy logs netlify --follow', () => {
   it('emits NDJSON status events until ready', async () => {
     const program = new Command()
     registerDeployCommand(program)

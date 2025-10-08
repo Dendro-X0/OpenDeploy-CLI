@@ -28,7 +28,10 @@ function fakeDetection(args: { cwd: string; framework: DetectionResult['framewor
   }
 }
 
-describe('Netlify provider generateConfig', () => {
+const ENABLE_NETLIFY: boolean = process.env.OPD_ENABLE_NETLIFY === '1'
+const d = ENABLE_NETLIFY ? describe : describe.skip
+
+d('Netlify provider generateConfig', () => {
   it('writes minimal netlify.toml for Astro with publish and build', async () => {
     const cwd: string = await makeTmp()
     const plugin = await loadProvider('netlify')

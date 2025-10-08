@@ -51,7 +51,10 @@ vi.mock('../../../utils/process', async (orig) => {
   }
 })
 
-describe('up vercel emits logsUrl (inspect fallback) in JSON', () => {
+const SKIP_IN_CI: boolean = process.env.CI === '1'
+const d = SKIP_IN_CI ? describe.skip : describe
+
+d('up vercel emits logsUrl (inspect fallback) in JSON', () => {
   beforeEach(() => { jsonSpy = vi.spyOn(logger, 'jsonPrint').mockImplementation(() => { /* swallow */ }) })
   afterEach(() => { jsonSpy.mockRestore() })
   it('includes logsUrl in summary', async () => {

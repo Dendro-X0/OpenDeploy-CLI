@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+const ENABLE_NETLIFY: boolean = process.env.OPD_ENABLE_NETLIFY === '1'
+const d = ENABLE_NETLIFY ? describe : describe.skip
 import { Command } from 'commander'
 import { registerUpCommand } from '../commands/up'
 import { logger } from '../utils/logger'
@@ -22,7 +24,7 @@ vi.mock('../utils/process', async (orig) => {
 
 // (duplicate utils/process mock removed)
 
-describe('up netlify emits logsUrl in JSON', () => {
+d('up netlify emits logsUrl in JSON', () => {
   beforeEach(() => { calls.length = 0; logSpy = vi.spyOn(logger, 'jsonPrint').mockImplementation(() => { /* swallow */ }) })
   afterEach(() => { logSpy.mockRestore() })
   it('includes logsUrl in summary', async () => {

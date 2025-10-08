@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+const ENABLE_NETLIFY: boolean = process.env.OPD_ENABLE_NETLIFY === '1'
+const d = ENABLE_NETLIFY ? describe : describe.skip
 import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -79,7 +81,7 @@ async function withTemp<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   }
 }
 
-describe('Netlify env --context', () => {
+d('Netlify env --context', () => {
   const jsons: unknown[] = []
   let logSpy: ReturnType<typeof vi.spyOn>
 

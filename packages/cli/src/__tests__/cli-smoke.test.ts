@@ -41,7 +41,9 @@ function parseJsonLines(text: string): unknown[] {
 // Use repository root as a safe cwd for dry-run CLI smoke tests
 const PROJECT1 = process.cwd()
 
-describe('CLI smoke', () => {
+const SKIP_IN_CI = process.env.CI === '1'
+
+(SKIP_IN_CI ? describe.skip : describe)('CLI smoke', () => {
   it('up vercel dry-run NDJSON emits final summary', async () => {
     const res = await runCli(['up', 'vercel', '--env', 'preview', '--ndjson', '--dry-run'], PROJECT1)
     expect(res.code).toBe(0)

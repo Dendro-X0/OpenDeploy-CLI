@@ -20,46 +20,25 @@ function Require-Cmd {
   }
 }
 
-Require-Cmd git
-$gh = Resolve-Gh
-
 function Resolve-Repo {
-  try {
-    $url = (& git remote get-url origin).Trim()
-  } catch {
-    $url = ''
-  }
+  try { $url = (& git remote get-url origin).Trim() } catch { $url = '' }
   if ($env:GITHUB_REPOSITORY) { return $env:GITHUB_REPOSITORY }
-  if ($url -match 'github.com[:/]{1,2}([^/]+)/([^/.]+)') {
-    $owner = $Matches[1]
-    $repo = $Matches[2]
-    return "$owner/$repo"
-  }
+  if ($url -match 'github.com[:/]{1,2}([^/]+)/([^/.]+)') { return "$($Matches[1])/$($Matches[2])" }
   Write-Host "Unable to resolve GitHub repo. Set GITHUB_REPOSITORY or add an origin remote." -ForegroundColor Red
   exit 2
 }
 
+Require-Cmd git
+$gh = Resolve-Gh
 $repo = Resolve-Repo
-
 $branch = (& git rev-parse --abbrev-ref HEAD).Trim()
-Write-Host "Watching latest workflow run on branch '$branch'..." -ForegroundColor Cyan
 
-# Resolve the latest run ID for this branch
+# Find latest run for this branch
 $listJson = & $gh run list --repo $repo -b $branch -L 1 --json databaseId,status,conclusion,headBranch 2>$null
-if (-not $listJson) {
-  Write-Host "No runs found for branch '$branch'. Trigger a workflow first (e.g., pnpm run ci:dispatch)." -ForegroundColor Yellow
-  exit 2
-}
+if (-not $listJson) { Write-Host "No runs found for branch '$branch'" -ForegroundColor Yellow; exit 2 }
 $runs = $listJson | ConvertFrom-Json
-if (-not $runs -or $runs.Count -eq 0) {
-  Write-Host "No runs found for branch '$branch'. Trigger a workflow first (e.g., pnpm run ci:dispatch)." -ForegroundColor Yellow
-  exit 2
-}
+if (-not $runs -or $runs.Count -eq 0) { Write-Host "No runs found for branch '$branch'" -ForegroundColor Yellow; exit 2 }
 $runId = $runs[0].databaseId
-Write-Host "Following run ID: $runId" -ForegroundColor Gray
 
-# Watch until completion; exit code reflects run conclusion
-& $gh run watch --repo $repo $runId --exit-status --interval 5
-
-# Show logs for failed steps/jobs (if any)
+# Show failed job logs
 & $gh run view --repo $repo $runId --log-failed
