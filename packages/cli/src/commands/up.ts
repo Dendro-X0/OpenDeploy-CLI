@@ -14,7 +14,7 @@ import { runStartWizard } from './start'
 import { detectApp } from '../core/detectors/auto'
 import type { Framework } from '../types/framework'
 import { loadProvider } from '../core/provider-system/provider'
-import Ajv2020 from 'ajv/dist/2020'
+import Ajv from 'ajv'
 import { upSummarySchema } from '../schemas/up-summary.schema'
 import { providerBuildResultSchema } from '../schemas/provider-build-result.schema'
 import { providerDeployResultSchema } from '../schemas/provider-deploy-result.schema'
@@ -58,7 +58,7 @@ function inferPublishDir(fw: Framework): string {
  * - Optionally assigns alias (Vercel)
  */
 export function registerUpCommand(program: Command): void {
-  const ajv = new Ajv2020({ allErrors: true, strict: false })
+  const ajv = new Ajv({ allErrors: true, strict: false })
   const validate = ajv.compile(upSummarySchema as unknown as object)
   const validateBuild = ajv.compile(providerBuildResultSchema as unknown as object)
   const validateDeploy = ajv.compile(providerDeployResultSchema as unknown as object)

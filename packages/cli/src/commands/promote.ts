@@ -6,7 +6,7 @@ import { proc, runWithRetry } from '../utils/process'
  
 import { fsx } from '../utils/fs'
 import { printDeploySummary } from '../utils/summarize'
-import Ajv2020 from 'ajv/dist/2020'
+import Ajv from 'ajv'
 import { promoteSummarySchema } from '../schemas/promote-summary.schema'
 
 interface PromoteOptions {
@@ -30,7 +30,7 @@ interface PromoteOptions {
  * - Netlify: best-effort "promote" by deploying current code to production with build and optional --site.
  */
 export function registerPromoteCommand(program: Command): void {
-  const ajv = new Ajv2020({ allErrors: true, strict: false })
+  const ajv = new Ajv({ allErrors: true, strict: false })
   const validate = ajv.compile(promoteSummarySchema as unknown as object)
   const annotate = (obj: Record<string, unknown>): Record<string, unknown> => {
     const ok: boolean = validate(obj) as boolean

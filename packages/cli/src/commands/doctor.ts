@@ -35,7 +35,7 @@ import { detectPackageManager } from '../core/detectors/package-manager'
 import { mapProviderError } from '../utils/errors'
 import { printDoctorSummary } from '../utils/summarize'
 import { writeFile } from 'node:fs/promises'
-import Ajv2020 from 'ajv/dist/2020'
+import Ajv from 'ajv'
 import { doctorSummarySchema } from '../schemas/doctor-summary.schema'
 import { readFile as readFileFs } from 'node:fs/promises'
 
@@ -185,7 +185,7 @@ async function checkGitHubPagesSetup(cwd: string, printCmd?: boolean): Promise<C
  * Register the `doctor` command.
  */
 export function registerDoctorCommand(program: Command): void {
-  const ajv = new Ajv2020({ allErrors: true, strict: false })
+  const ajv = new Ajv({ allErrors: true, strict: false })
   const validate = ajv.compile(doctorSummarySchema as unknown as object)
   const annotate = (obj: Record<string, unknown>): Record<string, unknown> => {
     const ok: boolean = validate(obj) as boolean

@@ -5,7 +5,7 @@ import { spinner } from '../utils/ui'
 import { proc, runWithRetry } from '../utils/process'
 import { fsx } from '../utils/fs'
 import { printDeploySummary } from '../utils/summarize'
-import Ajv2020 from 'ajv/dist/2020'
+import Ajv from 'ajv'
 import { rollbackSummarySchema } from '../schemas/rollback-summary.schema'
 
 interface RollbackOptions {
@@ -29,7 +29,7 @@ interface RollbackOptions {
  * - Netlify: best-effort restore of the previous production deploy via API; fallback to dashboard instructions.
  */
 export function registerRollbackCommand(program: Command): void {
-  const ajv = new Ajv2020({ allErrors: true, strict: false })
+  const ajv = new Ajv({ allErrors: true, strict: false })
   const validate = ajv.compile(rollbackSummarySchema as unknown as object)
   const annotate = (obj: Record<string, unknown>): Record<string, unknown> => {
     const ok: boolean = validate(obj) as boolean

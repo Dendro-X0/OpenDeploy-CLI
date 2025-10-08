@@ -1,7 +1,7 @@
 import { Command } from 'commander'
 import { detectApp, detectCandidates } from '../core/detectors/auto'
 import { logger } from '../utils/logger'
-import Ajv2020 from 'ajv/dist/2020'
+import Ajv from 'ajv'
 import { detectSummarySchema } from '../schemas/detect-summary.schema'
 import type { DetectionResult } from '../types/detection-result'
 import type { Framework } from '../types/framework'
@@ -10,7 +10,7 @@ import type { Framework } from '../types/framework'
  * Register the `detect` command.
  */
 export function registerDetectCommand(program: Command): void {
-  const ajv = new Ajv2020({ allErrors: true, strict: false })
+  const ajv = new Ajv({ allErrors: true, strict: false })
   const validate = ajv.compile(detectSummarySchema as unknown as object)
   const annotate = (obj: Record<string, unknown>): Record<string, unknown> => {
     const ok: boolean = validate(obj) as boolean

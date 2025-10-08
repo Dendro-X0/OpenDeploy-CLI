@@ -2,7 +2,7 @@ import { Command } from 'commander'
 import { join } from 'node:path'
 import { fsx } from '../utils/fs'
 import { logger } from '../utils/logger'
-import Ajv2020 from 'ajv/dist/2020'
+import Ajv from 'ajv'
 import { runSummarySchema } from '../schemas/run-summary.schema'
 import { parseEnvFile } from '../core/secrets/env'
 import { ScriptSeeder } from '../core/seed/script'
@@ -74,7 +74,7 @@ async function loadConfig(cwd: string, file?: string): Promise<OpenDeployConfig>
 }
 
 export function registerRunCommand(program: Command): void {
-  const ajv = new Ajv2020({ allErrors: true, strict: false })
+  const ajv = new Ajv({ allErrors: true, strict: false })
   const validate = ajv.compile(runSummarySchema as unknown as object)
   const annotateRun = (obj: Record<string, unknown>): Record<string, unknown> => {
     const ok: boolean = validate(obj) as boolean

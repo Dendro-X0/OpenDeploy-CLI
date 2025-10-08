@@ -13,7 +13,7 @@ import { confirm } from '../utils/prompt'
 import { proc, runWithRetry } from '../utils/process'
 import { fsx } from '../utils/fs'
 import { getCached, setCached } from '../utils/cache'
-import Ajv2020 from 'ajv/dist/2020'
+import Ajv from 'ajv'
 import { envSummarySchema } from '../schemas/env-summary.schema'
 
 type EnvTarget = 'prod' | 'preview' | 'development' | 'all'
@@ -40,7 +40,7 @@ interface SyncOptions {
 }
 
 // Ajv validator for env summaries (top-level so helpers can use it)
-const envAjv = new Ajv2020({ allErrors: true, strict: false })
+const envAjv = new Ajv({ allErrors: true, strict: false })
 const envSchemaValidate = envAjv.compile(envSummarySchema as unknown as object)
 function annotateEnv(obj: Record<string, unknown>): Record<string, unknown> {
   const ok: boolean = envSchemaValidate(obj) as boolean
