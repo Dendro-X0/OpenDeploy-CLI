@@ -9,10 +9,10 @@
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",
     "format": "pnpm -r format",
-    "ci:watch": "pwsh -NoProfile -ExecutionPolicy Bypass -File .\\.bin\\ci-watch.ps1",
+    "ci:watch": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\.bin\\ci-watch.ps1",
     "ci:last": "gh run list -b $(git rev-parse --abbrev-ref HEAD) -L 1",
     "ci:logs": "gh run view --log-failed",
-    "ci:download": "pwsh -NoProfile -ExecutionPolicy Bypass -File .\\.bin\\ci-download.ps1",
+    "ci:download": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\.bin\\ci-download.ps1",
     "ci:exit-codes": "node scripts/ci/exit-codes.mjs",
     "ci:validate-schemas": "node scripts/ci/validate-schemas.mjs",
     "ci:capture-validate": "node scripts/ci/capture-validate.mjs"
