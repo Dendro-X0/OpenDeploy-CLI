@@ -1,5 +1,5 @@
 export const runSummarySchema = {
-  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $schema: "http://json-schema.org/draft-07/schema#",
   type: "object",
   additionalProperties: true,
   required: ["ok", "action", "final"],

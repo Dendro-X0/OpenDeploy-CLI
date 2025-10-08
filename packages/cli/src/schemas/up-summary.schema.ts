@@ -3,7 +3,7 @@
  * Keep broad to avoid breaking changes; rely on contract tests for stricter checks.
  */
 export const upSummarySchema = {
-  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $schema: "http://json-schema.org/draft-07/schema#",
   type: "object",
   additionalProperties: true,
   required: ["ok", "action", "provider", "target", "final"],
