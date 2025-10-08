@@ -1,0 +1,50 @@
+import { DocsLayout } from "@/components/layout/docs/docs-layout"
+
+export const metadata = { title: "Syntax Highlighting" }
+
+<DocsLayout>
+  <article className="prose prose-gray dark:prose-invert max-w-none">
+    <h1>Syntax Highlighting Demo</h1>
+    <p>
+      The docs site is configured with <code>rehype-prism-plus</code> and a Prism theme. The following fenced blocks
+      should be highlighted.
+    </p>
+
+    <h2>TypeScript</h2>
+
+```ts
+export interface User {
+  id: string
+  email: string
+  readonly createdAt: Date
+}
+
+export function greet(u: User): string {
+  return `Hello, ${u.email}!`
+}
+```
+
+    <h2>Shell</h2>
+
+```bash
+# Install OpenDeploy CLI (from local path in your workspace)
+pnpm -s build && node ./OpenDeploy\ CLI/dist/index.js --help
+```
+
+    <h2>JSON</h2>
+
+```json
+{
+  "projects": [
+    {
+      "name": "next-blogkit",
+      "path": "next-blogkit",
+      "provider": "vercel",
+      "seed": { "schema": "script", "script": "db:push" }
+    }
+  ]
+}
+```
+
+  </article>
+</DocsLayout>

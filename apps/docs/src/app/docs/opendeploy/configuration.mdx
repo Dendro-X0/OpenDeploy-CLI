@@ -1,0 +1,39 @@
+import { DocsLayout } from "@/components/layout/docs/docs-layout"
+
+export const metadata = { title: "OpenDeploy CLI — Configuration" }
+
+<DocsLayout showTableOfContents={true} tableOfContents={[
+  { id: 'file', title: 'opendeploy.config.json', level: 2 },
+  { id: 'schema', title: 'Schema', level: 2 },
+]}>
+  <article className="prose prose-gray dark:prose-invert max-w-none">
+    <h1>Configuration</h1>
+    <p>The CLI can orchestrate multiple projects via <code>opendeploy.config.json</code> at your workspace root.</p>
+
+    <h2 id="file">opendeploy.config.json</h2>
+
+```json
+{
+  "projects": [
+    {
+      "name": "next-blogkit",
+      "path": "next-blogkit",
+      "provider": "vercel",
+      "envFilePreview": ".env.local",
+      "envFileProd": ".env.production.local",
+      "seed": { "schema": "script", "script": "db:push" }
+    }
+  ]
+}
+```
+
+    <h2 id="schema">Schema</h2>
+    <ul>
+      <li><code>name</code>: Project label</li>
+      <li><code>path</code>: Relative path to project</li>
+      <li><code>provider</code>: Provider name (e.g., <code>vercel</code>)</li>
+      <li><code>envFilePreview</code>, <code>envFileProd</code>: Optional env files used for seeding</li>
+      <li><code>seed</code>: Strategy: <code>sql</code> | <code>prisma</code> | <code>script</code>; include <code>script</code> when using <code>script</code></li>
+    </ul>
+  </article>
+</DocsLayout>

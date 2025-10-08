@@ -1,0 +1,166 @@
+import { DocsLayout } from "@/components/layout/docs/docs-layout"
+import { ProviderCapabilities } from "@/components/docs/provider-capabilities"
+
+export const metadata = { title: "Deploy to Vercel" }
+
+<DocsLayout showTableOfContents={true}>
+  <article className="prose prose-gray dark:prose-invert max-w-none">
+
+<a id="top" />
+
+# Deploy to Vercel
+
+This guide covers deploying with the OpenDeploy CLI to Vercel.
+
+<ProviderCapabilities provider="vercel" />
+
+<a id="prerequisites" />
+## Prerequisites
+- Vercel account and access to the target project/organization
+- `VERCEL_TOKEN` set in your environment (CI recommended)
+- Your app builds locally and produces the expected output
+
+<a id="quick-start" />
+## Quick start
+```bash
+# Dry‑run plan (JSON summary only)
+opd plan vercel --json --path .
+
+# Deploy (streams logs)
+opd deploy vercel --path .
+```
+
+<a id="environments" />
+## Environments
+- `--env preview` (default) for branch previews
+- `--env production` for a production deployment
+
+<a id="linking-config" />
+## Linking and config
+- If not already linked, the CLI will guide you or infer settings.
+- Generate a baseline config when needed:
+```bash
+opd config vercel --write --path .
+```
+
+<a id="nextjs" />
+## Next.js example (SSR or static)
+```bash
+# Preview deploy (linked project)
+opd deploy vercel --env preview --path apps/web
+
+# Production deploy
+opd deploy vercel --env production --path apps/web
+```
+- For static export, ensure `output: "export"`, `images.unoptimized`, and set `basePath` if deploying under a subpath.
+- For SSR, standard Next.js runtime on Vercel works out of the box.
+
+<a id="astro" />
+## Astro example (static)
+```bash
+# Generate config if needed
+opd config vercel --write --path .
+
+# Deploy
+opd deploy vercel --path .
+```
+Ensure your Astro config outputs a static site and the `dist` is correctly detected.
+
+<a id="ci" />
+## CI usage
+```bash
+opd plan vercel --env production --json --path . > plan.json
+opd deploy vercel --env production --path .
+```
+
+<a id="troubleshooting" />
+## Troubleshooting
+- Auth prompts in CI: set `VERCEL_TOKEN` and run with `--json`/`--ndjson` for clean logs.
+- Link issues on monorepos: pass `--path` to target the app workspace (e.g., `apps/web`).
+- Build timeouts: use the CLI `--timeout` flag or adjust provider settings.Here’s why your PowerShell download failed, and the fastest way to get GitHub Releases working end‑to‑end.
+
+Why the PowerShell download failed
+
+The URL returned HTML instead of a binary because either:
+the $version variable wasn’t set (URL became …/download/$version/…), or
+the release/tag doesn’t exist yet, or
+the asset name doesn’t exist on that release.
+GitHub endpoints also expect a User-Agent header; without it, Invoke-WebRequest can behave unexpectedly.
+What I’ve set up already
+
+GitHub Releases workflow and GoReleaser are ready. When you push a tag, the workflow builds and uploads these assets:
+opd-windows-x64.exe, opd-windows-arm64.exe
+opd-darwin-x64, opd-darwin-arm64
+opd-linux-x64, opd-linux-arm64
+opd_checksums.txt
+Cut the release (run from OpenDeploy CLI repo)
+
+If you want me to run this for you, say “run the tagging commands” and I’ll execute them.
+Manual commands:
+Inspect tags:
+git fetch --tags
+git tag -l "v*"
+Create and push tag (example v1.1.1):
+git tag -a v1.1.1 -m "OpenDeploy CLI v1.1.1"
+git push origin v1.1.1
+Watch Actions → “Release (manual or tags)” until it finishes and assets appear on the Release page.
+Working install commands (after assets exist)
+
+Windows (PowerShell, pinned version)
+```powershell
+$Version = 'v1.1.1'
+$Hdr = @{ 'User-Agent' = 'opd-installer' }
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$Dest = "$env:USERPROFILE\bin"
+New-Item -ItemType Directory -Force -Path $Dest | Out-Null
+Invoke-WebRequest -Headers $Hdr -Uri "https://github.com/Dendro-X0/OpenDeploy-CLI/releases/download/$Version/opd-windows-x64.exe" -OutFile "$Dest/opd.exe"
+& "$Dest\opd.exe" -v
+```
+Windows (PowerShell, auto-detect latest)
+```powershell
+$Owner='Dendro-X0'; $Repo='OpenDeploy-CLI'
+$Hdr=@{ 'User-Agent'='opd-installer' }
+[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12
+$Rel=Invoke-RestMethod -Headers $Hdr "https://api.github.com/repos/$Owner/$Repo/releases/latest"
+$Asset=if((Get-CimInstance Win32_Processor).Architecture -eq 12){'opd-windows-arm64.exe'}else{'opd-windows-x64.exe'}
+$Url=($Rel.assets | Where-Object name -eq $Asset).browser_download_url
+$Dest="$env:USERPROFILE\bin"; New-Item -ItemType Directory -Force -Path $Dest | Out-Null
+Invoke-WebRequest -Headers $Hdr -Uri $Url -OutFile "$Dest/opd.exe"
+& "$Dest\opd.exe" -v
+```
+macOS/Linux (pinned version)
+```bash
+# Pick the right asset for your OS/arch
+VERSION=v1.1.1
+curl -L -o opd https://github.com/Dendro-X0/OpenDeploy-CLI/releases/download/$VERSION/opd-$(uname -s | tr '[:upper:]' '[:lower:]')-x64
+chmod +x opd && sudo mv opd /usr/local/bin/opd
+opd -v
+```
+macOS/Linux (auto-detect latest; needs jq)
+```bash
+set -euo pipefail
+OWNER=Dendro-X0 REPO=OpenDeploy-CLI UA=opd-installer
+VERSION=$(curl -sH "User-Agent: $UA" https://api.github.com/repos/$OWNER/$REPO/releases/latest | jq -r .tag_name)
+OS=$(uname -s | tr '[:upper:]' '[:lower:]'); ARCH=$(uname -m)
+case "$ARCH" in x86_64) ARCH=x64 ;; aarch64|arm64) ARCH=arm64 ;; *) echo "Unsupported arch: $ARCH"; exit 1 ;; esac
+NAME="opd-${OS}-${ARCH}"
+URL=$(curl -sH "User-Agent: $UA" https://api.github.com/repos/$OWNER/$REPO/releases/tags/$VERSION | jq -r ".assets[] | select(.name==\"$NAME\") | .browser_download_url")
+sudo curl -L "$URL" -o /usr/local/bin/opd && sudo chmod +x /usr/local/bin/opd
+opd -v
+```
+Troubleshooting now
+
+If Invoke-WebRequest prints an HTML page, you’re hitting a non-binary URL:
+Confirm the tag exists in GitHub Releases and the asset name matches (e.g., opd-windows-x64.exe).
+Ensure you set $Version (PowerShell) and include a User-Agent header.
+Use the API-based scripts above to resolve the correct asset URL.
+Next steps I can do for you
+
+Tag and push v1.1.1 (or v1.1.1-rc.1) to trigger the release workflow.
+After the run completes, I’ll verify assets and update the Install page with a one-line “pinned version” snippet per platform at the top for copy/paste.
+When you publish to npm, I’ll re-enable the “Package Manager” mode and add npm/pnpm/yarn/bun install tabs in the docs.
+Feedback submitted
+
+
+</article>
+</DocsLayout>

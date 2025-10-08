@@ -1,0 +1,54 @@
+import { DocsLayout } from "@/components/layout/docs/docs-layout"
+import { ProviderCapabilities } from "@/components/docs/provider-capabilities"
+
+export const metadata = { title: "Deploy to Cloudflare Pages" }
+
+<DocsLayout showTableOfContents={true}>
+  <article className="prose prose-gray dark:prose-invert max-w-none">
+
+<a id="top" />
+
+# Deploy to Cloudflare Pages
+
+This guide covers deploying static sites with the OpenDeploy CLI to Cloudflare Pages.
+
+<ProviderCapabilities provider="cloudflare" />
+
+<a id="prerequisites" />
+## Prerequisites
+- Cloudflare account and a target project
+- `CLOUDFLARE_API_TOKEN` set in your environment (CI recommended)
+
+<a id="quick-start" />
+## Quick start
+```bash
+# Dry‑run plan
+opd plan cloudflare --json --path .
+
+# Deploy
+opd deploy cloudflare --path .
+```
+
+<a id="notes" />
+## Notes
+- Use `--env production` for production builds, otherwise previews.
+- Ensure your project outputs a static artifact directory.
+
+<a id="astro" />
+## Astro example (static)
+```bash
+# Configure output to static
+opd config cloudflare --write --path .
+
+# Deploy
+opd deploy cloudflare --path .
+```
+If your site builds to a custom directory, pass `--publish-dir` in your config or ensure detection reports it.
+
+<a id="troubleshooting" />
+## Troubleshooting
+- Project creation: the plugin can auto-create a project; verify the inferred name in logs.
+- 404 on assets: confirm the publish directory matches the built output.
+
+</article>
+</DocsLayout>

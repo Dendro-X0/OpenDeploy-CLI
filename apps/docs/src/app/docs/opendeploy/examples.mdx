@@ -1,0 +1,121 @@
+import { DocsLayout } from "@/components/layout/docs/docs-layout"
+
+export const metadata = { title: "OpenDeploy CLI — Examples" }
+
+<DocsLayout showTableOfContents={true} tableOfContents={[
+  { id: 'env-sync-dry-run', title: 'Env Sync (dry-run + JSON)', level: 2 },
+  { id: 'env-pull', title: 'Env Pull', level: 2 },
+  { id: 'seed-prisma', title: 'Seeding (Prisma)', level: 2 },
+  { id: 'seed-script', title: 'Seeding (Drizzle Script)', level: 2 },
+  { id: 'deploy-vercel', title: 'Deploy (Vercel)', level: 2 },
+  { id: 'run-orchestrate', title: 'Run (Orchestrate)', level: 2 },
+  { id: 'netlify-git-ci', title: 'Netlify Git/CI Setup', level: 2 },
+]}>
+  <article className="prose prose-gray dark:prose-invert max-w-none">
+    <h1>Examples</h1>
+
+    <h2 id="env-sync-dry-run">Env Sync (dry-run + JSON)</h2>
+
+```bash
+# From your app directory with .env.local present
+opd env sync vercel --file .env.local --env preview --dry-run --json
+```
+
+    <h2 id="env-pull">Env Pull</h2>
+
+```bash
+# Preview → .env.preview.local
+opd env pull vercel --env preview
+# Production → .env.production.local
+opd env pull vercel --env prod
+```
+
+    <h2 id="seed-prisma">Seeding (Prisma)</h2>
+
+```bash
+opd seed --schema prisma --env-file .env.production.local --env prod --yes --json
+```
+
+    <h2 id="seed-script">Seeding (Drizzle Script)</h2>
+
+```bash
+opd seed --schema script --script db:push --env-file ../../apps/web/.env.production.local --env prod --yes --json
+```
+
+    <h2 id="deploy-vercel">Deploy (Vercel)</h2>
+
+```bash
+# Dry-run from monorepo root (apps/web)
+opd up vercel --env preview --json --path apps/web
+```
+
+    <h2 id="run-orchestrate">Run (Orchestrate)</h2>
+
+```bash
+# From workspace root
+opd run --all --env preview --dry-run --json
+```
+
+    <h2 id="netlify-git-ci">Netlify Git/CI Setup</h2>
+
+    <p>
+      For Netlify, connecting your repository and using Git/CI builds is the recommended path.
+      Local <code>netlify deploy --build</code> can be slower or time out on first runs.
+      Use the checklist below to configure your site per framework.
+    </p>
+
+    <h3>Next.js</h3>
+
+```text
+Build command: pnpm install --frozen-lockfile && pnpm build
+Publish directory: .next
+Notes: Netlify Next Runtime is preferred; fallback plugin uses .next publish.
+```
+
+    <h3>Astro</h3>
+
+```text
+Build command: pnpm install --frozen-lockfile && pnpm build
+Publish directory: dist
+```
+
+    <h3>SvelteKit</h3>
+
+```text
+Static (adapter-static)
+  Build command: pnpm install && pnpm build
+  Publish directory: build
+
+SSR (adapter-netlify)
+  Build command: pnpm install && pnpm build
+  Publish directory: .netlify
+```
+
+    <h3>Nuxt</h3>
+
+```text
+Build command: npm ci && npx nuxi build
+Publish directory: .output/public
+```
+
+    <h3>Remix (React Router v7, static)</h3>
+
+```text
+Build command: npm ci && npm run build
+Publish directory: build/client
+netlify.toml: add SPA redirect
+  [[redirects]]
+    from = "/*"
+    to = "/index.html"
+    status = 200
+```
+
+    <h3>Environment Variables</h3>
+
+```text
+Add variables under Site settings → Environment. Optional: sync from a local file using
+  opd env sync netlify --file .env --project-id <SITE_ID> --yes
+In CI, prefer opd with --gha and provider credentials.
+```
+  </article>
+</DocsLayout>

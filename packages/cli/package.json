@@ -1,0 +1,28 @@
+{
+  "name": "opendeploy",
+  "version": "1.2.0-rc.2",
+  "private": false,
+  "type": "module",
+  "bin": { "opd": "dist/index.js" },
+  "scripts": {
+    "build": "tsup --clean",
+    "test": "vitest run",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  },
+  
+  "dependencies": {
+    "commander": "^12.1.0",
+    "ajv": "^8.17.1",
+    "dotenv": "^16.4.5",
+    "pg": "^8.12.0",
+    "clipboardy": "^4.0.0",
+    "@clack/prompts": "^0.7.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.0",
+    "vitest": "^3.2.4",
+    "@biomejs/biome": "^2.2.4",
+    "typescript": "^5.9.2"
+  }
+}

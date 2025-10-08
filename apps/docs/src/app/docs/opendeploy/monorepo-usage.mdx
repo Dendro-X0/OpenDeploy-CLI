@@ -1,0 +1,39 @@
+import { DocsLayout } from "@/components/layout/docs/docs-layout"
+
+export const metadata = { title: "OpenDeploy CLI — Monorepo Usage" }
+
+<DocsLayout showTableOfContents={true} tableOfContents={[
+  { id: 'vercel-git', title: 'Vercel Git', level: 2 },
+  { id: 'env-seed', title: 'Env & Seed Flow', level: 2 },
+  { id: 'independent-projects', title: 'Independent Projects', level: 2 },
+]}>
+  <article className="prose prose-gray dark:prose-invert max-w-none">
+    <h1>Monorepo Usage (Vercel Git + CLI)</h1>
+
+    <h2 id="vercel-git">Vercel Git</h2>
+    <ul>
+      <li>Root Directory: <code>apps/web</code></li>
+      <li>Include files outside root: Enabled</li>
+      <li>Install Command: <code>pnpm install --frozen-lockfile</code></li>
+      <li>Build Command: <code>next build</code></li>
+      <li>Output Directory: <code>.next</code></li>
+    </ul>
+
+    <h2 id="env-seed">Env &amp; Seed Flow</h2>
+
+```bash
+# From app dir
+opd env pull vercel --env preview
+
+# From DB package
+opd seed --schema script --script db:push --env-file ../../apps/web/.env.preview.local --yes
+```
+
+    <h2 id="independent-projects">Independent Projects</h2>
+    <p>
+      Although development may happen within a single workspace, each project is independent.
+      Link and configure providers per project (e.g., per app directory) and avoid assumptions about shared env or build pipelines.
+      Use <code>--path</code> to target a specific app and keep <code>vercel link</code> / <code>netlify link</code> scoped to that app.
+    </p>
+  </article>
+</DocsLayout>

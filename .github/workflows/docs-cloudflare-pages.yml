@@ -1,0 +1,63 @@
+name: Deploy Docs to Cloudflare Pages (Next on Pages)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'apps/docs/**'
+      - 'packages/cli/docs/**'
+      - '.github/workflows/docs-cloudflare-pages.yml'
+
+permissions:
+  contents: read
+  deployments: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/docs
+    env:
+      DEPLOY_TARGET: cloudflare
+      NEXT_PUBLIC_BASE_PATH: ''
+      NEXT_IGNORE_BUILD_CACHE: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install pnpm
+        run: npm i -g pnpm@10
+
+      - name: Approve native build scripts
+        run: pnpm approve-builds @tailwindcss/oxide esbuild sharp workerd
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build with Next on Pages
+        run: |
+          rm -rf .vercel/output .next
+          pnpm exec @cloudflare/next-on-pages
+
+      - name: Upload .vercel output (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vercel-output
+          path: apps/docs/.vercel/output
+          if-no-files-found: warn
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy apps/docs/.vercel/output/static --project-name opendeploy-cli-docs-site

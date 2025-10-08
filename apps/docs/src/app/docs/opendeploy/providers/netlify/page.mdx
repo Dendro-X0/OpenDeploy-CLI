@@ -1,0 +1,77 @@
+import { DocsLayout } from "@/components/layout/docs/docs-layout"
+import { ProviderCapabilities } from "@/components/docs/provider-capabilities"
+
+export const metadata = { title: "Deploy to Netlify" }
+
+<DocsLayout showTableOfContents={true}>
+  <article className="prose prose-gray dark:prose-invert max-w-none">
+
+<a id="top" />
+
+# Deploy to Netlify
+
+This guide covers deploying with the OpenDeploy CLI to Netlify.
+
+<ProviderCapabilities provider="netlify" />
+
+<a id="prerequisites" />
+## Prerequisites
+- Netlify account and access to the site/team
+- `NETLIFY_AUTH_TOKEN` set in your environment (CI recommended)
+
+<a id="quick-start" />
+## Quick start
+```bash
+# Dry‑run plan (JSON summary only)
+opd plan netlify --json --path .
+
+# Deploy (streams logs)
+opd deploy netlify --path .
+```
+
+<a id="notes" />
+## Notes
+- Local automation can prompt or hang depending on Netlify CLI behavior; CI is recommended for reliability.
+- Generate baseline config when needed:
+```bash
+opd config netlify --write --path .
+```
+
+<a id="nextjs" />
+## Next.js example
+```bash
+# Prepare config (runtime or legacy plugin is auto-selected when needed)
+opd config netlify --write --path apps/web
+
+# Deploy preview
+opd deploy netlify --env preview --path apps/web
+
+# Deploy production
+opd deploy netlify --env production --path apps/web
+```
+Tips:
+- If Prisma migrations are in your build command, the CLI may rewrite `netlify.toml` to avoid failures during build.
+- Ensure env vars are synced first: `opd env sync netlify`.
+
+<a id="astro" />
+## Astro example (static)
+```bash
+opd config netlify --write --path .
+opd deploy netlify --path .
+```
+
+<a id="ci" />
+## CI usage
+```bash
+opd plan netlify --env production --json --path . > plan.json
+opd deploy netlify --env production --path .
+```
+
+<a id="troubleshooting" />
+## Troubleshooting
+- Hanging during link/deploy locally: prefer CI or use the API-based linking flows.
+- Build fails on monorepo root: pass `--path` to the app folder (e.g., `apps/web`).
+- Missing env vars: run `opd env sync netlify` before deploy.
+
+</article>
+</DocsLayout>

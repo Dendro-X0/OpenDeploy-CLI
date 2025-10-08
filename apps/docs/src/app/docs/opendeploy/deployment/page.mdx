@@ -1,0 +1,145 @@
+# Deployment
+
+This page summarizes the two supported flows for deploying the docs site and similar Next.js apps, with exact config snippets and commands.
+
+- GitHub Pages → Static export with `basePath`/`assetPrefix`
+- Cloudflare Pages → Next on Pages (no `basePath`, SSR/hybrid‑ready)
+
+---
+
+## GitHub Pages (Static Export)
+
+Use a repo subpath and static output.
+
+```ts title="next.config.ts (GitHub Pages)"
+/** @type {import('next').NextConfig} */
+const repo = 'opendeploy-cli-docs-site'
+module.exports = {
+  output: 'export',
+  images: { unoptimized: true },
+  trailingSlash: true,
+  basePath: `/${repo}`,
+  assetPrefix: `/${repo}/`,
+}
+```
+
+Recommended preflight and publish with OpenDeploy CLI:
+
+```bash
+# In your Next.js project
+opd doctor --fix                      # ensures .nojekyll etc.
+opd up github --preflight-only        # prints warnings but does not publish
+opd up github --env preview           # build (next build && export) + publish
+```
+
+Notes:
+- Ensure the `.nojekyll` file exists in `public/` (and `out/` after export). `opd doctor --fix` will create it.
+- The exported site should contain `out/_next/static/*` assets.
+
+---
+
+## Cloudflare Pages (Next on Pages)
+
+Serve at the root with no `basePath`, let the Next on Pages builder generate `.vercel/output/*`.
+
+```ts title="next.config.ts (Cloudflare Pages)"
+import type { NextConfig } from 'next'
+
+const deployTarget = (process.env.DEPLOY_TARGET || '').toLowerCase()
+const nextConfig: NextConfig = {
+  // Do not set output for Cloudflare; Next on Pages will manage output
+  ...(deployTarget === 'github' ? { output: 'export' as const, images: { unoptimized: true }, trailingSlash: true } : { trailingSlash: false }),
+  ...(deployTarget === 'github' ? { basePath: '/opendeploy-cli-docs-site', assetPrefix: '/opendeploy-cli-docs-site/' } : {}),
+}
+export default nextConfig
+```
+
+```toml title="wrangler.toml"
+name = "opendeploy-cli-docs-site"
+pages_build_output_dir = ".vercel/output/static"
+pages_functions_directory = ".vercel/output/functions"
+compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
+```
+
+Install and build locally (optional):
+
+```bash
+pnpm add -D @cloudflare/next-on-pages
+npx @cloudflare/next-on-pages@1
+wrangler pages deploy .vercel/output/static --project-name opendeploy-cli-docs-site
+```
+
+### GitHub Actions (recommended for reliability)
+
+Add a workflow to build on Linux and deploy to Pages:
+
+```yaml title=".github/workflows/cloudflare-pages.yml"
+name: Deploy to Cloudflare Pages (Next on Pages)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: read
+  deployments: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    env:
+      DEPLOY_TARGET: cloudflare
+      NEXT_PUBLIC_BASE_PATH: ""
+      NEXT_IGNORE_BUILD_CACHE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: true
+      - name: Build with Next on Pages
+        run: |
+          rm -rf .vercel/output .next
+          npx -y @cloudflare/next-on-pages@1
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy .vercel/output/static --project-name opendeploy-cli-docs-site
+```
+
+Required repo secrets:
+- `CLOUDFLARE_API_TOKEN` (Pages write)
+- `CLOUDFLARE_ACCOUNT_ID`
+
+### OpenDeploy CLI shortcuts
+
+```bash
+# Scaffold config for Cloudflare Pages (Next on Pages)
+opd generate cloudflare --next-on-pages
+
+# Deploy (build + publish) to Cloudflare Pages preview
+override envs as needed; defaults shown
+opd up cloudflare --env preview
+```
+
+---
+
+## Troubleshooting
+
+- CSS/JS missing on Cloudflare:
+  - Ensure `basePath` is empty for Cloudflare and `assetPrefix` is not set.
+  - Confirm `.vercel/output/static/_next/static/*` exists after build.
+  - Prefer building in CI on Linux via the workflow above.
+- GitHub Pages 404 for assets:
+  - Verify `.nojekyll` exists.
+  - Ensure `basePath` = `/<repo>` and `assetPrefix` = `/<repo>/` match your repository name.
+- Quick checks:
+  - `opd doctor` and `opd up github --preflight-only` print actionable warnings.

@@ -1,0 +1,75 @@
+import { DocsLayout } from "@/components/layout/docs/docs-layout"
+import { ProviderCapabilities } from "@/components/docs/provider-capabilities"
+
+export const metadata = { title: "Deploy to GitHub Pages" }
+
+<DocsLayout showTableOfContents={true}>
+  <article className="prose prose-gray dark:prose-invert max-w-none">
+
+<a id="top" />
+
+# Deploy to GitHub Pages
+
+GitHub Pages is ideal for documentation and static sites. The OpenDeploy CLI includes a GitHub Pages provider that publishes your static export to the `gh-pages` branch using the `gh-pages` npm package.
+
+<ProviderCapabilities provider="github" />
+
+<a id="prerequisites" />
+## Prerequisites
+- A GitHub repo with an `origin` remote
+- Push permissions for `gh-pages`
+- Pages configured to build from the `gh-pages` branch (root)
+
+<a id="static-export" />
+## Static export (Next.js 15)
+Next 15 supports static export via `output: 'export'`. Add this to `next.config.ts`:
+
+```ts
+import type { NextConfig } from 'next'
+
+const nextConfig: NextConfig = {
+  output: 'export',
+  images: { unoptimized: true },
+  trailingSlash: true,
+  // If hosting at https://<owner>.github.io/<repo>, set basePath/assetPrefix to '/<repo>'
+  // basePath: '/<repo>',
+  // assetPrefix: '/<repo>'
+}
+
+export default nextConfig
+```
+
+Then build:
+
+```bash
+pnpm build
+```
+
+This produces `out/`. The CLI ensures a `.nojekyll` marker so `_next/*` assets are served by GitHub Pages.
+
+<a id="deploy" />
+## Deploy
+```bash
+# Dry‑run plan
+opd plan github --json --path .
+
+# Deploy
+opd deploy github --path .
+```
+
+The provider publishes the artifact directory to the `gh-pages` branch using `gh-pages` internally. No `npx`/`dlx` is required. The URL is inferred from the `origin` remote.
+
+<a id="ci" />
+## CI (GitHub Actions)
+Use the provided workflow `deploy-docs.yml` (static export). Or call `opd deploy github` to publish the `out/` folder via `gh-pages`.
+
+If your site is hosted at `/repo`, set `NEXT_BASE_PATH=/<repo>` in the build step, or set `basePath`/`assetPrefix` in `next.config.ts`.
+
+<a id="troubleshooting" />
+## Troubleshooting
+- Icons or images missing: ensure `basePath` and `assetPrefix` are set to `/<repo>` in `next.config.ts` (or set `NEXT_BASE_PATH=/<repo>` in CI), and `.nojekyll` exists in `out/`.
+- Seeing the repo README instead of the site: set Pages source to `gh-pages` → `/ (root)` under `Settings → Pages`.
+- Custom domain: add a `CNAME` file in `public/` and configure DNS to point to `<owner>.github.io`.
+
+</article>
+</DocsLayout>
