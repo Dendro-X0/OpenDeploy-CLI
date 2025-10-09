@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ci-${{ github.ref }}
+      cancel-in-progress: true
+    env:
+      CI: '1'
+      FORCE_COLOR: '0'
+      OPD_SCHEMA_STRICT: '1'
+      OPD_TEST_NO_SPAWN: '1'
+      OPD_FORCE_CI: '1'
+      TZ: 'UTC'
+      LC_ALL: 'C'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Enable Corepack & setup pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.13.1 --activate
+      - name: Approve native build scripts
+        run: pnpm approve-builds @tailwindcss/oxide esbuild sharp workerd
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck (if present)
+        run: pnpm -r --if-present typecheck
+      - name: Build
+        run: pnpm build
+      - name: Test
+        run: pnpm test -- --reporter=dot
+      - name: Capture CI environment snapshot
+        run: node packages/cli/dist/index.js doctor env-snapshot --out ./.artifacts/ci.snapshot.json
+      - name: Upload artifacts (JSON/NDJSON)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: opd-artifacts-ci
+          path: |
+            ./.artifacts/**/*.json
+            ./.artifacts/**/*.ndjson
+          if-no-files-found: ignore
+      # Docs link check disabled until monorepo script is ported
+      # - name: Docs link check
+      #   run: pnpm run ci:docs-links

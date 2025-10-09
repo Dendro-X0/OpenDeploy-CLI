@@ -1,0 +1,10 @@
+# Ignore build outputs and test artifacts
+node_modules/
+dist/
+.artifacts/
+coverage/
+*.log
+*.ndjson
+*.zip
+*.tar.gz
+**/__snapshots__/
