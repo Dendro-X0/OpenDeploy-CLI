@@ -109,7 +109,7 @@ Usage:
 opd start [--framework <next|astro|sveltekit|remix|expo>] \
   [--provider <vercel|cloudflare|github>] [--env <prod|preview>] \
   [--path <dir>] [--project <id>] [--org <id>] \
-  [--sync-env] [--dry-run] [--json] [--ci] [--no-save-defaults] \
+  [--sync-env] [--promote] [--dry-run] [--json] [--ci] [--no-save-defaults] \
   [--deploy] [--no-build] [--alias <domain>] [--print-cmd]
 ```
 
@@ -120,8 +120,10 @@ Behavior:
 - Env sync is optional; when enabled, the wizard chooses a sensible `.env` file per target.
 - Config generation: ensures minimal `vercel.json` (Vercel).
 - Preflight: optionally runs a local build (skipped in `--ci`).
-- Vercel: performs the deploy (preview/prod) and prints `url`/`logsUrl`. When `--alias` is provided, the wizard attempts to alias the deployment to the given domain.
-  - Experimental: When `OPD_NETLIFY_DIRECT=1` is set and both `--project` (site id/name) and a known `publishDir` exist, the wizard attempts a direct deploy via the Go sidecar (no Netlify CLI required). Requires `NETLIFY_AUTH_TOKEN`. Falls back to the CLI path on error.
+- Vercel: performs the deploy (preview/prod) and prints `url`/`logsUrl`.
+  - Promotion: after a preview deploy, you can promote directly to production.
+    - Interactive: the wizard can prompt to set a production alias.
+    - Non-interactive: pass `--promote --alias <domain>` to promote without prompts.
 - After Vercel deploy (only), the wizard prints a copyable non‑interactive command and offers to copy the logs URL.
 - With `--json`, prints a final summary.
 - With `--dry-run`, prints `{ ok: true, mode: 'dry-run', cmd, final: true }` and exits before syncing/deploying.
@@ -186,8 +188,8 @@ When `--ndjson` is active (or `OPD_NDJSON=1`), the wizard emits compact one-line
 Examples:
 
 ```bash
-# Vercel preview deploy with alias
-opd start --provider vercel --env preview --alias preview.example.com --json
+# Vercel preview deploy without prompts; then promote to production
+opd start --provider vercel --env preview --promote --alias example.com --json
 
 # Monorepo: deploy from apps/web
 opd start --provider vercel --path apps/web --env preview --json

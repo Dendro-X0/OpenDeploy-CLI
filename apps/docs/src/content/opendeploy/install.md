@@ -126,6 +126,16 @@ opd -s --provider vercel --env preview --dry-run --json
 OPD_NDJSON=1 opd start --provider vercel --env preview --ci
 ```
 
+### First deploy (minimal)
+
+```bash
+# Non-interactive defaults, auto-detects framework and provider:
+opd start --minimal
+
+# Monorepo path example:
+opd start --minimal --path apps/web
+```
+
 Shortcuts:
 - `opd -v` — version
 - `opd -h` — help

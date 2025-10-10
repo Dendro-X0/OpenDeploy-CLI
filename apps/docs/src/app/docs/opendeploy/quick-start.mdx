@@ -3,6 +3,7 @@ import { DocsLayout } from "@/components/layout/docs/docs-layout"
 export const metadata = { title: "OpenDeploy CLI — Quick Start" }
 
 <DocsLayout showTableOfContents={true} tableOfContents={[
+  { id: 'first-deploy', title: 'First Deploy in 30 seconds', level: 2 },
   { id: 'install', title: 'Install', level: 2 },
   { id: 'start', title: 'Start (Wizard)', level: 2 },
   { id: 'generate', title: 'Generate Config', level: 2 },
@@ -13,6 +14,19 @@ export const metadata = { title: "OpenDeploy CLI — Quick Start" }
 ]}>
   <article className="prose prose-gray dark:prose-invert max-w-none">
     <h1>Quick Start</h1>
+
+    <h2 id="first-deploy">First Deploy in 30 seconds</h2>
+
+```bash
+# Non-interactive minimal defaults:
+opd start --minimal
+
+# Monorepo path:
+opd start --minimal --path apps/web
+
+# JSON/CI-friendly:
+opd start --minimal --json --ci
+```
 
     <h2 id="install">Install</h2>
 
@@ -25,7 +39,7 @@ opd -h
     <h2 id="start">Start (Wizard)</h2>
 
 ```bash
-# Detects framework, ensures provider config (vercel.json/netlify.toml),
+# Detects framework, ensures provider config (vercel.json),
 # optionally syncs env, then deploys. Skips generation when files exist.
 opd start
 ```
@@ -34,7 +48,6 @@ opd start
 
 ```bash
 opd generate vercel   # writes vercel.json (idempotent)
-opd generate netlify  # writes netlify.toml (idempotent; Next runtime/plugin, Nuxt defaults)
 opd generate turbo    # writes turbo.json (cache outputs)
 ```
 
@@ -71,9 +84,10 @@ opd seed --schema script --script db:push --env-file ../../apps/web/.env.product
 ```bash
 # Vercel preview; set --path for monorepos
 opd up vercel --env preview --json --path apps/web
-
-# Netlify preview (site required)
-opd up netlify --env preview --project <SITE_ID> --json
+# Logs / dashboards
+opd logs vercel --follow
+opd logs cloudflare --open
+opd open github
 ```
   </article>
 </DocsLayout>

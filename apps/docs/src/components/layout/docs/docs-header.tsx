@@ -83,6 +83,11 @@ export function DocsHeader({ onMenuClick, sidebarOpen }: DocsHeaderProps) {
               </Link>
             </Button>
             <Button variant="ghost" size="sm" asChild>
+              <Link href="/docs/opendeploy/roadmap">
+                <span className="text-xs font-medium">Roadmap</span>
+              </Link>
+            </Button>
+            <Button variant="ghost" size="sm" asChild>
               <Link href="https://github.com/Dendro-X0/OpenDeploy-CLI" target="_blank">
                 <Github className="h-4 w-4" />
                 <span className="sr-only">GitHub</span>

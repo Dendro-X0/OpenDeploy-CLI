@@ -25,9 +25,10 @@ export function QuickStart(): React.ReactElement {
     ? [
         { key: "start", label: "# Start wizard", code: "opd start" },
         { key: "gen-vercel", label: "# Generate vercel.json", code: "opd start --provider vercel --generate-config-only" },
-        { key: "gen-netlify", label: "# Generate netlify.toml", code: "opd start --provider netlify --generate-config-only" },
         { key: "up-vercel", label: "# Preview deploy (Vercel)", code: "opd up vercel --env preview --ndjson --timestamps" },
-        { key: "up-netlify", label: "# Preview deploy (Netlify)", code: "opd up netlify --env preview --project <SITE_ID> --ndjson --timestamps" },
+        { key: "logs-vc", label: "# Logs (Vercel)", code: "opd logs vercel --follow" },
+        { key: "logs-cf", label: "# Open Cloudflare Inspect", code: "opd logs cloudflare --open" },
+        { key: "open-gh", label: "# Open GitHub Pages", code: "opd open github" },
       ]
     : [
         { key: "coming-soon", label: "# Package manager install (coming soon)", code: "Use Releases binary: opd -h" },

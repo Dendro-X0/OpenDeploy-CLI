@@ -1,6 +1,6 @@
 # Overview
 
-OpenDeploy CLI is a Next.js‑first, cross‑provider deployment assistant for Vercel and Netlify. It focuses on reliable, repeatable workflows with great local/CI ergonomics. In addition to Next.js, the CLI supports Astro and SvelteKit, with early (beta) support for Remix and Expo.
+OpenDeploy CLI is a Next.js‑first, cross‑provider deployment assistant for Vercel, Cloudflare Pages, and GitHub Pages. It focuses on reliable, repeatable workflows with great local/CI ergonomics. In addition to Next.js, the CLI supports Astro and SvelteKit, with early (beta) support for Remix and Expo.
 
 ## Status
 
@@ -8,7 +8,7 @@ The 1.0.0 Beta milestone is complete (provider parity, CI ergonomics, extensibil
 
 ## Release Notes (1.0.0‑beta)
 
-- Provider parity for Netlify and Vercel (env pull/diff/sync, deploy) with consistent JSON/NDJSON outputs and exit codes
+- Vercel deploys with consistent JSON/NDJSON outputs and exit codes
 - Upgrades for CI ergonomics: `--gha` preset, default JSON/NDJSON sinks, GitHub annotations, deterministic final summaries (`final: true`)
 - `up` command with NDJSON progress streaming and retries/timeouts knobs
 - Env validation with rules schema (regex/allowed/oneOf/requireIf) and profile builtins (blogkit, ecommercekit)
@@ -20,7 +20,7 @@ The 1.0.0 Beta milestone is complete (provider parity, CI ergonomics, extensibil
 - Stack detection (framework, router, package manager, monorepo)
 - Environment management: `env sync`, `env pull`, `env diff`, `env validate`
 - Database seeding: SQL, Prisma, Script
-- Deploy streaming and logs (Vercel, Netlify) with readable summaries
+- Deploy streaming and logs (Vercel). Cloudflare/GitHub: logs/open and environment support.
 - Single‑command deploy: `opd up <provider>` (auto env sync + deploy)
 - Colorful human output + NDJSON/JSON for CI and log pipelines
 - Guided setup: `opd init` (generate configs, set env policy)
@@ -31,7 +31,7 @@ The 1.0.0 Beta milestone is complete (provider parity, CI ergonomics, extensibil
 | Command                              | Writes         | Summary |
 |--------------------------------------|----------------|---------|
 | `opd generate vercel`         | `vercel.json`  | Minimal config with `version`, optional `buildCommand`, and `outputDirectory` when a `publishDir` is detected. |
-| `opd generate netlify`        | `netlify.toml` | Next.js: uses Netlify Next Runtime if present, else falls back to `@netlify/plugin-nextjs` and `publish = ".next"`. Nuxt: `command = "npx nuxi build"`, `publish = ".output/public"`. Others (Astro, SvelteKit static, Remix static): detection-driven `buildCommand` + `publishDir`. |
+| (Netlify removed)             | —              | — |
 | `opd generate turbo`          | `turbo.json`   | Minimal cache config: `tasks.build.dependsOn = ['^build']`, `outputs = ['.next/**', '!.next/cache/**', 'dist/**']`. |
 
 ## Quick Start
@@ -47,15 +47,13 @@ opd init
 # 2) Preview: one‑command deploy (sync env then deploy)
 # Tip: running `opd up` without a provider opens the wizard.
 opd up vercel --env preview
-# or (Netlify)
-# For Netlify, use `up` or run the recommended commands printed by `start`.
-opd up netlify --env preview --project <SITE_ID>
+opd logs cloudflare --open
 
 # 3) Promote to production
-# Vercel: point your prod domain to the preview
+# From the Start wizard, you can promote the preview directly by setting an alias.
+opd start --provider vercel --env preview --promote --alias your-domain.com
+or use the dedicated command:
 opd promote vercel --alias your-domain.com
-# Netlify: best‑effort promote by deploying to prod
-opd promote netlify --project <SITE_ID>
 
 # (Optional) Explain plan before executing
 opd explain vercel --env preview --json

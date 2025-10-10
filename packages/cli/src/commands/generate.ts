@@ -13,8 +13,8 @@ interface GenerateOptions { readonly overwrite?: boolean; readonly json?: boolea
 export function registerGenerateCommand(program: Command): void {
   program
     .command('generate')
-    .description('Generate configuration files for the detected app (Vercel/Cloudflare) or Turborepo pipeline')
-    .argument('<provider>', 'Target: vercel | cloudflare | turbo')
+    .description('Generate configuration files for the detected app (Vercel/Cloudflare/GitHub Pages) or Turborepo pipeline')
+    .argument('<provider>', 'Target: vercel | cloudflare | github | turbo')
     .option('--overwrite', 'Overwrite existing files')
     .option('--json', 'Output JSON with generated file path')
     .option('--next-on-pages', 'For Cloudflare: scaffold wrangler.toml configured for Next on Pages')
@@ -66,9 +66,62 @@ export function registerGenerateCommand(program: Command): void {
           logger.success(`Generated Cloudflare config at ${writtenPath}`)
           return
         }
-        if (provider === 'netlify') {
-          logger.error('Netlify is not supported by OpenDeploy. Please use the official Netlify CLI.')
-          process.exitCode = 1
+        if (provider === 'github') {
+          // Scaffold GitHub Pages workflow
+          const relDir = '.github/workflows'
+          const dir = join(cwd, relDir)
+          try { await (await import('node:fs/promises')).mkdir(dir, { recursive: true }) } catch { /* ignore */ }
+          const outDir: string = ((): string => {
+            const pub = detection.publishDir?.trim()
+            if (pub && pub.length > 0) return pub
+            const fw = (detection.framework || '').toLowerCase()
+            if (fw === 'astro') return 'dist'
+            if (fw === 'sveltekit') return 'build'
+            if (fw === 'next') return 'out' // requires next export
+            return 'dist'
+          })()
+          const file = join(dir, 'deploy-pages.yml')
+          const body = `name: Deploy to GitHub Pages\n\n` +
+`on:\n` +
+`  push:\n` +
+`    branches: [ main ]\n` +
+`  workflow_dispatch:\n\n` +
+`permissions:\n` +
+`  contents: read\n` +
+`  pages: write\n` +
+`  id-token: write\n\n` +
+`jobs:\n` +
+`  build:\n` +
+`    runs-on: ubuntu-latest\n` +
+`    steps:\n` +
+`      - uses: actions/checkout@v4\n` +
+`      - uses: pnpm/action-setup@v4\n` +
+`        with:\n` +
+`          version: 9\n` +
+`      - uses: actions/setup-node@v4\n` +
+`        with:\n` +
+`          node-version: 20\n` +
+`          cache: 'pnpm'\n` +
+`      - run: pnpm install --frozen-lockfile\n` +
+`      - run: pnpm run build\n` +
+`      - uses: actions/upload-pages-artifact@v3\n` +
+`        with:\n` +
+`          path: ${outDir}\n` +
+`  deploy:\n` +
+`    needs: build\n` +
+`    runs-on: ubuntu-latest\n` +
+`    environment:\n` +
+`      name: github-pages\n` +
+`      url: ` + '${{ steps.deployment.outputs.page_url }}' + `\n` +
+`    steps:\n` +
+`      - id: deployment\n` +
+`        uses: actions/deploy-pages@v4\n`
+          await writeFile(file, body, 'utf8')
+          if (jsonMode) { logger.jsonPrint({ ok: true, action: 'generate' as const, provider: 'github' as const, path: file, final: true }); return }
+          logger.success(`Generated GitHub Pages workflow at ${file}`)
+          if ((detection.framework || '').toLowerCase() === 'next') {
+            logger.note('Next.js → GitHub Pages: set next.config output: "export" and run next export to produce out/.')
+          }
           return
         }
         if (provider === 'turbo') {

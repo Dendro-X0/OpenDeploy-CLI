@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { logger, isJsonMode } from '../utils/logger'
 import { spinner } from '../utils/ui'
 import { proc, runWithRetry } from '../utils/process'
- 
+
 import { fsx } from '../utils/fs'
 import { printDeploySummary } from '../utils/summarize'
 import Ajv from 'ajv'
@@ -27,10 +27,9 @@ interface PromoteOptions {
  * Register the `promote` command.
  *
  * - Vercel: resolve latest preview deployment and assign an alias domain to it (production promotion by alias).
- * - Netlify: best-effort "promote" by deploying current code to production with build and optional --site.
  */
 export function registerPromoteCommand(program: Command): void {
-  const ajv = new Ajv({ allErrors: true, strict: false })
+  const ajv = new Ajv({ allErrors: true, strict: false, validateSchema: false })
   const validate = ajv.compile(promoteSummarySchema as unknown as object)
   const annotate = (obj: Record<string, unknown>): Record<string, unknown> => {
     const ok: boolean = validate(obj) as boolean
@@ -40,8 +39,8 @@ export function registerPromoteCommand(program: Command): void {
   }
   program
     .command('promote')
-    .description('Promote a preview to production (provider-specific)')
-    .argument('<provider>', 'Target provider: vercel | netlify')
+    .description('Promote a preview to production (Vercel)')
+    .argument('<provider>', 'Target provider: vercel')
     .option('--alias <domain>', 'Production alias/domain (Vercel)')
     .option('--from <urlOrSha>', 'Vercel: preview URL or commit SHA to promote; Netlify: deployId to restore')
     .option('--path <dir>', 'Path to app directory (for monorepos)')
@@ -64,23 +63,13 @@ export function registerPromoteCommand(program: Command): void {
         if (jsonMode) logger.setJsonOnly(true)
         // Early dry-run summary to avoid side effects
         if (opts.dryRun === true) {
-          const prov: 'vercel' | 'netlify' = provider === 'netlify' ? 'netlify' : 'vercel'
-          const base = { ok: true, provider: prov, action: 'promote' as const, target: 'prod' as const }
-          const cmdPlan: string[] = prov === 'vercel'
-            ? (opts.alias ? [
-                opts.from ? `vercel alias set ${opts.from} ${opts.alias}` : `vercel alias set <preview-url> ${opts.alias}`,
-                ...(opts.from ? [] : [`vercel list --json -n 10`])
-              ] : [ `vercel list --json -n 10` ])
-            : [
-                opts.from ? `netlify api restoreDeploy --data '{"deploy_id":"${opts.from}"}'${opts.project ? ` --site ${opts.project}` : ''}`.trim() :
-                  `netlify deploy --build --prod${opts.project ? ` --site ${opts.project}` : ''}`.trim()
-              ]
-          if (jsonMode) {
-            if (prov === 'vercel') logger.jsonPrint(annotate({ ...base, from: opts.from, alias: opts.alias ? `https://${opts.alias}` : undefined, cmdPlan, final: true }))
-            else logger.jsonPrint(annotate({ ...base, from: opts.from, siteId: opts.project, cmdPlan, final: true }))
-          } else {
-            logger.info(`[dry-run] promote ${prov} ${prov === 'vercel' ? `(alias=${opts.alias ?? 'none'})` : ''}`)
-          }
+          const base = { ok: true, provider: 'vercel' as const, action: 'promote' as const, target: 'prod' as const }
+          const cmdPlan: string[] = (opts.alias ? [
+            opts.from ? `vercel alias set ${opts.from} ${opts.alias}` : `vercel alias set <preview-url> ${opts.alias}`,
+            ...(opts.from ? [] : [`vercel list --json -n 10`])
+          ] : [ `vercel list --json -n 10` ])
+          if (jsonMode) { logger.jsonPrint(annotate({ ...base, from: opts.from, alias: opts.alias ? `https://${opts.alias}` : undefined, cmdPlan, final: true })) }
+          else { logger.info(`[dry-run] promote vercel (alias=${opts.alias ?? 'none'})`) }
           return
         }
         if (provider === 'vercel') {
@@ -127,51 +116,6 @@ export function registerPromoteCommand(program: Command): void {
           logger.success(`Promoted preview → ${opts.alias}`)
           printDeploySummary({ provider: 'vercel', target: 'prod', url: `https://${opts.alias}` })
           return
-        }
-        if (provider === 'netlify') {
-          const siteFlag: string = opts.project ? ` --site ${opts.project}` : ''
-          if (opts.from) {
-            // Attempt direct restore to specified deploy id
-            const restoreCmd = `netlify api restoreDeploy --data '{"deploy_id":"${opts.from}"}'${siteFlag}`
-            if (opts.printCmd) logger.info(`$ ${restoreCmd}`)
-            const restore = await runWithRetry({ cmd: restoreCmd, cwd: targetCwd })
-            if (!restore.ok) throw new Error(restore.stderr.trim() || restore.stdout.trim() || 'Netlify restore failed')
-            if (jsonMode) { logger.jsonPrint(annotate({ ok: true, provider: 'netlify', action: 'promote', target: 'prod', deployId: opts.from, siteId: opts.project, final: true })); return }
-            logger.success(`Requested restore of deploy ${opts.from}`)
-            printDeploySummary({ provider: 'netlify', target: 'prod' })
-            return
-          } else {
-            const sp = spinner('Netlify: promoting to production (build)')
-            const cmd = `netlify deploy --build --prod${siteFlag}`.trim()
-            if (opts.printCmd) logger.info(`$ ${cmd}`)
-            const out = await runWithRetry({ cmd, cwd: targetCwd })
-            sp.stop()
-            if (!out.ok) throw new Error(out.stderr.trim() || out.stdout.trim() || 'Netlify promote failed')
-            let url: string | undefined
-            let logsUrl: string | undefined
-            try {
-              const m = out.stdout.match(/https?:\/\/[^\s]+\.netlify\.app\b/)
-              url = m?.[0]
-              // Best-effort resolve logs url
-              if (opts.project) {
-                const siteNameRes = await proc.run({ cmd: `netlify api getSite --data '{"site_id":"${opts.project}"}'${siteFlag}`, cwd: targetCwd })
-                if (siteNameRes.ok) {
-                  const js = JSON.parse(siteNameRes.stdout) as { name?: string }
-                  const siteName = typeof js.name === 'string' ? js.name : undefined
-                  const list = await proc.run({ cmd: `netlify api listSiteDeploys --data '{"site_id":"${opts.project}","per_page":1}'${siteFlag}`, cwd: targetCwd })
-                  if (siteName && list.ok) {
-                    const arr = JSON.parse(list.stdout) as Array<{ id?: string }>
-                    const deployId = arr?.[0]?.id
-                    if (deployId) logsUrl = `https://app.netlify.com/sites/${siteName}/deploys/${deployId}`
-                  }
-                }
-              }
-            } catch { /* ignore */ }
-            if (jsonMode) { logger.jsonPrint(annotate({ ok: true, provider: 'netlify', action: 'promote', target: 'prod', url, logsUrl, siteId: opts.project, final: true })); return }
-            logger.success(url ? `Promoted to production: ${url}` : 'Promoted to production')
-            printDeploySummary({ provider: 'netlify', target: 'prod', url })
-            return
-          }
         }
         logger.error(`Unknown provider: ${provider}`)
         process.exitCode = 1

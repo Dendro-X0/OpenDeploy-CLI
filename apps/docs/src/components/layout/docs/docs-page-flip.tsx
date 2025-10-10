@@ -5,46 +5,65 @@ import { usePathname } from "next/navigation"
 import { ArrowLeft, ArrowRight } from "lucide-react"
 import type { ReactElement } from "react"
 import { cn } from "@/lib/utils"
+import { navigationItems, type NavLeaf, type NavSubGroup } from "./nav"
 
 /**
- * Minimal next/previous pager for docs pages.
- * Automatically determines prev/next using a fixed route order for OpenDeploy CLI docs.
+ * Next/previous pager for docs pages.
+ * Uses the shared navigation tree to determine a linear order across all internal docs pages.
  */
 export function DocsPageFlip(): ReactElement | null {
-  const pathname = (usePathname() || "").replace(/\/$/, "")
+  const pathname: string = (usePathname() || "").replace(/\/$/, "")
 
-  const order = [
-    { title: "Overview", url: "/docs/opendeploy/overview" },
-    { title: "Commands", url: "/docs/opendeploy/commands" },
-    { title: "Providers", url: "/docs/opendeploy/providers" },
-    { title: "CI Recipes", url: "/docs/opendeploy/ci" },
-    { title: "Troubleshooting", url: "/docs/opendeploy/troubleshooting" },
-  ] as const
-
-  const idx = order.findIndex((i) => pathname.startsWith(i.url))
+  // Flatten the navigation into a linear list of internal pages in sidebar order.
+  const linear = flattenNav()
+  const idx = linear.findIndex((i) => pathname === i.url)
   if (idx === -1) return null
 
-  const prev = idx > 0 ? order[idx - 1] : null
-  const next = idx < order.length - 1 ? order[idx + 1] : null
+  const prev = idx > 0 ? linear[idx - 1] : null
+  const next = idx < linear.length - 1 ? linear[idx + 1] : null
 
   if (!prev && !next) return null
 
   return (
     <div className="mt-12 pt-6 border-t border-border">
       <div className="flex items-center justify-between gap-3">
-        {prev ? (
+        {prev && (
           <PagerLink href={prev.url} label="Previous" title={prev.title} direction="prev" />
-        ) : (
-          <div />
         )}
-        {next ? (
+        {next && (
           <PagerLink href={next.url} label="Next" title={next.title} direction="next" />
-        ) : (
-          <div />
         )}
       </div>
     </div>
   )
+}
+
+type LinearItem = { title: string; url: string }
+
+function isInternal(url: string): boolean {
+  return url.startsWith("/")
+}
+
+function flattenNav(): LinearItem[] {
+  const out: LinearItem[] = []
+  for (const item of navigationItems) {
+    if ("url" in item) {
+      if (isInternal(item.url)) out.push({ title: item.title, url: item.url })
+      continue
+    }
+    for (const sub of item.items) {
+      if ("url" in sub) {
+        const u = (sub as NavLeaf).url
+        // Skip anchor-only links (e.g., Quick Start anchor) for linear paging
+        if (isInternal(u) && !u.includes("#")) out.push({ title: sub.title, url: u })
+      } else {
+        for (const leaf of (sub as NavSubGroup).items) {
+          if (isInternal(leaf.url)) out.push({ title: leaf.title, url: leaf.url })
+        }
+      }
+    }
+  }
+  return out
 }
 
 type PagerLinkProps = {

@@ -1,1 +1,1 @@
-export type ProviderName = 'vercel' | 'netlify'
+export type ProviderName = 'vercel' | 'cloudflare' | 'github'

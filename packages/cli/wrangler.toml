@@ -1,0 +1,3 @@
+pages_build_output_dir = ".vercel/output/static"
+pages_functions_directory = ".vercel/output/functions"
+compatibility_flags = ["nodejs_compat"]

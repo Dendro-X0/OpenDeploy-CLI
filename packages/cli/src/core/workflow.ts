@@ -6,7 +6,7 @@
 import type { DetectionResult } from '../types/detection-result'
 
 export type DeployTarget = 'prod' | 'preview'
-export type ProviderKey = 'netlify' | 'vercel'
+export type ProviderKey = 'vercel'
 
 export type PrepareInput = {
   readonly cwd: string
@@ -59,11 +59,7 @@ export interface ProviderWorkflow {
 }
 
 /** Load a provider workflow implementation */
-export const getWorkflow = async (p: ProviderKey): Promise<ProviderWorkflow> => {
-  if (p === 'netlify') {
-    const mod = await import('../providers/netlify/workflow')
-    return mod.workflow
-  }
+export const getWorkflow = async (_p: ProviderKey): Promise<ProviderWorkflow> => {
   const mod = await import('../providers/vercel/workflow')
   return mod.workflow
 }

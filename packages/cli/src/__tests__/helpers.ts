@@ -19,9 +19,10 @@ export function createTempProject(name: string, files: Record<string, string>): 
 export function runCliJson(cwd: string, args: string[]): { readonly status: number | null; readonly json: any; readonly raw: string } {
   const cli = join(process.cwd(), 'dist', 'index.js')
   const env = { ...process.env, OPD_SKIP_VALIDATE: '1', OPD_SKIP_ASSET_SANITY: '1', OPD_FORCE_CI: '1' }
-  const res = spawnSync(process.execPath, [cli, '--json', ...args], { cwd, encoding: 'utf8', env, timeout: 15000 })
+  const res = spawnSync(process.execPath, [cli, '--json', ...args], { cwd, encoding: 'utf8', env, timeout: 5000 })
   const out = (res.stdout || '').trim()
   let json: any
   try { json = JSON.parse(out.split(/\r?\n/).filter(Boolean).pop() || '{}') } catch { json = {} }
-  return { status: res.status, json, raw: out }
+  const status: number | null = res.status !== null ? res.status : (json && json.ok === false ? 1 : 0)
+  return { status, json, raw: out }
 }

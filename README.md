@@ -6,17 +6,15 @@
 
 ## Introduction
 
-> Important: This project is undergoing a major architecture refactor and is currently reference‑only. The legacy design is no longer supported. A new, extensible provider system will land in the next version, enabling first‑class multi‑provider support.
-
-OpenDeploy is a web‑focused, cross‑provider deployment CLI. It detects your stack, validates env, and deploys with readable logs and CI‑friendly JSON/NDJSON. The short command is `opd` (preferred via GitHub Releases). Compatibility aliases `opendeploy` and `opendeploy-cli` are available.
+OpenDeploy is a cross‑provider deployment CLI for modern web apps. It detects your stack, validates environment, and deploys with human‑readable logs and CI‑friendly JSON/NDJSON. The short command is `opd`.
 
 ## Features
 
-- Stack detection (framework, router, package manager, monorepo)
-- Environment management: sync, pull, diff, validate (strict flags, dry‑run, JSON/NDJSON)
-- Deploy streaming with Inspect/logsUrl capture (Vercel). Cloudflare Pages and GitHub Pages supported.
-- Monorepo‑aware flows and doctor checks
-- CI ergonomics: deterministic summaries, sinks, timestamps, annotations
+- Framework detection (Next.js, Astro, SvelteKit, more)
+- Guided start wizard and one‑command deploys
+- Environment management: sync, pull, diff, validate
+- CI ergonomics: deterministic JSON/NDJSON summaries and timestamps
+- Providers: Vercel, Cloudflare Pages, GitHub Pages
 
 ## Quick Start
 
@@ -29,27 +27,22 @@ opd start
 iwr "https://raw.githubusercontent.com/Dendro-X0/OpenDeploy-CLI/main/packages/cli/install/install.ps1" -UseBasicParsing | iex
 opd start
 
-# Pin a specific version (optional): set OPD_VERSION
-# macOS/Linux:
-#   OPD_VERSION=v1.2.0-rc.1 bash -c "$(curl -fsSL https://raw.githubusercontent.com/Dendro-X0/OpenDeploy-CLI/main/packages/cli/install/install.sh)"
-# Windows PowerShell:
-#   $env:OPD_VERSION = 'v1.2.0-rc.1'; iwr "https://raw.githubusercontent.com/Dendro-X0/OpenDeploy-CLI/main/packages/cli/install/install.ps1" -UseBasicParsing | iex
-
-# Package manager alternatives (no registry account required)
-# npm:    npx opendeploy-cli start
-# pnpm:   pnpm dlx opendeploy-cli start
-# yarn:   yarn dlx opendeploy-cli start
-# bun:    bunx opendeploy-cli start
+# Package manager alternatives
+# npm:  npx opendeploy-cli start
+# pnpm: pnpm dlx opendeploy-cli start
+# yarn: yarn dlx opendeploy-cli start
+# bun:  bunx opendeploy-cli start
 ```
 
 ## Documentation
 
-- Docs site: https://dendro-x0.github.io/opendeploy-cli-docs-site/
-- Provider architecture (WIP): `docs/architecture/provider-system.md`
+Docs site: https://dendro-x0.github.io/opendeploy-cli-docs-site/
 
-- Schemas & Validation: `docs/schemas.md`
-- CI Guide (strict schema + matrix): `docs/ci.md`
-- Local Test Matrix: `docs/test-matrix.md`
+Three steps to deploy, per provider:
+
+- Vercel: https://dendro-x0.github.io/opendeploy-cli-docs-site/docs/opendeploy/quickstart-vercel
+- GitHub Pages: https://dendro-x0.github.io/opendeploy-cli-docs-site/docs/opendeploy/quickstart-github-pages
+- Cloudflare Pages: https://dendro-x0.github.io/opendeploy-cli-docs-site/docs/opendeploy/quickstart-cloudflare
 
 ## License
 

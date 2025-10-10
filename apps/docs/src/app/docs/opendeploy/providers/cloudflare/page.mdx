@@ -8,9 +8,9 @@ export const metadata = { title: "Deploy to Cloudflare Pages" }
 
 <a id="top" />
 
-# Deploy to Cloudflare Pages
+# Cloudflare Pages
 
-This guide covers deploying static sites with the OpenDeploy CLI to Cloudflare Pages.
+Cloudflare Pages is supported for environment sync and logs/inspect flows. Deployment is not yet managed directly by the CLI.
 
 <ProviderCapabilities provider="cloudflare" />
 
@@ -22,33 +22,27 @@ This guide covers deploying static sites with the OpenDeploy CLI to Cloudflare P
 <a id="quick-start" />
 ## Quick start
 ```bash
-# Dry‑run plan
-opd plan cloudflare --json --path .
+# Open latest deployment in Inspect (dashboard)
+opd logs cloudflare --open
 
-# Deploy
-opd deploy cloudflare --path .
+# Sync env from local file (preview/prod)
+opd env sync cloudflare --file .env --env preview --yes
 ```
 
 <a id="notes" />
 ## Notes
-- Use `--env production` for production builds, otherwise previews.
-- Ensure your project outputs a static artifact directory.
+- Use `--env production` for production VM/env selection in logs/env sync; otherwise previews.
+- For deployments, use Cloudflare’s native workflows (project settings/CI) until CLI deploy support lands.
 
 <a id="astro" />
-## Astro example (static)
-```bash
-# Configure output to static
-opd config cloudflare --write --path .
-
-# Deploy
-opd deploy cloudflare --path .
-```
-If your site builds to a custom directory, pass `--publish-dir` in your config or ensure detection reports it.
+## Astro (static) note
+- Build locally with `astro build` → deploy via Cloudflare Pages project (Git/CI or wrangler/pages). Use `opd env sync cloudflare` to manage environment variables.
+If your site builds to a custom directory, configure it in your Cloudflare Pages project.
 
 <a id="troubleshooting" />
 ## Troubleshooting
-- Project creation: the plugin can auto-create a project; verify the inferred name in logs.
-- 404 on assets: confirm the publish directory matches the built output.
+- 404 on assets: confirm the publish directory in Cloudflare Pages matches the built output.
+- Inspect shows an older deploy: pass `--env production` to open the production inspect URL.
 
 </article>
 </DocsLayout>

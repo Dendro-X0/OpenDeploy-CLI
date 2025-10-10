@@ -29,7 +29,7 @@ interface RollbackOptions {
  * - Netlify: best-effort restore of the previous production deploy via API; fallback to dashboard instructions.
  */
 export function registerRollbackCommand(program: Command): void {
-  const ajv = new Ajv({ allErrors: true, strict: false })
+  const ajv = new Ajv({ allErrors: true, strict: false, validateSchema: false })
   const validate = ajv.compile(rollbackSummarySchema as unknown as object)
   const annotate = (obj: Record<string, unknown>): Record<string, unknown> => {
     const ok: boolean = validate(obj) as boolean

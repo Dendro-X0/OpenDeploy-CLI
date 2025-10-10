@@ -48,7 +48,12 @@ export default function HomePage() {
     <HomeLayout>
       <div className="max-w-7xl mx-auto">
         {/* Hero Section */}
-        <section className="text-center py-20 px-4">
+        <section className="relative text-center py-20 px-4 overflow-hidden">
+          {/* Subtle background gradients (decorative) */}
+          <div aria-hidden className="pointer-events-none absolute inset-0 -z-10">
+            <div className="absolute left-1/2 top-[-15%] h-[420px] w-[780px] -translate-x-1/2 rounded-full bg-gradient-to-br from-cyan-300/20 via-fuchsia-300/10 to-transparent blur-3xl dark:from-cyan-400/10 dark:via-fuchsia-400/10" />
+            <div className="absolute right-[-10%] bottom-[-10%] h-[360px] w-[560px] rounded-full bg-gradient-to-tr from-amber-200/20 via-rose-200/10 to-transparent blur-3xl dark:from-amber-300/10 dark:via-rose-300/10" />
+          </div>
           <Badge variant="secondary" className="mb-6 text-sm px-4 py-2">
             <Star className="w-4 h-4 mr-2" />
             OpenDeploy CLI • {VERSION.version}
@@ -60,7 +65,7 @@ export default function HomePage() {
           </h1>
           <p className="text-xl text-muted-foreground mb-12 max-w-3xl mx-auto leading-relaxed">
             A CLI for the modern web stack that makes it easy to detect your stack, sync environment variables, and deploy frameworks—
-            including Next.js, Astro, SvelteKit, Nuxt, and Remix—to Vercel, Netlify, Cloudflare Pages, and GitHub Pages.
+            including Next.js, Astro, SvelteKit, Nuxt, and Remix—to Vercel, Cloudflare Pages, and GitHub Pages.
             100% open source and free. Secrets are redacted in human logs and JSON/NDJSON by default.
           </p>
           <div className="flex gap-4 justify-center flex-wrap mb-16">
@@ -87,6 +92,49 @@ export default function HomePage() {
           <QuickStart />
         </section>
 
+        {/* Three Steps to Deploy */}
+        <section className="py-10 px-4">
+          <div className="text-center mb-10">
+            <h2 className="text-4xl font-bold mb-3">Three Steps to Deploy</h2>
+            <p className="text-lg text-muted-foreground">Pick your provider and follow a concise, copy‑paste guide.</p>
+          </div>
+          <div className="grid md:grid-cols-3 gap-6 max-w-6xl mx-auto">
+            <Card className="border-0 shadow-lg hover:shadow-xl transition-all">
+              <CardHeader className="pb-2">
+                <CardTitle>Vercel</CardTitle>
+                <CardDescription>Install, preview, and promote.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button asChild variant="outline" className="w-full">
+                  <Link href="/docs/opendeploy/quickstart-vercel">Open 3‑step guide</Link>
+                </Button>
+              </CardContent>
+            </Card>
+            <Card className="border-0 shadow-lg hover:shadow-xl transition-all">
+              <CardHeader className="pb-2">
+                <CardTitle>GitHub Pages</CardTitle>
+                <CardDescription>Actions workflow with static export.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button asChild variant="outline" className="w-full">
+                  <Link href="/docs/opendeploy/quickstart-github-pages">Open 3‑step guide</Link>
+                </Button>
+              </CardContent>
+            </Card>
+            <Card className="border-0 shadow-lg hover:shadow-xl transition-all">
+              <CardHeader className="pb-2">
+                <CardTitle>Cloudflare Pages</CardTitle>
+                <CardDescription>Next on Pages + wrangler config.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button asChild variant="outline" className="w-full">
+                  <Link href="/docs/opendeploy/quickstart-cloudflare">Open 3‑step guide</Link>
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
+        </section>
+
         {/* Video Tutorials */}
         <VideoGallery
           headline="Quick Tutorial Videos"
@@ -96,7 +144,6 @@ export default function HomePage() {
             { title: "CI + JSON/NDJSON", platform: "youtube", id: "dQw4w9WgXcQ", durationSeconds: 90 },
             { title: "Troubleshooting & Fix (Docs Site)", platform: "youtube", id: "dQw4w9WgXcQ", durationSeconds: 120 },
             { title: "Monorepo App Selection", platform: "youtube", id: "dQw4w9WgXcQ", durationSeconds: 75 },
-            { title: "Netlify Prepare-only", platform: "youtube", id: "dQw4w9WgXcQ", durationSeconds: 80 },
             { title: "Advanced Flags", platform: "youtube", id: "dQw4w9WgXcQ", durationSeconds: 110 }
           ]}
         />
@@ -106,7 +153,7 @@ export default function HomePage() {
           <div className="text-center mb-16">
             <h2 className="text-4xl font-bold mb-6">What You Get with OpenDeploy CLI</h2>
             <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
-              CI‑ready workflows, environment parity, and readable deploy streams across Vercel, Netlify, Cloudflare Pages, and GitHub Pages.
+              CI‑ready workflows, environment parity, and readable deploy streams across Vercel, Cloudflare Pages, and GitHub Pages.
             </p>
           </div>
 
@@ -166,7 +213,7 @@ export default function HomePage() {
                 </div>
                 <CardTitle className="text-xl mb-2">Config Generation</CardTitle>
                 <CardDescription className="text-base leading-relaxed">
-                  One command to emit <code>vercel.json</code>, <code>netlify.toml</code> (Next runtime/Nuxt defaults), and <code>turbo.json</code> with smart caching.
+                  One command to emit <code>vercel.json</code> and <code>turbo.json</code> with smart caching.
                 </CardDescription>
               </CardHeader>
             </Card>
@@ -178,7 +225,7 @@ export default function HomePage() {
                 </div>
                 <CardTitle className="text-xl mb-2">Provider Parity</CardTitle>
                 <CardDescription className="text-base leading-relaxed">
-                  Vercel and Netlify linking, env, deploy, promote, and rollback behaviors with consistent JSON outputs.
+                  Vercel linking, env, deploy, promote, and rollback behaviors with consistent JSON outputs; Cloudflare logs and GitHub Pages deployment via Actions.
                 </CardDescription>
               </CardHeader>
             </Card>

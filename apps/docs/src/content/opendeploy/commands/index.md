@@ -34,4 +34,4 @@ For CI consumers, see also: [Response Shapes (CI)](../response-shapes.md)
 - Deploy
   - [deploy, up, logs/inspect, promote, rollback](./deploy.md)
 - System
-  - [start, detect, doctor, completion](./system.md)
+  - [start, detect, doctor, completion, ci logs, ci open, ci dispatch](./system.md)

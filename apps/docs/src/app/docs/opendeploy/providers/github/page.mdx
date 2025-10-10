@@ -8,9 +8,9 @@ export const metadata = { title: "Deploy to GitHub Pages" }
 
 <a id="top" />
 
-# Deploy to GitHub Pages
+# GitHub Pages
 
-GitHub Pages is ideal for documentation and static sites. The OpenDeploy CLI includes a GitHub Pages provider that publishes your static export to the `gh-pages` branch using the `gh-pages` npm package.
+GitHub Pages is ideal for documentation and static sites. Use static export (e.g., Next.js `output: 'export'`) and publish the `out/` directory to the `gh-pages` branch using your CI workflow or the `gh-pages` npm package. The CLI helps with opening dashboards and general docs flows; it does not publish to GitHub Pages directly.
 
 <ProviderCapabilities provider="github" />
 
@@ -45,23 +45,18 @@ Then build:
 pnpm build
 ```
 
-This produces `out/`. The CLI ensures a `.nojekyll` marker so `_next/*` assets are served by GitHub Pages.
+This produces `out/`. Ensure a `.nojekyll` marker exists so `_next/*` assets are served by GitHub Pages.
 
 <a id="deploy" />
-## Deploy
+## Open dashboard
 ```bash
-# Dry‑run plan
-opd plan github --json --path .
-
-# Deploy
-opd deploy github --path .
+opd open github
 ```
-
-The provider publishes the artifact directory to the `gh-pages` branch using `gh-pages` internally. No `npx`/`dlx` is required. The URL is inferred from the `origin` remote.
+This opens the repository’s Pages settings/dashboard.
 
 <a id="ci" />
 ## CI (GitHub Actions)
-Use the provided workflow `deploy-docs.yml` (static export). Or call `opd deploy github` to publish the `out/` folder via `gh-pages`.
+Use a workflow (e.g., `deploy-docs.yml`) to publish the `out/` folder with the `gh-pages` npm package or actions like `peaceiris/actions-gh-pages`.
 
 If your site is hosted at `/repo`, set `NEXT_BASE_PATH=/<repo>` in the build step, or set `basePath`/`assetPrefix` in `next.config.ts`.
 

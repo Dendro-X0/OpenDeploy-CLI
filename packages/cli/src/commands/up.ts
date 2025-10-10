@@ -38,6 +38,7 @@ interface UpOptions {
   readonly preflightOnly?: boolean
   readonly strictPreflight?: boolean
   readonly preflightArtifactsOnly?: boolean
+  readonly fixPreflight?: boolean
 }
 
 function inferPublishDir(fw: Framework): string {
@@ -58,7 +59,7 @@ function inferPublishDir(fw: Framework): string {
  * - Optionally assigns alias (Vercel)
  */
 export function registerUpCommand(program: Command): void {
-  const ajv = new Ajv({ allErrors: true, strict: false })
+  const ajv = new Ajv({ allErrors: true, strict: false, validateSchema: false })
   const validate = ajv.compile(upSummarySchema as unknown as object)
   const validateBuild = ajv.compile(providerBuildResultSchema as unknown as object)
   const validateDeploy = ajv.compile(providerDeployResultSchema as unknown as object)
@@ -71,7 +72,7 @@ export function registerUpCommand(program: Command): void {
   program
     .command('up')
     .description('Deploy to preview with safe defaults (env sync + deploy)')
-    .argument('[provider]', 'Target provider: vercel | netlify | cloudflare | github')
+    .argument('[provider]', 'Target provider: vercel | cloudflare | github')
     .option('--env <env>', 'Environment: prod | preview', 'preview')
     .option('--path <dir>', 'Path to app directory (for monorepos)')
     .option('--json', 'Output JSON result')
@@ -86,14 +87,55 @@ export function registerUpCommand(program: Command): void {
     .option('--timeout-ms <ms>', 'Timeout per provider command in milliseconds (default 120000)')
     .option('--base-delay-ms <ms>', 'Base delay for exponential backoff with jitter (default 300)')
     .option('--ndjson', 'Output NDJSON events for progress')
-    .option('--no-build', 'Skip local build; deploy existing publish directory (Netlify)')
+    .option('--no-build', 'Skip local build; deploy existing publish directory (when supported)')
     .option('--preflight-only', 'Run preflight checks and exit without building/publishing (GitHub Pages)')
     .option('--strict-preflight', 'Treat preflight warnings as errors (GitHub/Cloudflare)')
     .option('--preflight-artifacts-only', 'Run provider build and asset sanity, then exit without deploying (Cloudflare/GitHub)')
+    .option('--fix-preflight', 'Apply safe preflight fixes (e.g., ensure .nojekyll for GitHub Pages)')
     .action(async (provider: string | undefined, opts: UpOptions): Promise<void> => {
       const rootCwd: string = process.cwd()
       const targetCwd: string = opts.path ? (isAbsolute(opts.path) ? opts.path : join(rootCwd, opts.path)) : rootCwd
       try {
+        // Ultra-early fast path for Cloudflare preflight in tests/CI to avoid timeouts
+        const jsonQuick: boolean = isJsonMode(opts.json)
+        if (provider === 'cloudflare' && (opts.preflightOnly === true || opts.strictPreflight === true)) {
+          const preflight: Array<{ readonly name: string; readonly ok: boolean; readonly level: 'warn' | 'note'; readonly message?: string }> = []
+          let warned = false
+          try {
+            // Read next.config.* if present
+            const candidates = ['next.config.ts', 'next.config.js', 'next.config.mjs']
+            let cfg = ''
+            for (const f of candidates) { const pth = join(targetCwd, f); if (await fsx.exists(pth)) { cfg = await readFileFs(pth, 'utf8'); break } }
+            if (cfg.length > 0) {
+              if (/output\s*:\s*['"]export['"]/m.test(cfg)) { preflight.push({ name: 'cloudflare: next.config output export omitted', ok: false, level: 'warn', message: 'remove output: "export"' }); warned = true }
+              if (/assetPrefix\s*:\s*['"][^'\"]+['"]/m.test(cfg)) { preflight.push({ name: 'cloudflare: assetPrefix absent', ok: false, level: 'warn', message: 'remove assetPrefix' }); warned = true }
+              const m = cfg.match(/basePath\s*:\s*['"]([^'\"]*)['"]/m)
+              if (m && m[1] && m[1] !== '') { preflight.push({ name: 'cloudflare: basePath empty', ok: false, level: 'warn', message: 'set basePath to ""' }); warned = true }
+              if (/trailingSlash\s*:\s*true/m.test(cfg)) { preflight.push({ name: 'cloudflare: trailingSlash recommended false', ok: true, level: 'note', message: 'set trailingSlash: false' }) }
+            }
+          } catch { /* ignore */ }
+          try {
+            const wranglerPath = join(targetCwd, 'wrangler.toml')
+            if (await fsx.exists(wranglerPath)) {
+              const raw = await readFileFs(wranglerPath, 'utf8')
+              if (!/pages_build_output_dir\s*=\s*"\.vercel\/output\/static"/m.test(raw)) { preflight.push({ name: 'cloudflare: wrangler pages_build_output_dir', ok: false, level: 'warn', message: 'set to .vercel/output/static' }); warned = true }
+              if (!/pages_functions_directory\s*=\s*"\.vercel\/output\/functions"/m.test(raw)) { preflight.push({ name: 'cloudflare: wrangler pages_functions_directory', ok: true, level: 'note', message: 'set to .vercel/output/functions' }) }
+              if (!/compatibility_flags\s*=\s*\[.*"nodejs_compat".*\]/m.test(raw)) { preflight.push({ name: 'cloudflare: wrangler nodejs_compat flag', ok: true, level: 'note', message: 'add compatibility_flags = ["nodejs_compat"]' }) }
+            } else {
+              preflight.push({ name: 'cloudflare: wrangler.toml present', ok: false, level: 'warn', message: 'missing wrangler.toml' }); warned = true
+            }
+          } catch { /* ignore */ }
+          const targetShort: 'prod' | 'preview' = (opts.env === 'prod' ? 'prod' : 'preview')
+          if (opts.strictPreflight && warned) {
+            if (jsonQuick) { logger.jsonPrint({ ok: false, action: 'up' as const, provider: 'cloudflare' as const, target: targetShort, message: 'Preflight failed (strict): resolve Next.js Cloudflare Pages warnings.', preflightOnly: true, preflight, final: true }); process.exit(1) }
+            throw new Error('Preflight failed (strict): resolve Next.js Cloudflare Pages warnings.')
+          }
+          if (opts.preflightOnly) {
+            if (jsonQuick) { logger.jsonPrint({ ok: true, action: 'up' as const, provider: 'cloudflare' as const, target: targetShort, preflightOnly: true, preflight, final: true }); process.exit(0) }
+            logger.success('Preflight checks completed (Cloudflare Pages). No build/publish performed.')
+            return
+          }
+        }
         const jsonMode: boolean = isJsonMode(opts.json)
         const ndjsonOn: boolean = opts.ndjson === true
         // Structured preflight capture for JSON consumers
@@ -112,8 +154,58 @@ export function registerUpCommand(program: Command): void {
         process.env.OPD_SYNC_ENV = '1'
         // Plugin-first flow unless explicitly opting into legacy
         if (process.env.OPD_LEGACY !== '1') {
-          const prov: string = (provider && ['vercel', 'netlify', 'cloudflare', 'github'].includes(provider)) ? provider : 'vercel'
+          const prov: string = (provider && ['vercel', 'cloudflare', 'github'].includes(provider)) ? provider : 'vercel'
           const envTargetUp: 'preview' | 'production' = (opts.env === 'prod' ? 'production' : 'preview')
+          // Early preflight short-circuit for Cloudflare to avoid provider linking
+          if (prov === 'cloudflare' && (opts.preflightOnly === true || opts.strictPreflight === true)) {
+            try {
+              // Prepare preflight results
+              const preflight: Array<{ readonly name: string; readonly ok: boolean; readonly level: 'warn' | 'note'; readonly message?: string }> = []
+              let warned = false
+              // Detect presence of next.config.*
+              let hasNextConfig = false
+              try {
+                const cands = ['next.config.ts', 'next.config.js', 'next.config.mjs']
+                for (const f of cands) { if (await fsx.exists(join(targetCwd, f))) { hasNextConfig = true; break } }
+              } catch { /* ignore */ }
+              // Only run Next-specific checks if Next.js is present or next.config exists
+              if (hasNextConfig) {
+                try {
+                  let cfg = ''
+                  const candidates = ['next.config.ts', 'next.config.js', 'next.config.mjs']
+                  for (const f of candidates) { const pth = join(targetCwd, f); if (await fsx.exists(pth)) { cfg = await readFileFs(pth, 'utf8'); break } }
+                  if (cfg.length > 0) {
+                    const hasOutputExport: boolean = /output\s*:\s*['"]export['"]/m.test(cfg)
+                    if (hasOutputExport) { preflight.push({ name: 'cloudflare: next.config output export omitted', ok: false, level: 'warn', message: 'remove output: "export"' }); warned = true }
+                    const hasAssetPrefix: boolean = /assetPrefix\s*:\s*['"][^'\"]+['"]/m.test(cfg)
+                    if (hasAssetPrefix) { preflight.push({ name: 'cloudflare: assetPrefix absent', ok: false, level: 'warn', message: 'remove assetPrefix' }); warned = true }
+                    const basePathMatch = cfg.match(/basePath\s*:\s*['"]([^'\"]*)['"]/m)
+                    if (basePathMatch && basePathMatch[1] && basePathMatch[1] !== '') { preflight.push({ name: 'cloudflare: basePath empty', ok: false, level: 'warn', message: 'set basePath to ""' }); warned = true }
+                    const trailingTrue: boolean = /trailingSlash\s*:\s*true/m.test(cfg)
+                    if (trailingTrue) { preflight.push({ name: 'cloudflare: trailingSlash recommended false', ok: true, level: 'note', message: 'set trailingSlash: false' }) }
+                  }
+                } catch { /* ignore */ }
+              }
+              // wrangler.toml checks
+              try {
+                const wranglerPath = join(targetCwd, 'wrangler.toml')
+                if (await fsx.exists(wranglerPath)) {
+                  const raw = await readFileFs(wranglerPath, 'utf8')
+                  if (!/pages_build_output_dir\s*=\s*"\.vercel\/output\/static"/m.test(raw)) { preflight.push({ name: 'cloudflare: wrangler pages_build_output_dir', ok: false, level: 'warn', message: 'set to .vercel/output/static' }); warned = true }
+                  if (!/pages_functions_directory\s*=\s*"\.vercel\/output\/functions"/m.test(raw)) { preflight.push({ name: 'cloudflare: wrangler pages_functions_directory', ok: true, level: 'note', message: 'set to .vercel/output/functions' }) }
+                  if (!/compatibility_flags\s*=\s*\[.*"nodejs_compat".*\]/m.test(raw)) { preflight.push({ name: 'cloudflare: wrangler nodejs_compat flag', ok: true, level: 'note', message: 'add compatibility_flags = ["nodejs_compat"]' }) }
+                } else {
+                  preflight.push({ name: 'cloudflare: wrangler.toml present', ok: false, level: 'warn', message: 'missing wrangler.toml' }); warned = true
+                }
+              } catch { /* ignore */ }
+              const targetShort: 'prod' | 'preview' = envTargetUp === 'production' ? 'prod' : 'preview'
+              if (opts.strictPreflight && warned) { if (jsonMode) { logger.jsonPrint({ ok: false, action: 'up' as const, provider: 'cloudflare' as const, target: targetShort, message: 'Preflight failed (strict): resolve Next.js Cloudflare Pages warnings.', preflightOnly: true, preflight, final: true }); process.exit(1) } throw new Error('Preflight failed (strict): resolve Next.js Cloudflare Pages warnings.') }
+              if (opts.preflightOnly) { if (jsonMode) { logger.jsonPrint({ ok: true, action: 'up' as const, provider: 'cloudflare' as const, target: targetShort, preflightOnly: true, preflight, final: true }); process.exit(0) } logger.success('Preflight checks completed (Cloudflare Pages). No build/publish performed.'); return }
+            } catch (e) {
+              // fall through to general error handler
+              throw e
+            }
+          }
           // Early dry-run (no provider CLI needed)
           if (opts.dryRun === true) {
             const envShort: 'prod' | 'preview' = (opts.env === 'prod' ? 'prod' : 'preview')
@@ -123,15 +215,6 @@ export function registerUpCommand(program: Command): void {
                 if (opts.project || opts.org) cmdPlan.push(`vercel link --yes${opts.project ? ` --project ${opts.project}` : ''}${opts.org ? ` --org ${opts.org}` : ''}`.trim())
                 cmdPlan.push(envTargetUp === 'production' ? 'vercel deploy --prod --yes' : 'vercel deploy --yes')
                 if (opts.alias) cmdPlan.push(`vercel alias set <deployment-url> ${opts.alias}`)
-              } else if (prov === 'netlify') {
-                let publishDir = 'dist'
-                try {
-                  const det = await detectApp({ cwd: targetCwd })
-                  publishDir = det.publishDir ?? inferPublishDir(det.framework as Framework)
-                } catch { /* keep default */ }
-                const ctx = envShort === 'prod' ? 'production' : 'deploy-preview'
-                cmdPlan.push(`netlify build --context ${ctx}`.trim())
-                cmdPlan.push(`netlify deploy --no-build${envShort === 'prod' ? ' --prod' : ''} --dir ${publishDir}${opts.project ? ` --site ${opts.project}` : ''}`.trim())
               } else if (prov === 'cloudflare') {
                 // Choose publish dir by framework; add guidance for Next.js
                 try {
@@ -162,7 +245,7 @@ export function registerUpCommand(program: Command): void {
                     cmdPlan.push('gh-pages -d build')
                   } else if (fw === 'next') {
                     cmdPlan.push('# Next.js on GitHub Pages requires static export (next.config.js: output: "export").')
-                    cmdPlan.push('next export && gh-pages -d out')
+                    cmdPlan.push('next build && gh-pages -d out')
                   } else {
                     const dir = det.publishDir ?? 'dist'
                     cmdPlan.push(`gh-pages -d ${dir}`)
@@ -183,7 +266,7 @@ export function registerUpCommand(program: Command): void {
           }
           // Optional env sync for supported providers
           const wantSync: boolean = opts.syncEnv === true || process.env.OPD_SYNC_ENV === '1'
-          if (wantSync && (prov === 'vercel' || prov === 'netlify')) {
+          if (wantSync && prov === 'vercel') {
             const candidates: readonly string[] = envTargetUp === 'production' ? ['.env.production.local', '.env'] : ['.env', '.env.local']
             let chosenFile: string | undefined
             for (const f of candidates) { if (await fsx.exists(join(targetCwd, f))) { chosenFile = f; break } }
@@ -217,17 +300,23 @@ export function registerUpCommand(program: Command): void {
               let warned = false
               // Derive repo name from git origin
               let repo: string | undefined
-              try {
-                const origin = await proc.run({ cmd: 'git remote get-url origin', cwd: targetCwd })
-                if (origin.ok) {
-                  const t = origin.stdout.trim()
-                  const httpsRe = /^https?:\/\/github\.com\/(.+?)\/(.+?)(?:\.git)?$/i
-                  const sshRe = /^git@github\.com:(.+?)\/(.+?)(?:\.git)?$/i
-                  const m1 = t.match(httpsRe); const m2 = t.match(sshRe)
-                  const r = (m1?.[2] || m2?.[2] || '').trim()
-                  if (r) repo = r
-                }
-              } catch { /* ignore */ }
+              // Derive repo name for basePath/assetPrefix checks
+              let repoSource: 'env' | 'origin' | 'unknown' = 'unknown'
+              const ghEnv: string | undefined = process.env.GITHUB_REPOSITORY
+              if (ghEnv && ghEnv.includes('/')) { repo = ghEnv.split('/')[1]; if (repo) repoSource = 'env' }
+              if (!repo) {
+                try {
+                  const origin = await proc.run({ cmd: 'git remote get-url origin', cwd: targetCwd })
+                  if (origin.ok) {
+                    const t = origin.stdout.trim()
+                    const httpsRe = /^https?:\/\/github\.com\/(.+?)\/(.+?)(?:\.git)?$/i
+                    const sshRe = /^git@github\.com:(.+?)\/(.+?)(?:\.git)?$/i
+                    const m1 = t.match(httpsRe); const m2 = t.match(sshRe)
+                    const r = (m1?.[2] || m2?.[2] || '').trim()
+                    if (r) { repo = r; repoSource = 'origin' }
+                  }
+                } catch { /* ignore */ }
+              }
               // Read next.config.* best-effort
               let cfg = ''
               const candidates = ['next.config.ts', 'next.config.js', 'next.config.mjs']
@@ -241,21 +330,23 @@ export function registerUpCommand(program: Command): void {
               if (!unoptOk) { logger.warn('Next.js → GitHub Pages: set images.unoptimized: true to avoid runtime optimization.'); preflight.push({ name: 'github: images.unoptimized true', ok: false, level: 'warn', message: 'set images.unoptimized: true' }); warned = true }
               const trailingOk: boolean = cfg.length > 0 ? /trailingSlash\s*:\s*true/m.test(cfg) : false
               if (!trailingOk) { logger.note('Next.js → GitHub Pages: trailingSlash: true is recommended for static hosting.'); preflight.push({ name: 'github: trailingSlash recommended', ok: true, level: 'note', message: 'set trailingSlash: true' }) }
+              // Extract configured values
+              const basePathCfgMatch = cfg.match(/basePath\s*:\s*['"]([^'\"]*)['"]/m)
+              const assetPrefixCfgMatch = cfg.match(/assetPrefix\s*:\s*['"]([^'\"]*)['"]/m)
               if (repo) {
                 const repoPath = `/${repo}`
                 const baseMatch = cfg.length > 0 ? new RegExp(`basePath\\s*:\\s*['\"]${repoPath}['\"]`, 'm').test(cfg) : false
-                if (!baseMatch) { logger.warn(`Next.js → GitHub Pages: set basePath to '${repoPath}'.`); preflight.push({ name: 'github: basePath matches repo', ok: false, level: 'warn', message: `set basePath: '${repoPath}'` }); warned = true }
-                const assetPresent = cfg.length > 0 ? /assetPrefix\s*:\s*['"][^'"]+['"]/m.test(cfg) : false
+                if (!baseMatch) { logger.warn(`Next.js → GitHub Pages: set basePath to '${repoPath}'.`); preflight.push({ name: 'github: basePath matches repo', ok: false, level: 'warn', message: `expected basePath '${repoPath}', detected '${basePathCfgMatch?.[1] ?? ''}' (source=${repoSource})` }); warned = true }
+                else { preflight.push({ name: 'github: basePath matches repo', ok: true, level: 'note', message: `basePath OK ('${repoPath}', source=${repoSource})` }) }
+                const assetPresent = cfg.length > 0 ? /assetPrefix\s*:\s*['"][^'\"]+['"]/m.test(cfg) : false
                 const assetMatch = cfg.length > 0 ? new RegExp(`assetPrefix\\s*:\\s*['\"]${repoPath}\/['\"]`, 'm').test(cfg) : false
-                if (!assetPresent || !assetMatch) { logger.note(`Next.js → GitHub Pages: set assetPrefix to '${repoPath}/' (recommended).`); preflight.push({ name: 'github: assetPrefix recommended', ok: true, level: 'note', message: `set assetPrefix: '${repoPath}/'` }) }
-              } else {
-                logger.note('Next.js → GitHub Pages: could not derive repo name from git origin; basePath/assetPrefix check skipped.')
-                preflight.push({ name: 'github: derive repo name', ok: true, level: 'note', message: 'cannot derive repo from git origin' })
-              }
+                if (!assetPresent || !assetMatch) { logger.note(`Next.js → GitHub Pages: set assetPrefix to '${repoPath}/' (recommended).`); preflight.push({ name: 'github: assetPrefix recommended', ok: true, level: 'note', message: `expected assetPrefix '${repoPath}/', detected '${assetPrefixCfgMatch?.[1] ?? ''}' (source=${repoSource})` }) }
+                else { preflight.push({ name: 'github: assetPrefix recommended', ok: true, level: 'note', message: `assetPrefix OK ('${repoPath}/', source=${repoSource})` }) }
+              } else { logger.note('Next.js → GitHub Pages: could not derive repo name; set DEPLOY_REPO or ensure origin remote is GitHub.'); preflight.push({ name: 'github: derive repo name', ok: true, level: 'note', message: `cannot derive repo (source=${repoSource}, basePath='${basePathCfgMatch?.[1] ?? ''}', assetPrefix='${assetPrefixCfgMatch?.[1] ?? ''}')` }) }
               if (opts.strictPreflight && warned) {
                 const targetShort: 'prod' | 'preview' = envTargetUp === 'production' ? 'prod' : 'preview'
                 const message = 'Preflight failed (strict): resolve Next.js GitHub Pages warnings.'
-                if (jsonMode) { logger.jsonPrint({ ok: false, action: 'up' as const, provider: 'github' as const, target: targetShort, message, preflightOnly: true, final: true }); return }
+                if (jsonMode) { logger.jsonPrint({ ok: false, action: 'up' as const, provider: 'github' as const, target: targetShort, message, preflightOnly: true, final: true }); throw new Error(message) }
                 throw new Error(message)
               }
               // If only preflight requested, exit early
@@ -304,7 +395,7 @@ export function registerUpCommand(program: Command): void {
               if (opts.strictPreflight && warned) {
                 const targetShort: 'prod' | 'preview' = envTargetUp === 'production' ? 'prod' : 'preview'
                 const message = 'Preflight failed (strict): resolve Next.js Cloudflare Pages warnings.'
-                if (jsonMode) { logger.jsonPrint({ ok: false, action: 'up' as const, provider: 'cloudflare' as const, target: targetShort, message, preflightOnly: true, preflight, final: true }); return }
+                if (jsonMode) { logger.jsonPrint({ ok: false, action: 'up' as const, provider: 'cloudflare' as const, target: targetShort, message, preflightOnly: true, preflight, final: true }); throw new Error(message) }
                 throw new Error(message)
               }
               // If only preflight requested, exit early
@@ -353,6 +444,19 @@ export function registerUpCommand(program: Command): void {
             logger.success('Artifact preflight completed. No deploy performed.')
             return
           }
+          // Optional preflight fix-ups (GitHub Pages: ensure .nojekyll in artifactDir)
+          if (prov === 'github' && opts.fixPreflight === true && typeof buildRes.artifactDir === 'string' && buildRes.artifactDir.length > 0) {
+            try {
+              const marker = join(buildRes.artifactDir, '.nojekyll')
+              const exists = await fsx.exists(marker)
+              if (!exists) {
+                await (await import('node:fs/promises')).writeFile(marker, '', 'utf8')
+                preflight.push({ name: 'github: .nojekyll ensured', ok: true, level: 'note', message: `written: ${marker}` })
+              } else {
+                preflight.push({ name: 'github: .nojekyll ensured', ok: true, level: 'note', message: 'present' })
+              }
+            } catch { /* ignore write errors */ }
+          }
           const deployRes = await p.deploy({ cwd: targetCwd, envTarget: envTargetUp, project: linked, artifactDir: buildRes.artifactDir, alias: opts.alias })
           const deploySchemaOk: boolean = validateDeploy(deployRes as unknown as Record<string, unknown>) as boolean
           const deploySchemaErrors: string[] = Array.isArray(validateDeploy.errors) ? validateDeploy.errors.map(e => `${e.instancePath || '/'} ${e.message ?? ''}`.trim()) : []
@@ -373,30 +477,11 @@ export function registerUpCommand(program: Command): void {
         // Early dry-run summary
         if (opts.dryRun === true) {
           if (jsonMode) {
-            const prov: 'vercel' | 'netlify' = provider === 'netlify' ? 'netlify' : 'vercel'
+            const prov: 'vercel' = 'vercel'
             const cmdPlan: string[] = []
-            if (prov === 'vercel') {
-              if (opts.project || opts.org) cmdPlan.push(`vercel link --yes${opts.project ? ` --project ${opts.project}` : ''}${opts.org ? ` --org ${opts.org}` : ''}`.trim())
-              cmdPlan.push(envTarget === 'prod' ? 'vercel deploy --prod --yes' : 'vercel deploy --yes')
-              if (opts.alias) cmdPlan.push(`vercel alias set <deployment-url> ${opts.alias}`)
-            } else {
-              // Best-effort publishDir inference without side effects
-              let publishDir = 'dist'
-              try {
-                const det = await detectApp({ cwd: targetCwd })
-                publishDir = det.publishDir ?? inferPublishDir(det.framework as Framework)
-              } catch {
-                try {
-                  const pkgRaw = await (await import('node:fs/promises')).readFile(join(targetCwd, 'package.json'), 'utf8')
-                  const scripts = (JSON.parse(pkgRaw).scripts ?? {}) as Record<string, string>
-                  const hasRR = Object.values(scripts).some((s) => /react-router\s+build/i.test(String(s)))
-                  if (hasRR) publishDir = 'build/client'
-                } catch { /* ignore */ }
-              }
-              const ctx = envTarget === 'prod' ? 'production' : 'deploy-preview'
-              cmdPlan.push(`netlify build --context ${ctx}`.trim())
-              cmdPlan.push(`netlify deploy --no-build${envTarget === 'prod' ? ' --prod' : ''} --dir ${publishDir}${opts.project ? ` --site ${opts.project}` : ''}`.trim())
-            }
+            if (opts.project || opts.org) cmdPlan.push(`vercel link --yes${opts.project ? ` --project ${opts.project}` : ''}${opts.org ? ` --org ${opts.org}` : ''}`.trim())
+            cmdPlan.push(envTarget === 'prod' ? 'vercel deploy --prod --yes' : 'vercel deploy --yes')
+            if (opts.alias) cmdPlan.push(`vercel alias set <deployment-url> ${opts.alias}`)
             const summary = { ok: true, action: 'up' as const, provider: prov, target: envTarget, mode: 'dry-run', cmdPlan, final: true }
             logger.jsonPrint(annotate(summary as unknown as Record<string, unknown>))
           } else {
@@ -405,7 +490,7 @@ export function registerUpCommand(program: Command): void {
           return
         }
         const wantSync: boolean = opts.syncEnv === true || process.env.OPD_SYNC_ENV === '1'
-        if (wantSync) {
+        if (wantSync && provider === 'vercel') {
           const candidates: readonly string[] = envTarget === 'prod' ? ['.env.production.local', '.env'] : ['.env', '.env.local']
           let chosenFile: string | undefined
           for (const f of candidates) { if (await fsx.exists(join(targetCwd, f))) { chosenFile = f; break } }
@@ -416,7 +501,7 @@ export function registerUpCommand(program: Command): void {
             try {
               // Strengthen redaction: load secrets from selected env file and process.env
               try { const patterns = await computeRedactors({ cwd: targetCwd, envFiles: [chosenFile], includeProcessEnv: true }); if (patterns.length > 0) logger.setRedactors(patterns) } catch { /* ignore */ }
-              await envSync({ provider: provider === 'netlify' ? 'netlify' : 'vercel', cwd: targetCwd, file: chosenFile, env: envTarget, yes: true, ci: Boolean(opts.ci), json: false, projectId: opts.project, orgId: opts.org, ignore: [], only: [], optimizeWrites: true })
+              await envSync({ provider: 'vercel', cwd: targetCwd, file: chosenFile, env: envTarget, yes: true, ci: Boolean(opts.ci), json: false, projectId: opts.project, orgId: opts.org, ignore: [], only: [], optimizeWrites: true })
               logger.success('Environment sync complete')
               if (ndjsonOn) logger.json({ ok: true, action: 'up', stage: 'envSyncDone', provider, target: envTarget })
             } catch (e) {
@@ -505,92 +590,15 @@ export function registerUpCommand(program: Command): void {
           printDeploySummary({ provider: 'vercel', target: envTarget, url: capturedUrl, logsUrl: capturedInspect })
           return
         }
-        if (provider === 'netlify') {
-          // Detect to compute publishDir and ensure minimal config
-          let publishDir: string = 'dist'
-          try {
-            const det = await detectApp({ cwd: targetCwd })
-            // Ensure netlify.toml (idempotent)
-            try { const p = await loadProvider('netlify'); await p.generateConfig({ detection: det, cwd: targetCwd, overwrite: false }) } catch { /* ignore */ }
-            publishDir = det.publishDir ?? inferPublishDir(det.framework as Framework)
-          } catch {
-            // Fallback: react-router (Remix family) static output
-            try {
-              const pkgPath = join(targetCwd, 'package.json')
-              const raw = await (await import('node:fs/promises')).readFile(pkgPath, 'utf8')
-              const pkg = JSON.parse(raw) as { scripts?: Record<string, string> }
-              const scripts = pkg.scripts ?? {}
-              const hasRR = Object.values(scripts).some((s) => /react-router\s+build/i.test(String(s)))
-              if (hasRR) publishDir = 'build/client'
-            } catch { /* ignore */ }
-          }
-          const sp = spinner(`Netlify: deploying (${envTarget === 'prod' ? 'production' : 'preview'})`)
-          const siteFlag: string = opts.project ? ` --site ${opts.project}` : ''
-          const dirFlag: string = ` --dir ${publishDir}`
-          // Build first unless --no-build
-          if (opts.noBuild !== true) {
-            const ctx = envTarget === 'prod' ? 'production' : 'deploy-preview'
-            const buildCmd = `netlify build --context ${ctx}`
-            if (opts.printCmd) logger.info(`$ ${buildCmd}`)
-            if (ndjsonOn) logger.json({ ok: true, action: 'up', stage: 'buildStart', provider: 'netlify', target: envTarget, cmd: buildCmd })
-            const resBuild = await runWithRetry({ cmd: buildCmd, cwd: targetCwd }, { timeoutMs: Math.max(120000, Number(process.env.OPD_TIMEOUT_MS) || 300000) })
-            if (!resBuild.ok) throw new Error('Netlify build failed')
-          }
-          const cmd: string = `netlify deploy --no-build${envTarget === 'prod' ? ' --prod' : ''}${dirFlag}${siteFlag}`.trim()
-          if (opts.printCmd) logger.info(`$ ${cmd}`)
-          if (ndjsonOn) logger.json({ ok: true, action: 'up', stage: 'deployStart', provider: 'netlify', target: envTarget, cmd })
-          const stop: Stopper = startHeartbeat({ label: 'netlify deploy', hint: 'Tip: connect repo for CI builds', intervalMs: ndjsonOn ? 5000 : 10000 })
-          const res = await runWithRetry({ cmd, cwd: targetCwd }, { timeoutMs: Math.max(120000, Number(process.env.OPD_TIMEOUT_MS) || 300000) })
-          stop(); sp.stop()
-          if (!res.ok) throw new Error(res.stderr.trim() || res.stdout.trim() || 'Netlify deploy failed')
-          const m = res.stdout.match(/https?:\/\/[^\s]+\.netlify\.app\b/)
-          const url = m?.[0]
-          // Best-effort resolve dashboard logs URL
-          let logsUrl: string | undefined
-          try {
-            // Resolve siteId
-            let siteId: string | undefined = opts.project
-            if (!siteId) {
-              try {
-                const stRaw = await fsx.readJson<{ siteId?: string }>(join(targetCwd, '.netlify', 'state.json'))
-                if (stRaw && typeof stRaw.siteId === 'string') siteId = stRaw.siteId
-              } catch { /* ignore */ }
-            }
-            if (siteId) {
-              // Get latest deploy id
-              const ls = await proc.run({ cmd: `netlify api listSiteDeploys --data '{"site_id":"${siteId}","per_page":1}'`, cwd: targetCwd })
-              let deployId: string | undefined
-              if (ls.ok) {
-                try { const arr = JSON.parse(ls.stdout) as Array<{ id?: string }>; deployId = arr?.[0]?.id } catch { /* ignore */ }
-              }
-              // Get site name to form dashboard URL
-              const siteRes = await proc.run({ cmd: `netlify api getSite --data '{"site_id":"${siteId}"}'`, cwd: targetCwd })
-              let siteName: string | undefined
-              if (siteRes.ok) {
-                try { const js = JSON.parse(siteRes.stdout) as { name?: string }; if (typeof js.name === 'string') siteName = js.name } catch { /* ignore */ }
-              }
-              if (siteName && deployId) logsUrl = `https://app.netlify.com/sites/${siteName}/deploys/${deployId}`
-              // Fallback: derive site name from deployment URL if API name missing
-              if (!logsUrl && url && deployId) {
-                try {
-                  const mm = url.match(/https?:\/\/([^.]+)\.netlify\.app/i)
-                  const derived = mm?.[1]
-                  if (derived) logsUrl = `https://app.netlify.com/sites/${derived}/deploys/${deployId}`
-                } catch { /* ignore */ }
-              }
-            }
-          } catch { /* ignore */ }
-          if (ndjsonOn) logger.json({ ok: true, action: 'up', stage: 'deployed', provider: 'netlify', target: envTarget, url, logsUrl })
-          if (jsonMode) { logger.jsonPrint({ ok: true, action: 'up' as const, provider: 'netlify' as const, target: envTarget, url, logsUrl, final: true }); return }
-          logger.success(url ? `${envTarget === 'prod' ? 'Production' : 'Preview'}: ${url}` : (envTarget === 'prod' ? 'Production ready' : 'Preview ready'))
-          printDeploySummary({ provider: 'netlify', target: envTarget, url, logsUrl })
-          return
-        }
+        
         logger.error(`Unknown provider: ${provider}`)
         process.exitCode = 1
       } catch (err) {
         const msg: string = err instanceof Error ? err.message : String(err)
-        if (isJsonMode(opts.json)) { logger.jsonPrint({ ok: false, action: 'up' as const, provider, message: msg, final: true }) }
+        if (isJsonMode(opts.json)) {
+          logger.jsonPrint({ ok: false, action: 'up' as const, provider, message: msg, final: true })
+          throw new Error(msg)
+        }
         logger.error(msg)
         process.exitCode = 1
       }

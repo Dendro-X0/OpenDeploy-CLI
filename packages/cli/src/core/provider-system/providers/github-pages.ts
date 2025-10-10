@@ -11,6 +11,7 @@ import type { ProjectRef, BuildInputs, BuildResult, DeployInputs, DeployResult }
 import { fsx } from '../../../utils/fs'
 import { detectApp as autoDetect } from '../../detectors/auto'
 import { writeFile, stat } from 'node:fs/promises'
+import handleHints from '../../../utils/hints'
 import type { DetectionResult } from '../../../types/detection-result'
 
 /** Parse a Git remote URL (https or ssh) into owner/repo */
@@ -155,15 +156,13 @@ export class GithubPagesProvider implements Provider {
       if (wantBuild) {
         const lower = (fw || '').toLowerCase()
         if (lower === 'next') {
-          // Next.js: require static export for GitHub Pages
-          logger.note('GitHub Pages: building Next.js for static export (next build && next export)')
+          // Next.js 13+ static export uses output: 'export' with next build
+          logger.note('GitHub Pages: building Next.js for static export (next build with output: "export")')
           const b = await proc.run({ cmd: 'npx -y next build', cwd: args.cwd, env: { ...process.env, DEPLOY_TARGET: 'github' } })
           if (!b.ok) logger.warn(b.stderr.trim() || b.stdout.trim() || 'next build failed')
-          const ex = await proc.run({ cmd: 'npx -y next export', cwd: args.cwd, env: { ...process.env, DEPLOY_TARGET: 'github' } })
-          if (!ex.ok) logger.warn(ex.stderr.trim() || ex.stdout.trim() || 'next export failed')
           // Validate expected artifact
           const outDir = join(args.cwd, 'out')
-          try { if (!(await fsx.exists(outDir))) logger.warn('Next.js export did not produce ./out. Ensure next.config.js uses output: "export" and images.unoptimized: true.') } catch { /* ignore */ }
+          try { if (!(await fsx.exists(outDir))) logger.warn('Next.js build did not produce ./out. Ensure next.config.js sets output: "export" and images.unoptimized: true.') } catch { /* ignore */ }
           // Additional sanity: check for _next/static
           try { if (!(await fsx.exists(join(outDir, '_next')))) logger.warn('Missing ./out/_next assets. Set basePath/assetPrefix for GitHub Pages and enable trailingSlash: true.') } catch { /* ignore */ }
         } else if (lower === 'astro') {
@@ -206,6 +205,7 @@ export class GithubPagesProvider implements Provider {
     // Push to gh-pages branch
     const cmd = `${bin} -d ${dir} --dotfiles`
     const out = await proc.run({ cmd, cwd: args.cwd })
+    try { handleHints({ provider: 'github', text: (out.stderr || '') + ' ' + (out.stdout || '') }) } catch { /* ignore */ }
     if (!out.ok) return { ok: false, message: out.stderr.trim() || out.stdout.trim() || 'GitHub Pages deploy failed' }
     // Best-effort URL from git remote
     let url: string | undefined

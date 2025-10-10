@@ -1,0 +1,70 @@
+{
+  "vercel": {
+    "name": "Vercel",
+    "capabilities": {
+      "static": true,
+      "serverless": true,
+      "link": true,
+      "env": true,
+      "build": true,
+      "deploy": true,
+      "logs": true,
+      "promote": true,
+      "rollback": true,
+      "ci": true
+    }
+  },
+  "netlify": {
+    "name": "Netlify",
+    "capabilities": {
+      "static": true,
+      "serverless": true,
+      "link": true,
+      "env": true,
+      "build": true,
+      "deploy": true,
+      "logs": true,
+      "promote": true,
+      "rollback": true,
+      "ci": true
+    },
+    "notes": [
+      "Local automation may prompt or hang in some flows; CI is recommended for reliability.",
+      "Use API-based linking when possible; otherwise follow interactive linking guidance."
+    ]
+  },
+  "cloudflare": {
+    "name": "Cloudflare Pages",
+    "capabilities": {
+      "static": true,
+      "serverless": false,
+      "link": true,
+      "env": true,
+      "build": true,
+      "deploy": true,
+      "logs": true,
+      "promote": false,
+      "rollback": false,
+      "ci": true
+    }
+  },
+  "github": {
+    "name": "GitHub Pages",
+    "capabilities": {
+      "static": true,
+      "serverless": false,
+      "link": false,
+      "env": false,
+      "build": true,
+      "deploy": true,
+      "logs": false,
+      "promote": false,
+      "rollback": false,
+      "ci": true
+    },
+    "notes": [
+      "Use static export; ensure .nojekyll is present to serve _next/ assets.",
+      "Configure Pages to build from gh-pages branch (root)."
+    ]
+  }
+}

@@ -1,10 +1,15 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react"
+import type React from "react"
+import { useEffect, useMemo, useRef, useState, type RefObject, type CSSProperties } from "react"
 import { cn } from "@/lib/utils"
 
 type Heading = { id: string; title: string; level: number }
 
+/**
+ * Convert heading text into a URL-safe slug id.
+ * Ensures lower-case, trims, strips non-word characters and collapses spaces to dashes.
+ */
 function slugify(text: string): string {
   return text
     .toLowerCase()
@@ -18,12 +23,20 @@ interface ReadingIndicatorProps {
   className?: string
 }
 
-export function ReadingIndicator({ contentRef, className }: ReadingIndicatorProps) {
+/**
+ * ReadingIndicator renders a right-rail table of contents with a progress bar.
+ * On wide screens (>=1280px), it floats on the right using fixed positioning to remain visible while scrolling.
+ * On smaller screens it falls back to a sticky container within the flow.
+ */
+export function ReadingIndicator({ contentRef, className }: ReadingIndicatorProps): React.ReactElement | null {
   const [headings, setHeadings] = useState<Heading[]>([])
   const [activeId, setActiveId] = useState<string>("")
   const [progress, setProgress] = useState<number>(0)
   const observerRef = useRef<IntersectionObserver | null>(null)
   const asideScrollRef = useRef<HTMLDivElement | null>(null)
+  const asideRef = useRef<HTMLDivElement | null>(null)
+  const [useFixed, setUseFixed] = useState<boolean>(false)
+  const [fixedStyle, setFixedStyle] = useState<CSSProperties | undefined>(undefined)
 
   useEffect(() => {
     const el = contentRef.current
@@ -70,7 +83,7 @@ export function ReadingIndicator({ contentRef, className }: ReadingIndicatorProp
   }, [contentRef])
 
   useEffect(() => {
-    const onScroll = () => {
+    const onScroll = (): void => {
       const el = contentRef.current
       if (!el) return
       const rect = el.getBoundingClientRect()
@@ -89,6 +102,44 @@ export function ReadingIndicator({ contentRef, className }: ReadingIndicatorProp
     }
   }, [contentRef])
 
+  // Decide when to use fixed positioning (xl breakpoint) and compute geometry
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 1280px)')
+    const updateMode = (): void => setUseFixed(mq.matches)
+    updateMode()
+    mq.addEventListener('change', updateMode)
+    return () => mq.removeEventListener('change', updateMode)
+  }, [])
+
+  useEffect(() => {
+    if (!useFixed) {
+      setFixedStyle(undefined)
+      return
+    }
+    const updatePosition = (): void => {
+      const content = contentRef.current
+      const aside = asideRef.current
+      if (!content || !aside) return
+      const rect = content.getBoundingClientRect()
+      const margin = 24 // space between content and rail
+      const minPadding = 16 // viewport right padding
+      const width = aside.offsetWidth || 272
+      let left = rect.right + margin
+      const maxLeft = window.innerWidth - minPadding - width
+      if (left > maxLeft) left = Math.max(minPadding, maxLeft)
+      const top = 96 // 24 * 4 (matches top-24 in sticky mode)
+      const maxHeight = Math.max(window.innerHeight - top - 16, 200)
+      setFixedStyle({ position: 'fixed', left, top, maxHeight, zIndex: 30 })
+    }
+    updatePosition()
+    window.addEventListener('resize', updatePosition)
+    window.addEventListener('scroll', updatePosition, { passive: true })
+    return () => {
+      window.removeEventListener('resize', updatePosition)
+      window.removeEventListener('scroll', updatePosition)
+    }
+  }, [useFixed, contentRef])
+
   const items = useMemo(() => headings, [headings])
 
   // Intentionally do not auto-scroll the right rail; sticky container keeps it visible.
@@ -96,8 +147,25 @@ export function ReadingIndicator({ contentRef, className }: ReadingIndicatorProp
   if (items.length === 0) return null
 
   return (
-    <aside className={cn("hidden lg:block w-full flex-shrink-0", className)} aria-label="On this page">
-      <div ref={asideScrollRef} className="sticky top-24 max-h-[calc(100vh-7rem)] overflow-auto overflow-x-hidden pr-2">
+    <aside
+      className={cn("hidden xl:block w-[260px] flex-shrink-0", className)}
+      aria-label="On this page"
+    >
+      <div
+        ref={asideRef}
+        style={fixedStyle}
+        className={cn(
+          useFixed ? "w-[260px]" : "",
+        )}
+      >
+      <div
+        ref={asideScrollRef}
+        className={cn(
+          useFixed
+            ? "max-h-[calc(100vh-7rem)] overflow-auto overflow-x-hidden pr-2"
+            : "sticky top-24 max-h-[calc(100vh-7rem)] overflow-auto overflow-x-hidden pr-2",
+        )}
+      >
         {/* Progress bar */}
         <div className="mb-4">
           <div className="h-1.5 w-full rounded-full bg-border overflow-hidden" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress)} aria-label="Reading progress">
@@ -151,6 +219,7 @@ export function ReadingIndicator({ contentRef, className }: ReadingIndicatorProp
             ))}
           </nav>
         </div>
+      </div>
       </div>
     </aside>
   )

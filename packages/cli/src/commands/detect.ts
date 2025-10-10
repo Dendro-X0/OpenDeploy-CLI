@@ -10,7 +10,7 @@ import type { Framework } from '../types/framework'
  * Register the `detect` command.
  */
 export function registerDetectCommand(program: Command): void {
-  const ajv = new Ajv({ allErrors: true, strict: false })
+  const ajv = new Ajv({ allErrors: true, strict: false, validateSchema: false })
   const validate = ajv.compile(detectSummarySchema as unknown as object)
   const annotate = (obj: Record<string, unknown>): Record<string, unknown> => {
     const ok: boolean = validate(obj) as boolean

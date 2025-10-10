@@ -19,16 +19,11 @@ export function registerInitCommand(program: Command): void {
         const detection = await detectNextApp({ cwd })
         logger.section('OpenDeploy Init')
         const useVercel: boolean = await confirm('Use Vercel as a deployment provider?', { defaultYes: true })
-        const useNetlify: boolean = await confirm('Use Netlify as a deployment provider?', { defaultYes: true })
-        if (!useVercel && !useNetlify) {
-          logger.warn('No provider selected. Nothing to do.')
-          return
-        }
+        if (!useVercel) { logger.warn('No provider selected. Nothing to do.'); return }
         const autoSyncEnv: boolean = await confirm('Auto-sync .env before deploy (recommended)?', { defaultYes: true })
         const cfg = {
           providers: [
-            ...(useVercel ? ['vercel'] as const : []),
-            ...(useNetlify ? ['netlify'] as const : [])
+            ...(useVercel ? ['vercel'] as const : [])
           ],
           env: {
             autoSync: autoSyncEnv,
@@ -45,12 +40,7 @@ export function registerInitCommand(program: Command): void {
           await ver.generateConfig({ detection, cwd, overwrite: false }).catch(() => {/* ignore */})
           logger.success('Vercel configuration ready')
         }
-        if (useNetlify) {
-          const nl = await loadProvider('netlify')
-          await nl.validateAuth(cwd).catch(() => {/* continue; user can auth later */})
-          await nl.generateConfig({ detection, cwd, overwrite: false }).catch(() => {/* ignore */})
-          logger.success('Netlify configuration ready')
-        }
+        // Netlify support removed; please use the official Netlify CLI for config and deploy.
         const path: string = join(cwd, 'opendeploy.config.json')
         await writeFile(path, JSON.stringify(cfg, null, 2), 'utf8')
         logger.success(`Wrote ${path}`)

@@ -1,0 +1,27 @@
+/* Minimal Prism One Light theme (self-hosted) */
+/* Base */
+pre[class*="language-"], code[class*="language-"] {
+  color: #383a42;
+  background: #fafafa;
+  text-shadow: none;
+}
+pre[class*="language-"] {
+  padding: 1rem;
+  border-radius: 0.5rem;
+  overflow: auto;
+}
+/* Tokens */
+.token.comment, .token.prolog, .token.doctype, .token.cdata { color: #a0a1a7; }
+.token.punctuation { color: #383a42; }
+.token.selector, .token.tag { color: #e45649; }
+.token.property, .token.boolean, .token.number, .token.constant, .token.symbol { color: #986801; }
+.token.attr-name, .token.string, .token.char, .token.builtin, .token.inserted { color: #50a14f; }
+.token.operator, .token.entity, .token.url { color: #0184bc; }
+.token.atrule, .token.keyword { color: #a626a4; }
+.token.function, .token.class-name { color: #4078f2; }
+.token.regex, .token.important, .token.variable { color: #c18401; }
+.token.deleted { color: #e45649; }
+/* Selection */
+pre[class*="language-"]::selection, code[class*="language-"]::selection { background: #eaeaea; }
+/* Line numbers */
+pre.line-numbers { position: relative; }

@@ -14,7 +14,7 @@ Usage:
 opd start [--framework <next|astro|sveltekit>] \
   [--provider <vercel|cloudflare|github>] [--env <prod|preview>] \
   [--path <dir>] [--project <id>] [--org <id>] \
-  [--sync-env] [--dry-run] [--json] [--ci] [--no-save-defaults]
+  [--sync-env] [--dry-run] [--json] [--ci] [--no-save-defaults] [--minimal]
 ```
 
 Behavior:
@@ -25,6 +25,7 @@ Behavior:
 - With `--dry-run`, the wizard prints `{ ok: true, mode: 'dry-run', final: true }` and exits before syncing/deploying.
 - If you pass `--project`/`--org` (Vercel) and the directory is not linked yet, the wizard offers to run `vercel link` inline.
 - After deployment, the wizard prints a copyable non‑interactive command showing an equivalent `opd up ...` invocation.
+- Minimal preset (`--minimal`): non‑interactive defaults for first‑time deploys. Detects framework and chooses provider automatically (GitHub Pages when Next.js static export is detected via `next.config.*: { output: 'export' }`, otherwise Vercel). Prints a concise summary in human mode and a final JSON line when `--json` is set.
 
 Notes:
 - The deploy step reuses the same logic as `up` for parity.
@@ -175,4 +176,91 @@ echo 'autoload -U compinit && compinit' >> ~/.zshrc
 ```powershell
 opd completion --shell pwsh | Out-File -FilePath $PROFILE -Append -Encoding utf8
 # Restart PowerShell
+```
+
+## ci logs
+
+Show or follow GitHub Actions logs for the latest run on the current branch. Prints direct run URLs and emits GitHub annotations on failures.
+
+Usage:
+
+```bash
+opd ci logs [--workflow <file>] [--follow] [--json]
+```
+
+Behavior:
+
+- Auto-detects repository from `GITHUB_REPOSITORY` or `git remote get-url origin`.
+- Auto-detects branch from `GITHUB_HEAD_REF`/`GITHUB_REF_NAME`, or falls back to the current Git branch; if detached, uses the origin default branch.
+- Prints the direct run URL, e.g. `https://github.com/<owner>/<repo>/actions/runs/<id>`.
+- With `--follow`, tails the latest run until completion and exits non‑zero on failure.
+- On failures, prints `::error ::CI run failed: <url>` to enable GitHub Annotations in Actions.
+
+Examples:
+
+```bash
+# Show latest run for the default workflow (ci.yml)
+opd ci logs
+
+# Follow the latest run until completion
+opd ci logs --follow
+
+# Use a specific workflow file name
+opd ci logs --workflow deploy-pages.yml
+
+# JSON summary (machine‑readable)
+opd ci logs --json
+```
+
+Notes:
+
+- Requires GitHub CLI (`gh`); install on Windows via `winget install GitHub.cli`.
+- In `--json` mode, the final object includes `{ ok, repo, branch, workflow, id, url, status, conclusion, final: true }`.
+
+## ci open
+
+Open the most recent GitHub Actions run in your default browser. You can scope to a PR or a workflow file.
+
+Usage:
+
+```bash
+opd ci open [--workflow <file>] [--pr <number>] [--json]
+```
+
+Behavior:
+
+- Resolves repo automatically; optionally resolves branch from a PR number.
+- Opens the URL using the OS default opener (`start` on Windows, `open` on macOS, `xdg-open` on Linux).
+- In `--json` mode, prints `{ ok, repo, branch?, workflow?, id, url, status, conclusion, final: true }`.
+
+Examples:
+
+```bash
+opd ci open
+opd ci open --pr 42
+opd ci open --workflow ci.yml
+```
+
+## ci dispatch
+
+Trigger a workflow run. Safeguarded—requires `--yes`.
+
+Usage:
+
+```bash
+opd ci dispatch --workflow <file> [--ref <ref>] [--inputs k=v,...] [--yes] [--json]
+```
+
+Behavior:
+
+- Requires GitHub CLI (`gh`).
+- Refuses to run unless `--yes` is present to prevent accidental triggers.
+- `--inputs` accepts comma-separated `key=value` pairs and passes them via `--raw-field` to `gh`.
+- In `--json` mode, prints `{ ok, repo, workflow, ref, final: true }`.
+
+Examples:
+
+```bash
+opd ci dispatch --workflow ci.yml --yes
+opd ci dispatch --workflow deploy-docs.yml --ref main --inputs site=docs,region=us --yes
 ```

@@ -19,6 +19,23 @@ export default function QuickStartPage() {
         <DocsHeader />
         <main className="flex-1 overflow-auto">
           <div className="container mx-auto px-6 py-8 max-w-4xl">
+            {/* 3 Steps provider shortcuts */}
+            <div className="mb-8">
+              <Badge variant="secondary" className="mb-2">3 Steps</Badge>
+              <h2 className="text-2xl font-bold mb-3">Three Steps to Deploy</h2>
+              <p className="text-muted-foreground mb-4">Choose your provider to follow a concise, copy‑paste guide:</p>
+              <div className="grid md:grid-cols-3 gap-3">
+                <Button asChild variant="outline" className="justify-start">
+                  <Link href="/docs/opendeploy/quickstart-vercel">Vercel</Link>
+                </Button>
+                <Button asChild variant="outline" className="justify-start">
+                  <Link href="/docs/opendeploy/quickstart-github-pages">GitHub Pages</Link>
+                </Button>
+                <Button asChild variant="outline" className="justify-start">
+                  <Link href="/docs/opendeploy/quickstart-cloudflare">Cloudflare Pages</Link>
+                </Button>
+              </div>
+            </div>
             <div className="mb-8">
               <Badge variant="secondary" className="mb-2">
                 Getting Started

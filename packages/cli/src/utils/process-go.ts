@@ -84,14 +84,6 @@ export async function goChecksumFile(args: { readonly src: string; readonly algo
   return { ok: res.ok, exitCode: res.exitCode, digest, reason: res.reason }
 }
 
-export async function goNetlifyDeployDir(args: { readonly src: string; readonly site: string; readonly prod?: boolean; readonly cwd?: string }): Promise<{ readonly ok: boolean; readonly exitCode: number; readonly url?: string; readonly logsUrl?: string; readonly deployId?: string; readonly reason?: string }> {
-  const res = await goRequest({ action: 'netlify-deploy-dir', src: args.src, site: args.site, prod: args.prod === true }, { cwd: args.cwd })
-  const url: string | undefined = typeof res.extra?.url === 'string' ? String(res.extra?.url) : undefined
-  const logsUrl: string | undefined = typeof res.extra?.logsUrl === 'string' ? String(res.extra?.logsUrl) : undefined
-  const deployId: string | undefined = typeof res.extra?.deployId === 'string' ? String(res.extra?.deployId) : undefined
-  return { ok: res.ok, exitCode: res.exitCode, url, logsUrl, deployId, reason: res.reason }
-}
-
 interface GoEvent {
   readonly action?: string
   readonly event?: 'hello' | 'stdout' | 'stderr' | 'status' | 'error' | 'done'

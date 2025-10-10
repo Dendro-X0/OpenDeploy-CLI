@@ -9,7 +9,7 @@ export const metadata = { title: "OpenDeploy CLI — Examples" }
   { id: 'seed-script', title: 'Seeding (Drizzle Script)', level: 2 },
   { id: 'deploy-vercel', title: 'Deploy (Vercel)', level: 2 },
   { id: 'run-orchestrate', title: 'Run (Orchestrate)', level: 2 },
-  { id: 'netlify-git-ci', title: 'Netlify Git/CI Setup', level: 2 },
+  { id: 'github-pages', title: 'GitHub Pages (Static Export)', level: 2 },
 ]}>
   <article className="prose prose-gray dark:prose-invert max-w-none">
     <h1>Examples</h1>
@@ -56,66 +56,23 @@ opd up vercel --env preview --json --path apps/web
 opd run --all --env preview --dry-run --json
 ```
 
-    <h2 id="netlify-git-ci">Netlify Git/CI Setup</h2>
+    <h2 id="github-pages">GitHub Pages (Static Export)</h2>
 
     <p>
-      For Netlify, connecting your repository and using Git/CI builds is the recommended path.
-      Local <code>netlify deploy --build</code> can be slower or time out on first runs.
-      Use the checklist below to configure your site per framework.
+      For GitHub Pages, export your site statically and publish to the <code>gh-pages</code> branch. OpenDeploy can help with static export and opening dashboards.
     </p>
 
-    <h3>Next.js</h3>
+```bash
+# Next.js 15+ static export (next.config.ts)
+# output: 'export', images.unoptimized: true, trailingSlash: true
 
-```text
-Build command: pnpm install --frozen-lockfile && pnpm build
-Publish directory: .next
-Notes: Netlify Next Runtime is preferred; fallback plugin uses .next publish.
+# Build then publish via provider page or CLI
+pnpm build
+opd open github  # open Pages settings/dashboard
 ```
 
-    <h3>Astro</h3>
-
-```text
-Build command: pnpm install --frozen-lockfile && pnpm build
-Publish directory: dist
-```
-
-    <h3>SvelteKit</h3>
-
-```text
-Static (adapter-static)
-  Build command: pnpm install && pnpm build
-  Publish directory: build
-
-SSR (adapter-netlify)
-  Build command: pnpm install && pnpm build
-  Publish directory: .netlify
-```
-
-    <h3>Nuxt</h3>
-
-```text
-Build command: npm ci && npx nuxi build
-Publish directory: .output/public
-```
-
-    <h3>Remix (React Router v7, static)</h3>
-
-```text
-Build command: npm ci && npm run build
-Publish directory: build/client
-netlify.toml: add SPA redirect
-  [[redirects]]
-    from = "/*"
-    to = "/index.html"
-    status = 200
-```
-
-    <h3>Environment Variables</h3>
-
-```text
-Add variables under Site settings → Environment. Optional: sync from a local file using
-  opd env sync netlify --file .env --project-id <SITE_ID> --yes
-In CI, prefer opd with --gha and provider credentials.
-```
+    <p>
+      If your site is served from <code>https://&lt;owner&gt;.github.io/&lt;repo&gt;</code>, set <code>basePath</code> and <code>assetPrefix</code> to <code>/&lt;repo&gt;</code> in your Next.js config.
+    </p>
   </article>
 </DocsLayout>

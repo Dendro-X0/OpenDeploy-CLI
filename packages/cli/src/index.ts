@@ -19,6 +19,7 @@ import { registerUpCommand } from './commands/up'
 import { registerStartCommand } from './commands/start'
 import { registerTestMatrixCommand } from './commands/test-matrix'
 import { computeRedactors } from './utils/redaction'
+import { registerCiLogsCommand } from './commands/ci-logs'
 
 const VERSION: string = '1.2.0-rc.2'
 
@@ -112,16 +113,21 @@ function main(): void {
     }
     logger.setJsonFile(p)
     process.env.OPD_JSON_FILE = p
+  } else if (process.env.OPD_JSON_FILE) {
+    // Honor env var when flag not provided
+    logger.setJsonFile(process.env.OPD_JSON_FILE)
   }
   const ndjsonFileIx = process.argv.findIndex((a) => a === '--ndjson-file')
   if (ndjsonFileIx !== -1) {
     let p = process.argv[ndjsonFileIx + 1]
     if (!p || p.startsWith('-')) {
-      const ts = new Date().toISOString().replace(/[:.]/g, '-')
-      p = `./.artifacts/opendeploy-${ts}.ndjson`
+      const ts2 = new Date().toISOString().replace(/[:.]/g, '-')
+      p = `./.artifacts/opendeploy-${ts2}.ndjson`
     }
     logger.setNdjsonFile(p)
     process.env.OPD_NDJSON_FILE = p
+  } else if (process.env.OPD_NDJSON_FILE) {
+    logger.setNdjsonFile(process.env.OPD_NDJSON_FILE)
   }
   // Parse GitHub annotations mode
   const ghaIx = process.argv.findIndex((a) => a === '--gha-annotations')
@@ -161,15 +167,25 @@ function main(): void {
   registerPlanCommand(program)
   registerUpCommand(program)
   registerStartCommand(program)
+  registerCiLogsCommand(program)
   registerTestMatrixCommand(program)
   program.parseAsync(process.argv)
     .then(() => {})
     .catch((err: unknown) => {
       const message: string = err instanceof Error ? err.message : String(err)
-      // Avoid stack by default for cleaner UX; use --verbose for more later
-      // eslint-disable-next-line no-console
-      console.error(`Error: ${message}`)
-      process.exitCode = 1
+      const isJson = process.env.OPD_JSON === '1' || process.env.OPD_NDJSON === '1'
+      const alreadyHandled = process.env.OPD_HANDLED === '1'
+      if (isJson) {
+        if (!alreadyHandled) {
+          logger.jsonPrint({ ok: false, action: 'error', message, final: true })
+        }
+        process.exit(1)
+      } else {
+        // Avoid stack by default for cleaner UX; use --verbose for more later
+        // eslint-disable-next-line no-console
+        console.error(`Error: ${message}`)
+        process.exit(1)
+      }
     })
 }
 

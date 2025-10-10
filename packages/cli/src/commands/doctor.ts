@@ -185,7 +185,7 @@ async function checkGitHubPagesSetup(cwd: string, printCmd?: boolean): Promise<C
  * Register the `doctor` command.
  */
 export function registerDoctorCommand(program: Command): void {
-  const ajv = new Ajv({ allErrors: true, strict: false })
+  const ajv = new Ajv({ allErrors: true, strict: false, validateSchema: false })
   const validate = ajv.compile(doctorSummarySchema as unknown as object)
   const annotate = (obj: Record<string, unknown>): Record<string, unknown> => {
     const ok: boolean = validate(obj) as boolean
@@ -390,6 +390,32 @@ export function registerDoctorCommand(program: Command): void {
           if (assetsOk === false) suggestions.push('pnpm build (verify out/_next/static exists)')
           if (baseMatch && baseMatch.ok === false) suggestions.push(`set basePath in next.config to ${baseMatch.message.includes('expected') ? baseMatch.message.replace('mismatch (expected ', '').replace(')', '') : "'/<repo>'"}`)
           if (assetMatch && assetMatch.ok === false) suggestions.push(`set assetPrefix in next.config to ${assetMatch.message.includes('expected') ? assetMatch.message.replace('mismatch (expected ', '').replace(')', '') : "'/<repo>/'"} (recommended) `)
+          // GitHub Pages: CNAME checks (optional custom domain)
+          try {
+            const cnamePub = join(cwd, 'public', 'CNAME')
+            const cnameOut = join(cwd, 'out', 'CNAME')
+            let domain: string | undefined
+            if (await fsx.exists(cnamePub)) { try { domain = (await readFileFs(cnamePub, 'utf8')).trim() } catch { /* ignore */ } }
+            if (!domain && await fsx.exists(cnameOut)) { try { domain = (await readFileFs(cnameOut, 'utf8')).trim() } catch { /* ignore */ } }
+            const hasCname: boolean = typeof domain === 'string' && domain.length > 0
+            results.push({ name: 'github pages: CNAME file (custom domain)', ok: hasCname, message: hasCname ? domain! : 'absent (optional)' })
+            if (hasCname) {
+              // Attempt to infer owner for DNS hint
+              let owner: string | undefined
+              try {
+                const origin = await proc.run({ cmd: 'git remote get-url origin', cwd })
+                if (origin.ok) {
+                  const t = origin.stdout.trim()
+                  const httpsRe = /^https?:\/\/github\.com\/(.+?)\/(.+?)(?:\.git)?$/i
+                  const sshRe = /^git@github\.com:(.+?)\/(.+?)(?:\.git)?$/i
+                  const m1 = t.match(httpsRe); const m2 = t.match(sshRe)
+                  owner = (m1?.[1] || m2?.[1] || '').trim()
+                }
+              } catch { /* ignore */ }
+              if (owner) suggestions.push(`DNS: add CNAME record: ${domain} -> ${owner}.github.io`)
+              else suggestions.push(`DNS: add CNAME record: ${domain} -> <owner>.github.io`)
+            }
+          } catch { /* ignore */ }
         } catch { /* ignore */ }
 
         // Cloudflare Pages (Next on Pages) preflight for Next.js apps
@@ -441,6 +467,36 @@ export function registerDoctorCommand(program: Command): void {
               results.push({ name: 'cloudflare: wrangler.toml present', ok: false, message: 'missing (generate with: opd generate cloudflare --next-on-pages)' })
               suggestions.push('opd generate cloudflare --next-on-pages')
             }
+            // Cloudflare Pages: project existence and DNS hints
+            try {
+              // Infer project name
+              let projectName: string | undefined
+              try {
+                const raw = await readFileFs(wranglerPath, 'utf8')
+                const m = raw.match(/\bname\s*=\s*"([^"]+)"/)
+                if (m && m[1]) projectName = m[1]
+              } catch { /* ignore */ }
+              if (!projectName) {
+                const base = cwd.replace(/\\/g,'/').split('/').filter(Boolean).pop() || 'site'
+                projectName = base.toLowerCase().replace(/[^a-z0-9-]/g,'-').replace(/--+/g,'-').replace(/^-+|-+$/g,'')
+              }
+              // List projects to check existence
+              const listCmd: string = 'wrangler pages project list --json'
+              if (opts.printCmd) logger.info(`$ ${listCmd}`)
+              const ls = await runWithRetry({ cmd: listCmd, cwd })
+              let exists = false
+              if (ls.ok) {
+                try {
+                  const arr = JSON.parse(ls.stdout) as Array<{ name?: string }>
+                  exists = Array.isArray(arr) && arr.some(p => (p.name || '').toLowerCase() === projectName!.toLowerCase())
+                } catch { /* ignore parse */ }
+              }
+              results.push({ name: 'cloudflare: project exists', ok: exists, message: exists ? projectName! : `${projectName} (create with: wrangler pages project create ${projectName})` })
+              // DNS hint for default domain
+              const defaultDomain = `${projectName}.pages.dev`
+              results.push({ name: 'cloudflare: default domain (pages.dev)', ok: true, message: defaultDomain })
+              suggestions.push(`Cloudflare DNS: point your custom domain via CNAME to ${defaultDomain} (optional)`)
+            } catch { /* ignore */ }
           }
         } catch { /* ignore */ }
 

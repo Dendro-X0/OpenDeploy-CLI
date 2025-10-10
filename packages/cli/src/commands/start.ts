@@ -2,12 +2,13 @@ import { Command } from 'commander'
 import { join, isAbsolute } from 'node:path'
 import { logger, isJsonMode } from '../utils/logger'
 import { envSync } from './env'
-import { proc, runWithTimeout, withTimeout } from '../utils/process'
-import { goZipDir, goChecksumFile, goNetlifyDeployDir } from '../utils/process-go'
+import { proc, runWithTimeout, withTimeout, runWithRetry } from '../utils/process'
 import { spawnStreamPreferred } from '../utils/process-pref'
 import { spinner } from '../utils/ui'
 import { computeRedactors } from '../utils/redaction'
 import { extractVercelInspectUrl } from '../utils/inspect'
+import { printDeploySummary } from '../utils/summarize'
+
 import { detectNextApp } from '../core/detectors/next'
 import { detectAstroApp } from '../core/detectors/astro'
 import { detectSvelteKitApp } from '../core/detectors/sveltekit'
@@ -18,6 +19,7 @@ import { detectApp as autoDetect, detectCandidates as detectMarks } from '../cor
 import { fsx } from '../utils/fs'
 import clipboard from 'clipboardy'
 import { readFile, readdir, writeFile, mkdir } from 'node:fs/promises'
+
 import type { DetectionResult } from '../types/detection-result'
 import type { Framework } from '../types/framework'
 // writeFile moved into fs/promises import above
@@ -25,9 +27,9 @@ import { loadProvider } from '../core/provider-system/provider'
 
 // NOTE: This scaffold uses @clack/prompts for a friendly wizard UX.
 // Make sure to add it as a dependency: pnpm add @clack/prompts
-import { intro, outro, select, confirm as clackConfirm, isCancel, cancel, note } from '@clack/prompts'
+import { intro, outro, select, confirm as clackConfirm, isCancel, cancel, note, text } from '@clack/prompts'
 
-type Provider = 'vercel' | 'netlify' | 'cloudflare' | 'github'
+type Provider = 'vercel' | 'cloudflare' | 'github'
 
 export interface StartOptions {
   readonly framework?: Framework
@@ -37,6 +39,7 @@ export interface StartOptions {
   readonly project?: string
   readonly org?: string
   readonly syncEnv?: boolean
+  readonly promote?: boolean
   readonly json?: boolean
   readonly ci?: boolean
   readonly dryRun?: boolean
@@ -56,11 +59,76 @@ export interface StartOptions {
   readonly idleTimeout?: number | string
   readonly debugDetect?: boolean
   readonly generateConfigOnly?: boolean
+  readonly minimal?: boolean
+}
+
+// Minimal framework autodetect wrapper
+async function autoDetectFramework(cwd: string): Promise<Framework | undefined> {
+  try { const res = await autoDetect({ cwd }); return res.framework as Framework } catch { return undefined }
+}
+
+// Short provider login status for prompt; no Netlify support
+async function providerStatus(p: Provider): Promise<'logged in' | 'login required'> {
+  try {
+    if (p === 'vercel') {
+      const res = await runWithTimeout({ cmd: 'vercel whoami' }, 10_000)
+      if (res.ok && /\S/.test(res.stdout)) return 'logged in'
+      return 'login required'
+    }
+    if (p === 'cloudflare') {
+      const who = await runWithTimeout({ cmd: 'wrangler whoami' }, 10_000)
+      if (who.ok && /[A-Za-z0-9_-]/.test(who.stdout)) return 'logged in'
+      const ver = await runWithTimeout({ cmd: 'wrangler --version' }, 10_000)
+      return ver.ok ? 'login required' : 'login required'
+    }
+    if (p === 'github') {
+      const git = await runWithTimeout({ cmd: 'git --version' }, 10_000)
+      if (!git.ok) return 'login required'
+      const rem = await runWithTimeout({ cmd: 'git remote -v' }, 10_000)
+      if (rem.ok && /origin\s+.*github\.com/i.test(rem.stdout)) return 'logged in'
+      return 'login required'
+    }
+  } catch { /* ignore */ }
+  return 'login required'
+}
+
+// Ensure provider auth (interactive when not in CI). No Netlify.
+async function ensureProviderAuth(p: Provider, opts: StartOptions): Promise<void> {
+  if (opts.skipAuthCheck || opts.assumeLoggedIn) return
+  const tryValidate = async (): Promise<boolean> => {
+    try { const plugin = await loadProvider(p); await plugin.validateAuth(process.cwd()); return true } catch { return false }
+  }
+  const ok: boolean = await tryValidate()
+  if (ok) return
+  if (opts.ci) throw new Error(`${p} login required`)
+  const want = await clackConfirm({ message: `${providerNiceName(p)} login required. Log in now?`, initialValue: true })
+  if (isCancel(want) || want !== true) throw new Error(`${p} login required`)
+  const cmd: string = p === 'vercel' ? 'vercel login' : p === 'cloudflare' ? 'wrangler login' : 'git remote -v'
+  note(`Running: ${cmd}`, 'Auth')
+  const res = await proc.run({ cmd })
+  if (!res.ok) throw new Error(`${p} login failed`)
+  const ok2 = await tryValidate()
+  if (!ok2) throw new Error(`${p} login failed`)
+}
+
+// Minimal .env keys parser for preview display
+async function parseEnvKeys(filePath: string): Promise<readonly string[]> {
+  const buf = await readFile(filePath, 'utf8')
+  const keys: string[] = []
+  for (const raw of buf.split(/\r?\n/)) {
+    const line = raw.trim()
+    if (line.length === 0) continue
+    if (line.startsWith('#')) continue
+    const eq = line.indexOf('=')
+    if (eq <= 0) continue
+    const key = line.slice(0, eq).trim()
+    if (key.length > 0) keys.push(key)
+  }
+  return keys
 }
 
 function providerNiceName(p: Provider): string {
   if (p === 'vercel') return 'Vercel'
-  if (p === 'netlify') return 'Netlify'
   if (p === 'cloudflare') return 'Cloudflare Pages'
   return 'GitHub Pages'
 }
@@ -78,19 +146,6 @@ function makeHyperlink(url: string, label?: string): string {
   const BEL: string = '\u0007'
   const ESC_CLOSE: string = '\u001B]8;;\u0007'
   return `${OSC}${u}${BEL}${text}${ESC_CLOSE}`
-}
-
-// Read Netlify site id from .netlify/state.json (returns undefined if missing)
-async function readNetlifySiteId(cwd: string): Promise<string | undefined> {
-  try {
-    const p = join(cwd, '.netlify', 'state.json')
-    const raw = await readFile(p, 'utf8')
-    const js = JSON.parse(raw) as { siteId?: string }
-    const rawId = js?.siteId
-    const isValid = typeof rawId === 'string' && /^[a-f0-9-]{10,}$/i.test(rawId) && rawId !== 'undefined' && rawId !== 'null'
-    const id = isValid ? rawId : undefined
-    return id
-  } catch { return undefined }
 }
 
 async function scanMonorepoCandidates(root: string): Promise<Array<{ readonly path: string; readonly framework: Framework }>> {
@@ -212,6 +267,105 @@ async function expandWorkspacePattern(root: string, pattern: string): Promise<st
   return out
 }
 
+/**
+ * Find the first existing Next.js config file in cwd.
+ */
+async function findNextConfig(cwd: string): Promise<string | undefined> {
+  const names: readonly string[] = ['next.config.ts', 'next.config.js', 'next.config.mjs']
+  for (const n of names) { if (await fsx.exists(join(cwd, n))) return join(cwd, n) }
+  return undefined
+}
+
+/**
+ * Patch Next.js config for GitHub Pages static export.
+ * Ensures output: 'export' and images.unoptimized: true.
+ * Optionally sets trailingSlash: true when missing.
+ */
+async function patchNextConfigForGithub(args: { readonly path: string; readonly setTrailing?: boolean }): Promise<{ readonly changed: boolean; readonly content: string; readonly fixes: readonly string[] }> {
+  const src: string = await readFile(args.path, 'utf8')
+  let out: string = src
+  const fixes: string[] = []
+  // output: 'export'
+  if (!/output\s*:\s*['"]export['"]/m.test(out)) {
+    if (/output\s*:\s*['"][^'"]+['"]/m.test(out)) {
+      out = out.replace(/output\s*:\s*['"][^'"]+['"]/m, "output: 'export'")
+    } else {
+      out = out.replace(/module\.exports\s*=\s*\{/, match => `${match}\n  output: 'export',`)
+      out = out.replace(/export\s+default\s*\{/, match => `${match}\n  output: 'export',`)
+    }
+    fixes.push('github-next-output-export')
+  }
+  // images.unoptimized: true
+  if (!/images\s*:\s*\{[^}]*unoptimized\s*:\s*true/m.test(out)) {
+    if (/images\s*:\s*\{[^}]*\}/m.test(out)) {
+      out = out.replace(/images\s*:\s*\{/, 'images: { unoptimized: true, ')
+    } else {
+      out = out.replace(/module\.exports\s*=\s*\{/, match => `${match}\n  images: { unoptimized: true },`)
+      out = out.replace(/export\s+default\s*\{/, match => `${match}\n  images: { unoptimized: true },`)
+    }
+    fixes.push('github-next-images-unoptimized')
+  }
+  // trailingSlash: true (recommended)
+  if (args.setTrailing === true && !/trailingSlash\s*:\s*true/m.test(out)) {
+    if (/trailingSlash\s*:\s*false/m.test(out)) {
+      out = out.replace(/trailingSlash\s*:\s*false/m, 'trailingSlash: true')
+    } else {
+      out = out.replace(/module\.exports\s*=\s*\{/, match => `${match}\n  trailingSlash: true,`)
+      out = out.replace(/export\s+default\s*\{/, match => `${match}\n  trailingSlash: true,`)
+    }
+    fixes.push('github-next-trailing-true')
+  }
+  return { changed: out !== src, content: out, fixes }
+}
+
+/**
+ * Patch Next.js config for Cloudflare Pages (Next on Pages) SSR/hybrid.
+ * Removes output: 'export', removes assetPrefix, sets basePath to empty, and recommends trailingSlash: false.
+ */
+async function patchNextConfigForCloudflare(args: { readonly path: string; readonly setTrailing?: boolean }): Promise<{ readonly changed: boolean; readonly content: string; readonly fixes: readonly string[] }> {
+  const src: string = await readFile(args.path, 'utf8')
+  let out: string = src
+  const fixes: string[] = []
+  // remove output: 'export'
+  if (/output\s*:\s*['"]export['"]/m.test(out)) {
+    out = out.replace(/\s*output\s*:\s*['"]export['"],?/m, '')
+    fixes.push('cloudflare-next-remove-output-export')
+  }
+  // remove assetPrefix
+  if (/assetPrefix\s*:\s*['"][^'"]+['"]/m.test(out)) {
+    out = out.replace(/\s*assetPrefix\s*:\s*['"][^'"]+['"],?/m, '')
+    fixes.push('cloudflare-next-remove-assetPrefix')
+  }
+  // basePath -> empty
+  const bp = out.match(/basePath\s*:\s*['"]([^'"]*)['"]/m)
+  if (bp && bp[1] !== '') {
+    out = out.replace(/basePath\s*:\s*['"][^'"]*['"]/m, "basePath: ''")
+    fixes.push('cloudflare-next-basePath-empty')
+  }
+  // trailingSlash: false (recommended)
+  if (args.setTrailing === true && !/trailingSlash\s*:\s*false/m.test(out)) {
+    if (/trailingSlash\s*:\s*true/m.test(out)) out = out.replace(/trailingSlash\s*:\s*true/m, 'trailingSlash: false')
+    else {
+      out = out.replace(/module\.exports\s*=\s*\{/, match => `${match}\n  trailingSlash: false,`)
+      out = out.replace(/export\s+default\s*\{/, match => `${match}\n  trailingSlash: false,`)
+    }
+    fixes.push('cloudflare-next-trailing-false')
+  }
+  return { changed: out !== src, content: out, fixes }
+}
+
+// Quick check for Next.js static export in next.config.*
+async function hasNextStaticExport(cwd: string): Promise<boolean> {
+  const files: readonly string[] = ['next.config.ts', 'next.config.js', 'next.config.mjs']
+  for (const f of files) {
+    try {
+      const raw = await readFile(join(cwd, f), 'utf8')
+      if (/output\s*:\s*['"]export['"]/m.test(raw)) return true
+    } catch { /* ignore */ }
+  }
+  return false
+}
+
 async function detectForFramework(framework: Framework, cwd: string): Promise<DetectionResult> {
   if (framework === 'next') return await detectNextApp({ cwd })
   if (framework === 'astro') return await detectAstroApp({ cwd })
@@ -331,31 +485,6 @@ async function runBuildPreflight(args: { readonly detection: DetectionResult; re
       const msg = (out.stderr || out.stdout || 'Build failed').trim()
       throw new Error(msg)
     }
-    if (provider === 'netlify' && detection.framework !== 'next') {
-      const pub = detection.publishDir ?? inferNetlifyPublishDir({ framework: detection.framework as Framework, cwd })
-      const full = join(cwd, pub)
-      const exists = await fsx.exists(full)
-      const files = exists ? await countFiles(full) : 0
-      if (!exists || files === 0) {
-        clearInterval(hb)
-        sp.stop()
-        throw new Error(`Publish directory not found or empty: ${pub}. Ensure your build outputs static files there (e.g., adjust adapter or build command).`)
-      }
-    }
-    if (provider === 'github') {
-      const pub = ((): string => {
-        if ((detection.framework as string | undefined)?.toLowerCase() === 'next') return 'out'
-        return detection.publishDir ?? 'dist'
-      })()
-      const full = join(cwd, pub)
-      const exists = await fsx.exists(full)
-      const files = exists ? await countFiles(full) : 0
-      if (!exists || files === 0) {
-        clearInterval(hb)
-        sp.stop()
-        throw new Error(`No static files found in '${pub}'. For Next.js + GitHub Pages, enable static export (next.config.js: { output: 'export' }) or run 'next export'.`)
-      }
-    }
     clearInterval(hb)
     sp.stop()
     note('Build validated', 'Preflight')
@@ -371,178 +500,8 @@ async function runBuildPreflight(args: { readonly detection: DetectionResult; re
   }
 }
 
-// Create a Netlify site non-interactively. Returns site ID.
-async function createNetlifySite(args: { readonly cwd: string; readonly name: string }): Promise<string> {
-  // Helper: normalize names similarly to our slug
-  const normalize = (s: string): string => s.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-{2,}/g, '-').replace(/^-+|-+$/g, '')
-  const expected = normalize(args.name)
-
-  // 1) Optional: determine account slug for createSite
-  let accountSlug: string | undefined
-  const acct = await proc.run({ cmd: 'netlify api listAccountsForUser', cwd: args.cwd })
-  if (acct.ok) {
-    try {
-      const data = JSON.parse(acct.stdout) as Array<{ slug?: string }>
-      if (Array.isArray(data) && data.length > 0 && typeof data[0]?.slug === 'string') accountSlug = data[0].slug
-    } catch { /* ignore */ }
-  }
-
-  // 2) Try API createSite once and parse id robustly
-  const payload: Record<string, unknown> = { name: args.name }
-  if (accountSlug) payload.account_slug = accountSlug
-  const jsonData = JSON.stringify(payload).replace(/"/g, '\\"')
-  const createCmd = `netlify api createSite --data "${jsonData}"`
-  const createRes = await proc.run({ cmd: createCmd, cwd: args.cwd })
-  if (createRes.ok) {
-    try {
-      const root = JSON.parse(createRes.stdout) as unknown
-      const findId = (v: unknown): string | undefined => {
-        if (!v) return undefined
-        if (typeof v === 'object') {
-          if (Array.isArray(v)) { for (const x of v) { const r = findId(x); if (r) return r } }
-          else {
-            const o = v as Record<string, unknown>
-            const direct = (typeof o.id === 'string' && o.id) || (typeof (o as any).site_id === 'string' && (o as any).site_id)
-            if (direct) return direct as string
-            for (const k of Object.keys(o)) { const r = findId(o[k]); if (r) return r }
-          }
-        }
-        return undefined
-      }
-      const id = findId(root)
-      if (typeof id === 'string' && id.length > 0) return id
-    } catch { /* ignore */ }
-  }
-
-  // 3) Resolve by listing sites and picking the best name match (Netlify may suffix names)
-  const listOnce = async (): Promise<string | undefined> => {
-    const ls = await proc.run({ cmd: 'netlify api listSites', cwd: args.cwd })
-    if (!ls.ok) return undefined
-    try {
-      const arr = JSON.parse(ls.stdout) as Array<{ id?: string; name?: string; created_at?: string }>
-      const candidates = (arr || []).filter(s => typeof s?.id === 'string' && typeof s?.name === 'string')
-      // Prefer exact normalized name, then prefix match with hyphen
-      const exact = candidates.filter(s => normalize(s.name!) === expected)
-      const pref = candidates.filter(s => normalize(s.name!).startsWith(expected + '-'))
-      const pool = exact.length > 0 ? exact : pref
-      if (pool.length === 0) return undefined
-      pool.sort((a, b) => (Date.parse(b.created_at || '') || 0) - (Date.parse(a.created_at || '') || 0))
-      return pool[0].id!
-    } catch { return undefined }
-  }
-  const idFromList = await listOnce()
-  if (idFromList) return idFromList
-
-  // 4) Last resort: classic sites:create, then resolve by list
-  const classicCmd = accountSlug ? `netlify sites:create --name ${args.name} --account-slug ${accountSlug}` : `netlify sites:create --name ${args.name}`
-  const classic = await proc.run({ cmd: classicCmd, cwd: args.cwd })
-  if (!classic.ok) throw new Error((classic.stderr || classic.stdout || 'Netlify site creation failed').trim())
-  // Parse text for an ID if present
-  const m = classic.stdout.match(/Site\s+ID\s*:\s*([a-z0-9-]+)/i) || classic.stdout.match(/Site\s+Id\s*:\s*([a-z0-9-]+)/i)
-  if (m && m[1]) return m[1]
-  const idAfterClassic = await listOnce()
-  if (idAfterClassic) return idAfterClassic
-  throw new Error('Netlify site created but ID not found (try `netlify sites:list` and `netlify link --id <siteId>`)')
-}
-
-// Minimal .env parser: returns keys only
-async function parseEnvKeys(filePath: string): Promise<readonly string[]> {
-  const buf = await readFile(filePath, 'utf8')
-  const keys: string[] = []
-  for (const raw of buf.split(/\r?\n/)) {
-    const line = raw.trim()
-    if (line.length === 0) continue
-    if (line.startsWith('#')) continue
-    const eq = line.indexOf('=')
-    if (eq <= 0) continue
-    const key = line.slice(0, eq).trim()
-    if (key.length > 0) keys.push(key)
-  }
-  return keys
-}
-
-/**
- * Try to auto-detect a framework. If none is detected, returns undefined.
- */
-async function autoDetectFramework(cwd: string): Promise<Framework | undefined> {
-  try { const res = await autoDetect({ cwd }); return res.framework as Framework } catch { return undefined }
-}
-
-// use detectMarks from auto.ts
-
-/**
- * Validate provider auth and return short status text for the prompt.
- */
-async function providerStatus(p: Provider): Promise<'logged in'|'login required'> {
-  try {
-    if (p === 'vercel') {
-      const res = await runWithTimeout({ cmd: 'vercel whoami' }, 10_000)
-      if (res.ok && /\S/.test(res.stdout)) return 'logged in'
-      return 'login required'
-    }
-    if (p === 'netlify') {
-      const res = await runWithTimeout({ cmd: 'netlify status' }, 10_000)
-      if (res.ok && /Logged in|You are logged in/i.test(res.stdout)) return 'logged in'
-      return 'login required'
-    }
-    if (p === 'cloudflare') {
-      // wrangler whoami prints the account; fallback to --version for availability
-      const who = await runWithTimeout({ cmd: 'wrangler whoami' }, 10_000)
-      if (who.ok && /[A-Za-z0-9_-]/.test(who.stdout)) return 'logged in'
-      const ver = await runWithTimeout({ cmd: 'wrangler --version' }, 10_000)
-      return ver.ok ? 'login required' : 'login required'
-    }
-    if (p === 'github') {
-      // Treat git+origin as readiness
-      const git = await runWithTimeout({ cmd: 'git --version' }, 10_000)
-      if (!git.ok) return 'login required'
-      const rem = await runWithTimeout({ cmd: 'git remote -v' }, 10_000)
-      if (rem.ok && /origin\s+.*github\.com/i.test(rem.stdout)) return 'logged in'
-      return 'login required'
-    }
-  } catch { /* fallthrough */ }
-  return 'login required'
-}
-
-async function ensureProviderAuth(p: Provider, opts: StartOptions): Promise<void> {
-  if (opts.skipAuthCheck || opts.assumeLoggedIn) return
-  // In CI for Netlify we allow skipping auth checks to enable prepare-only flows
-  // and non-interactive deploys when a site id is provided.
-  if (opts.ci && p === 'netlify' && !opts.project) return
-  if (opts.ci && typeof opts.project === 'string' && opts.project.length > 0) return
-  // Validate via provider plugin; if it throws, treat as not logged in.
-  const tryValidate = async (): Promise<boolean> => {
-    try {
-      const plugin = await loadProvider(p)
-      await plugin.validateAuth(process.cwd())
-      return true
-    } catch {
-      return false
-    }
-  }
-  const ok: boolean = await tryValidate()
-  if (ok) return
-  if (opts.ci) throw new Error(`${p} login required`)
-  const want = await clackConfirm({ message: `${providerNiceName(p)} login required. Log in now?`, initialValue: true })
-  if (isCancel(want) || want !== true) throw new Error(`${p} login required`)
-  const cmd: string = p === 'vercel' ? 'vercel login' : p === 'netlify' ? 'netlify login' : p === 'cloudflare' ? 'wrangler login' : 'git remote -v'
-  note(`Running: ${cmd}`, 'Auth')
-  const res = await proc.run({ cmd })
-  if (!res.ok) throw new Error(`${p} login failed`)
-  // Re-validate after login
-  const ok2 = await tryValidate()
-  if (!ok2) throw new Error(`${p} login failed`)
-}
-
-/**
- * Deploy using the existing low-level logic (similar to `up`).
- */
 async function runDeploy(args: { readonly provider: Provider; readonly env: 'prod' | 'preview'; readonly cwd: string; readonly json: boolean; readonly project?: string; readonly org?: string; readonly printCmd?: boolean; readonly publishDir?: string; readonly noBuild?: boolean; readonly alias?: string; readonly showLogs?: boolean; readonly timeoutSeconds?: number; readonly idleTimeoutSeconds?: number }): Promise<{ readonly url?: string; readonly logsUrl?: string; readonly alias?: string }> {
   const envTarget = args.env
-  // Netlify is not supported.
-  if (args.provider === 'netlify') {
-    throw new Error('Netlify is not supported by OpenDeploy. Please use the official Netlify CLI.')
-  }
   // Cloudflare Pages via provider plugin
   if (args.provider === 'cloudflare') {
     const plugin = await loadProvider('cloudflare')
@@ -670,9 +629,8 @@ async function runDeploy(args: { readonly provider: Provider; readonly env: 'pro
     const startAt = Date.now()
     const hb = setInterval(() => { sp.update(`${phaseText}: ${statusText} — ${formatElapsed(Date.now() - startAt)}`) }, 1000)
     const urlRe = /https?:\/\/[^\s]+vercel\.app/g
-    
     let capturedUrl: string | undefined
-  let capturedLogsUrl: string | undefined
+    let capturedLogsUrl: string | undefined
     let capturedInspect: string | undefined
     let emittedLogsEvent = false
     let lastActivity = Date.now()
@@ -829,239 +787,8 @@ async function runDeploy(args: { readonly provider: Provider; readonly env: 'pro
     }
     return { url: capturedUrl, logsUrl: capturedInspect, alias: aliased }
   }
-  // Netlify
-  const phaseText: string = `Netlify: deploying (${envTarget === 'prod' ? 'production' : 'preview'})`
-  const sp = spinner(phaseText)
-  const siteFlag: string = args.project ? ` --site ${args.project}` : ''
-  const dirFlag: string = args.publishDir ? ` --dir ${args.publishDir}` : ''
-  let capturedUrl: string | undefined
-  let capturedLogsUrl: string | undefined
-  const urlRe = /https?:\/\/[^\s]+\.netlify\.app\b/g
-  // Experimental: direct deploy via Netlify API with Go sidecar (no CLI). Guarded by OPD_NETLIFY_DIRECT=1.
-  if (process.env.OPD_NETLIFY_DIRECT === '1' && args.publishDir && args.project) {
-    try {
-      const srcDir = join(args.cwd, args.publishDir)
-      const startAt = Date.now()
-      const hb = setInterval(() => { sp.update(`${phaseText}: uploading — ${formatElapsed(Date.now() - startAt)}`) }, 1000)
-      const direct = await goNetlifyDeployDir({ src: srcDir, site: args.project, prod: envTarget === 'prod', cwd: args.cwd })
-      clearInterval(hb)
-      sp.stop()
-      if (!direct.ok) {
-        const err = new Error('Netlify direct deploy failed') as Error & { meta?: Record<string, unknown> }
-        err.meta = { provider: 'netlify', reason: direct.reason }
-        if (process.env.OPD_NDJSON === '1') logger.json({ action: 'start', provider: 'netlify', target: envTarget, event: 'done', ok: false, reason: direct.reason })
-        throw err
-      }
-      capturedUrl = direct.url
-      capturedLogsUrl = direct.logsUrl
-      if (process.env.OPD_NDJSON === '1') logger.json({ action: 'start', provider: 'netlify', target: envTarget, event: 'done', ok: true, url: capturedUrl, logsUrl: capturedLogsUrl })
-      return { url: capturedUrl, logsUrl: capturedLogsUrl, alias: undefined }
-    } catch (e) {
-      // Fall through to CLI path on error
-      // Provide minimal visibility but avoid failing the entire command when experimental path fails
-      if ((process.env.OPD_JSON !== '1' && process.env.OPD_NDJSON !== '1') || args.showLogs === true) {
-        logger.warn('[experimental] Netlify direct deploy failed; falling back to CLI path')
-      }
-    }
-  }
-  const buildPart = args.noBuild === true ? '' : ' --build'
-  const jsonPart = args.json === true ? ' --json' : ''
-  const cmd = `netlify deploy${buildPart}${envTarget === 'prod' ? ' --prod' : ''}${dirFlag}${siteFlag}${jsonPart}`.trim()
-  if (args.printCmd) logger.info(`$ ${cmd}`)
-  // Optional experimental packaging: package publishDir into a zip and compute checksum for diagnostics.
-  // Guarded by OPD_PACKAGE=zip to avoid overhead in default path.
-  if (process.env.OPD_PACKAGE === 'zip' && args.publishDir) {
-    try {
-      const ts = new Date().toISOString().replace(/[:.]/g, '-')
-      const dest = join(process.cwd(), '.artifacts', `netlify-${envTarget}-${ts}.zip`)
-      try { await mkdir(join(process.cwd(), '.artifacts'), { recursive: true }) } catch {}
-      const z = await goZipDir({ src: join(args.cwd, args.publishDir), dest })
-      if (z.ok && z.dest) {
-        const sum = await goChecksumFile({ src: z.dest })
-        if (process.env.OPD_NDJSON === '1') logger.json({ action: 'start', provider: 'netlify', target: envTarget, event: 'artifact', path: z.dest, checksum: sum.digest })
-        else if (args.printCmd) logger.info(`artifact: ${z.dest}${sum.digest ? ` (sha256:${sum.digest})` : ''}`)
-      }
-    } catch { /* ignore packaging errors */ }
-  }
-  const startAt = Date.now()
-  let statusText = envTarget === 'prod' ? 'production' : 'preview'
-  const hb = setInterval(() => { sp.update(`${phaseText}: ${statusText} — ${formatElapsed(Date.now() - startAt)}`) }, 1000)
-  const emitStatus = (status: string, extra?: Record<string, unknown>): void => {
-    statusText = status
-    if (process.env.OPD_NDJSON === '1') logger.json({ action: 'start', provider: 'netlify', target: envTarget, event: 'status', status, ...(extra ?? {}) })
-  }
-  let lastActivity = Date.now()
-  const logTail: string[] = []
-  const pushTail = (raw: string): void => {
-    const t = raw.replace(/\s+$/, '')
-    if (t.length === 0) return
-    logTail.push(t)
-    if (logTail.length > 50) logTail.shift()
-  }
-  let stdoutBuf = ''
-  let stderrBuf = ''
-  const controller = spawnStreamPreferred({
-    cmd,
-    cwd: args.cwd,
-    timeoutSeconds: args.timeoutSeconds,
-    idleTimeoutSeconds: args.idleTimeoutSeconds,
-    onStdout: (chunk: string): void => {
-      lastActivity = Date.now()
-      const m = chunk.match(urlRe)
-      if (!capturedUrl && m && m.length > 0) capturedUrl = m[0]
-      stdoutBuf += chunk
-      pushTail(chunk)
-      if (process.env.OPD_JSON !== '1' && process.env.OPD_NDJSON !== '1' || args.showLogs === true) {
-        const t = chunk.replace(/\s+$/, '')
-        if (t.length > 0) logger.info(t)
-      }
-      // Try to capture logs URL directly from stdout
-      if (!capturedLogsUrl) {
-        const lm = chunk.match(/https?:\/\/app\.netlify\.com\/sites\/[a-z0-9-]+\/deploys\/[a-f0-9-]+/i)
-        if (lm && lm[0]) capturedLogsUrl = lm[0]
-      }
-      if (process.env.OPD_NDJSON === '1') {
-        const data = truncateEventData(chunk)
-        if (data.length > 0) logger.json({ action: 'start', provider: 'netlify', target: envTarget, event: 'stdout', data })
-      }
-    },
-    onStderr: (chunk: string): void => {
-      lastActivity = Date.now()
-      stderrBuf += chunk
-      pushTail(chunk)
-      if (process.env.OPD_JSON !== '1' && process.env.OPD_NDJSON !== '1' || args.showLogs === true) {
-        const t = chunk.replace(/\s+$/, '')
-        if (t.length > 0) logger.info(t)
-      }
-      const line = chunk.replace(/\s+$/, '')
-      if (/\bUploading\b/i.test(line)) emitStatus('uploading')
-      else if (/\bProcessing\b|\bDeploying\b/i.test(line)) emitStatus('building')
-      else if (/\bDraft URL:|\bWebsite URL:/i.test(line)) emitStatus('ready')
-      else if (/^Error:\s/i.test(line)) { const msg = line.slice(6).trim(); emitStatus('error', { message: msg }); if ((process.env.OPD_JSON !== '1' && process.env.OPD_NDJSON !== '1') || args.showLogs === true) { logger.error(`Error: ${msg}`) } try { controller.stop() } catch { /* ignore */ } }
-      if (process.env.OPD_NDJSON === '1') {
-        const data = truncateEventData(chunk)
-        if (data.length > 0) logger.json({ action: 'start', provider: 'netlify', target: envTarget, event: 'stderr', data })
-      }
-    }
-  })
-  // Idle inactivity watchdog
-  let idleFired = false
-  const idleCheck = args.idleTimeoutSeconds && args.idleTimeoutSeconds > 0
-    ? setInterval(() => {
-        if (!idleFired && Date.now() - lastActivity > args.idleTimeoutSeconds! * 1000) {
-          idleFired = true
-          emitStatus('idle-timeout')
-          try { controller.stop() } catch { /* ignore */ }
-        }
-      }, 2000)
-    : undefined
-  let timedOut = false
-  const res = args.timeoutSeconds && args.timeoutSeconds > 0
-    ? await Promise.race([
-        controller.done,
-        new Promise<{ readonly ok: boolean; readonly exitCode: number }>((resolve) => {
-          setTimeout(() => { timedOut = true; try { controller.stop() } catch { /* ignore */ } resolve({ ok: false, exitCode: 124 }) }, args.timeoutSeconds! * 1000)
-        })
-      ])
-    : await controller.done
-  clearInterval(hb)
-  if (idleCheck) clearInterval(idleCheck)
-  sp.stop()
-  if (!res.ok) {
-    const err = new Error('Netlify deploy failed') as Error & { meta?: Record<string, unknown> }
-    err.meta = { provider: 'netlify', reason: timedOut ? `timeout after ${args.timeoutSeconds}s` : (idleFired ? `idle-timeout after ${args.idleTimeoutSeconds}s` : undefined), url: capturedUrl, errorLogTail: logTail.slice(-20) }
-    if (process.env.OPD_NDJSON === '1') {
-      logger.json({ action: 'start', provider: 'netlify', target: envTarget, event: 'done', ok: false, reason: err.meta.reason, url: capturedUrl })
-    }
-    throw err
-  }
-  // Try parsing URL from buffered output as a secondary step
-  if (!capturedUrl) {
-    try {
-      const all = `${stdoutBuf}\n${stderrBuf}`
-      const m = all.match(urlRe)
-      if (m && m.length > 0) capturedUrl = m[0]
-      else if (args.json === true) {
-        // Attempt JSON parse of stdout when --json flag was used
-        const js = JSON.parse(stdoutBuf) as Record<string, unknown>
-        const cand = (js as any)?.deploy_ssl_url || (js as any)?.ssl_url || (js as any)?.deploy_url || (js as any)?.url
-        if (typeof cand === 'string' && /https?:\/\//.test(cand)) capturedUrl = cand
-      }
-    } catch { /* ignore */ }
-  }
-  // Fallback: if no URL was detected in stream, try to resolve latest deploy via API
-  if (!capturedUrl) {
-    try {
-      const statePath = join(args.cwd, '.netlify', 'state.json')
-      let siteId: string | undefined = args.project
-      if (!siteId) {
-        try {
-          const raw = await readFile(statePath, 'utf8')
-          const js = JSON.parse(raw) as { siteId?: string }
-          if (js && typeof js.siteId === 'string' && js.siteId.length > 0) siteId = js.siteId
-        } catch { /* ignore */ }
-      }
-      if (siteId) {
-        const api = await proc.run({ cmd: `netlify api listDeploys --data '{"site_id":"${siteId}","limit":1}'`, cwd: args.cwd })
-        if (api.ok) {
-          try {
-            const arr = JSON.parse(api.stdout) as Array<Record<string, unknown>>
-            if (Array.isArray(arr) && arr.length > 0) {
-              const d = arr[0] as Record<string, unknown>
-              const url = typeof d.deploy_ssl_url === 'string' ? d.deploy_ssl_url
-                : typeof d.ssl_url === 'string' ? d.ssl_url
-                : typeof d.deploy_url === 'string' ? d.deploy_url
-                : typeof d.url === 'string' ? d.url
-                : undefined
-              if (url && /https?:\/\//.test(url)) capturedUrl = url
-            }
-          } catch { /* ignore */ }
-        }
-      }
-    } catch { /* ignore */ }
-  }
-  // Build a logs URL if not captured from stream
-  if (!capturedLogsUrl) {
-    try {
-      // If we have a site id, try to compute logs URL via API
-      let siteId: string | undefined = args.project
-      if (!siteId) {
-        try {
-          const raw = await readFile(join(args.cwd, '.netlify', 'state.json'), 'utf8')
-          const js = JSON.parse(raw) as { siteId?: string }
-          if (js && typeof js.siteId === 'string') siteId = js.siteId
-        } catch { /* ignore */ }
-      }
-      if (siteId) {
-        // Get site name or admin_url
-        let siteName: string | undefined
-        let adminUrl: string | undefined
-        try {
-          const siteRes = await proc.run({ cmd: `netlify api getSite --data '{"site_id":"${siteId}"}'`, cwd: args.cwd })
-          if (siteRes.ok) {
-            const info = JSON.parse(siteRes.stdout) as { name?: string; admin_url?: string }
-            if (typeof info.name === 'string') siteName = info.name
-            if (typeof info.admin_url === 'string') adminUrl = info.admin_url
-          }
-        } catch { /* ignore */ }
-        // Latest deploy id
-        let deployId: string | undefined
-        try {
-          const ls = await proc.run({ cmd: `netlify api listSiteDeploys --data '{"site_id":"${siteId}","per_page":1}'`, cwd: args.cwd })
-          if (ls.ok) {
-            const arr = JSON.parse(ls.stdout) as Array<{ id?: string }>
-            if (Array.isArray(arr) && arr.length > 0) deployId = arr[0]?.id
-          }
-        } catch { /* ignore */ }
-        if (siteName && deployId) capturedLogsUrl = `https://app.netlify.com/sites/${siteName}/deploys/${deployId}`
-        else if (adminUrl) capturedLogsUrl = `${adminUrl}/deploys`
-      }
-    } catch { /* ignore */ }
-  }
-  if (process.env.OPD_NDJSON === '1') {
-    logger.json({ action: 'start', provider: 'netlify', target: envTarget, event: 'done', ok: true, url: capturedUrl, logsUrl: capturedLogsUrl })
-  }
-  return { url: capturedUrl, logsUrl: capturedLogsUrl }
+  // Netlify deploy path removed. Use official Netlify CLI.
+  throw new Error('Netlify is not supported by OpenDeploy. Use the official Netlify CLI.')
 }
 
 export async function runStartWizard(opts: StartOptions): Promise<void> {
@@ -1071,6 +798,31 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
     else if (opts.json === true || process.env.OPD_JSON === '1') { logger.setJsonOnly(true) }
     if (process.env.OPD_SUMMARY === '1' || opts.summaryOnly === true) { logger.setSummaryOnly(true) }
     const inCI: boolean = Boolean(opts.ci) || process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true'
+    // Minimal preset: short-circuit prompts and deploy with defaults
+    if (opts.minimal === true) {
+      const targetCwd: string = (() => {
+        const p = String(opts.path || '').trim(); if (!p) return rootCwd; return isAbsolute(p) ? p : join(rootCwd, p)
+      })()
+      const detection: DetectionResult = await (async (): Promise<DetectionResult> => {
+        const f = await autoDetectFramework(targetCwd)
+        if (f) return await detectForFramework(f, targetCwd)
+        // Fallback: try Next/Astro quickly
+        try { return await detectForFramework('next', targetCwd) } catch { /* ignore */ }
+        try { return await detectForFramework('astro', targetCwd) } catch { /* ignore */ }
+        return { cwd: targetCwd, framework: 'next', buildCommand: 'next build', publishDir: 'out' } as unknown as DetectionResult
+      })()
+      const provider: Provider = await (async (): Promise<Provider> => {
+        // Prefer GitHub Pages when Next static export is detected, else Vercel
+        const hasStatic: boolean = await hasNextStaticExport(targetCwd)
+        return hasStatic ? 'github' : 'vercel'
+      })()
+      const res = await runDeploy({ provider, env: 'preview', cwd: targetCwd, json: Boolean(opts.json), project: opts.project, org: opts.org, printCmd: opts.printCmd, publishDir: detection.publishDir, noBuild: opts.noBuild, alias: opts.alias, showLogs: Boolean(opts.showLogs), timeoutSeconds: undefined, idleTimeoutSeconds: undefined })
+      // Print a concise summary for humans
+      if (!isJsonMode(opts.json)) {
+        printDeploySummary({ provider, target: 'preview', url: res.url, logsUrl: res.logsUrl })
+      }
+      return
+    }
     // Only treat this run as 'machine mode' when explicitly requested via flags,
     // or when OPD_SUMMARY is set in a CI context. Do NOT inherit OPD_JSON/OPD_NDJSON
     // for gating preflight; they affect output formatting but should not skip preflight.
@@ -1228,14 +980,7 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
     // Help unit tests capture a clear signal that preflight succeeded
     try { /* eslint-disable-next-line no-console */ console.log('Build validated') } catch { /* ignore */ }
 
-    // If a removed provider was chosen, exit early.
-    if (provider === 'netlify') {
-      const msg = 'Netlify is not supported by OpenDeploy. Please use the official Netlify CLI.'
-      if (isJsonMode(opts.json)) { logger.json({ ok: false, action: 'start', provider, message: msg, final: true }) }
-      else { logger.error(msg) }
-      process.exitCode = 1
-      return
-    }
+    // Netlify is not a supported Provider at compile-time; no runtime guard required.
     // One-click login when missing (skip when generating config only)
     if (!opts.generateConfigOnly) await ensureProviderAuth(provider!, opts)
 
@@ -1294,93 +1039,9 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
         }
       }
     }
-    // Determine effective timeout (seconds). Default only in CI.
-    const userTimeout: number = Number(opts.timeout)
-    const effectiveTimeout: number | undefined = Number.isFinite(userTimeout) && userTimeout > 0 ? Math.floor(userTimeout) : (opts.ci ? 900 : undefined)
-
-    if (false) {
-      const existingSiteId: string | undefined = await readNetlifySiteId(targetCwd)
-      let linked: boolean = typeof existingSiteId === 'string' && existingSiteId.length > 0
-      // Validate that the linked site actually exists and is accessible; otherwise, treat as unlinked
-      if (linked) {
-        try {
-          const chk = await proc.run({ cmd: `netlify api getSite --data '{"site_id":"${existingSiteId}"}'`, cwd: targetCwd })
-          if (!chk.ok) linked = false
-          else {
-            try {
-              const js = JSON.parse(chk.stdout) as { id?: string; site_id?: string; error?: unknown; message?: unknown; status?: number }
-              const sid = (typeof js?.site_id === 'string' ? js.site_id : js?.id)
-              if (!sid || sid.length === 0 || js?.error || js?.message || (typeof js?.status === 'number' && js.status >= 400)) linked = false
-            } catch { linked = false }
-          }
-        } catch { linked = false }
-      }
-      if (!linked) {
-        // 1) If a project id was provided, always link non-interactively
-        if (opts.project) {
-          note(`Running: netlify link --id ${opts.project}`, 'Link')
-          const out = await proc.run({ cmd: `netlify link --id ${opts.project}`, cwd: targetCwd })
-          if (!out.ok) throw new Error('Netlify link failed')
-        }
-        // 2) If no project id, auto-create and link
-        else if (opts.ci || machineMode) {
-          const base = targetCwd.split(/[\\/]/).pop() ?? 'site'
-          const name = base.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-{2,}/g, '-').replace(/^-+|-+$/g, '') || 'site'
-          note(`Creating Netlify site: ${name}`, 'Create')
-          const spCreate = spinner('Netlify: creating site')
-          try { createdSiteId = await createNetlifySite({ cwd: targetCwd, name }) }
-          finally { spCreate.stop() }
-          note(`Running: netlify link --id ${createdSiteId}`, 'Link')
-          const linkRes = await proc.run({ cmd: `netlify link --id ${createdSiteId}`, cwd: targetCwd })
-          if (!linkRes.ok) throw new Error('Netlify link failed')
-        }
-        // 3) Human mode without project id: prompt and create/link (existing behavior)
-        else {
-          const doCreate = await clackConfirm({ message: 'No linked Netlify site. Create a new site here?', initialValue: true })
-          if (isCancel(doCreate)) { cancel('Cancelled'); return }
-          if (doCreate) {
-            const base = targetCwd.split(/[\\/]/).pop() ?? 'site'
-            const name = base.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-{2,}/g, '-').replace(/^-+|-+$/g, '') || 'site'
-            note(`Creating Netlify site: ${name}`, 'Create')
-            const spCreate = spinner('Netlify: creating site')
-            try { createdSiteId = await createNetlifySite({ cwd: targetCwd, name }) }
-            finally { spCreate.stop() }
-            note(`Running: netlify link --id ${createdSiteId}`, 'Link')
-            const linkRes = await proc.run({ cmd: `netlify link --id ${createdSiteId}`, cwd: targetCwd })
-            if (!linkRes.ok) throw new Error('Netlify link failed')
-          } else {
-            // Offer to select an existing site to link
-            const list = await proc.run({ cmd: 'netlify api listSites', cwd: targetCwd })
-            if (!list.ok) throw new Error('Could not list Netlify sites; run: netlify login')
-            let sites: Array<{ id: string; name: string }>
-            try {
-              const arr = JSON.parse(list.stdout) as Array<{ id?: string; name?: string }>
-              sites = (arr || []).filter((s) => typeof s?.id === 'string' && typeof s?.name === 'string').map((s) => ({ id: s.id as string, name: s.name as string }))
-            } catch { throw new Error('Failed to parse Netlify sites list') }
-            if (!sites || sites.length === 0) throw new Error('No Netlify sites found; create one first with: netlify sites:create')
-            const choice = await select({
-              message: 'Select a Netlify site to link',
-              options: sites.slice(0, 50).map((s) => ({ value: s.id, label: `${s.name} (${s.id.slice(0, 8)}…)` }))
-            })
-            if (isCancel(choice)) { cancel('Cancelled'); return }
-            const chosenSiteId: string = choice as string
-            note(`Running: netlify link --id ${chosenSiteId}`, 'Link')
-            const linkRes = await proc.run({ cmd: `netlify link --id ${chosenSiteId}`, cwd: targetCwd })
-            if (!linkRes.ok) throw new Error('Netlify link failed')
-            createdSiteId = chosenSiteId
-          }
-        }
-      }
-    }
-
     // Compute effective project as early as possible (needed for env sync)
     let effectiveProject: string | undefined
-    if (false) {
-      const stateSiteId: string | undefined = await readNetlifySiteId(targetCwd)
-      effectiveProject = opts.project ?? createdSiteId ?? stateSiteId ?? (saved.project as string | undefined)
-    } else {
-      effectiveProject = opts.project ?? (saved.project as string | undefined)
-    }
+    effectiveProject = opts.project ?? (saved.project as string | undefined)
 
     // Compute env target for subsequent steps
     const envTarget: 'prod' | 'preview' = (opts.env ?? (saved.env as 'prod' | 'preview') ?? 'preview') === 'prod' ? 'prod' : 'preview'
@@ -1391,19 +1052,6 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
       const res = await clackConfirm({ message: 'Auto-sync .env before deploy?', initialValue: true })
       if (isCancel(res)) { cancel('Cancelled'); return }
       doSync = res as boolean
-    }
-
-    // If using Netlify and no effective project yet, auto-create and link now to unblock env sync and deploy
-    if (false) {
-      const base = targetCwd.split(/[\\/]/).pop() ?? 'site'
-      const name = base.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-{2,}/g, '-').replace(/^-+|-+$/g, '') || 'site'
-      note(`Creating Netlify site for env sync: ${name}`, 'Create')
-      const spAuto = spinner('Netlify: creating site')
-      try { createdSiteId = await createNetlifySite({ cwd: targetCwd, name }); effectiveProject = createdSiteId }
-      finally { spAuto.stop() }
-      note(`Running: netlify link --id ${effectiveProject}`, 'Link')
-      const linkRes = await proc.run({ cmd: `netlify link --id ${effectiveProject}`, cwd: targetCwd })
-      if (!linkRes.ok) throw new Error('Netlify link failed')
     }
 
     if (doSync) {
@@ -1442,203 +1090,95 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
     // (preflight already executed above)
 
     // Deploy / Prepare
-    // Netlify removed
-    if (false) {
-      try { const p = await loadProvider('netlify'); await p.generateConfig({ detection, cwd: targetCwd, overwrite: false }); humanNote('Ensured netlify.toml', 'Config') } catch { /* ignore if exists */ }
-    }
     // effectiveProject already computed above
+    // Determine effective timeout (seconds). Default only in CI.
+    const userTimeout: number = Number((opts as any).timeout)
+    const effectiveTimeout: number | undefined = Number.isFinite(userTimeout) && userTimeout > 0 ? Math.floor(userTimeout) : (opts.ci ? 900 : undefined)
 
-    if (false) {
-      // Detect Netlify Next Runtime presence for Next.js projects first
-      let netlifyNextRuntime: boolean | undefined
+    // GitHub Pages safe fix: ensure public/.nojekyll and patch next.config for static export
+    if (provider === 'github') {
       try {
-        if (detection.framework === 'next') {
-          // Heuristics: package.json dep, module dir, or legacy manifest file
-          let hasDep = false
-          try {
-            const pkg = await fsx.readJson<Record<string, unknown>>(join(targetCwd, 'package.json'))
-            const deps = (pkg as any)?.dependencies ?? {}
-            const dev = (pkg as any)?.devDependencies ?? {}
-            hasDep = Boolean(deps['@netlify/next'] || dev['@netlify/next'])
-          } catch { /* ignore */ }
-          const hasModuleDir = await fsx.exists(join(targetCwd, 'node_modules', '@netlify', 'next'))
-          const hasManifest = await fsx.exists(join(targetCwd, 'node_modules', '@netlify', 'next', 'manifest.yml'))
-          netlifyNextRuntime = Boolean(hasDep || hasModuleDir || hasManifest)
+        const pubDir = join(targetCwd, 'public')
+        const marker = join(pubDir, '.nojekyll')
+        const existsPub = await fsx.exists(pubDir)
+        const existsMarker = await fsx.exists(marker)
+        if (existsPub && !existsMarker) {
+          const machine: boolean = isJsonMode(opts.json) || Boolean(opts.ci)
+          const auto = machine
+          let apply = auto
+          if (!auto) {
+            const ans = await clackConfirm({ message: 'Apply safe fix for GitHub Pages (.nojekyll in public/)?', initialValue: true })
+            apply = !isCancel(ans) && ans === true
+          }
+          if (apply) {
+            await writeFile(marker, '', 'utf8')
+            humanNote('Ensured public/.nojekyll for GitHub Pages static hosting.', 'Fix')
+            if (isJsonMode(opts.json)) logger.json({ ok: true, action: 'start', event: 'fix', provider: 'github', fix: 'github-nojekyll', file: marker })
+          }
         }
-      } catch { /* ignore */ }
-      // Offer to auto-install the runtime in human mode when missing
-      if (provider === 'netlify' && detection.framework === 'next' && netlifyNextRuntime !== true && !machineMode) {
-        const want = await clackConfirm({ message: 'Install @netlify/next runtime for optimal Next.js support?', initialValue: true })
-        if (isCancel(want)) { cancel('Cancelled'); return }
-        if (want) {
-          const pm = pkgMgr // detected earlier
-          const installCmd = pm === 'pnpm' ? 'pnpm add -D @netlify/next' : pm === 'yarn' ? 'yarn add -D @netlify/next' : 'npm i -D @netlify/next'
-          note(`Running: ${installCmd}`, 'Install')
-          const res = await proc.run({ cmd: installCmd, cwd: targetCwd })
-          if (!res.ok) throw new Error('Failed to install @netlify/next')
-          try { netlifyNextRuntime = await fsx.exists(join(targetCwd, 'node_modules', '@netlify', 'next', 'manifest.yml')) } catch { /* ignore */ }
-          if (netlifyNextRuntime) humanNote('Netlify Next Runtime detected (installed)', 'Next.js')
-        }
-      }
-      // Prepare-only: detect publish dir and print recommended commands.
-      const usingNextRuntime: boolean = (detection.framework === 'next' && netlifyNextRuntime === true)
-      let publishDir: string | undefined = usingNextRuntime ? undefined : (detection.publishDir ?? inferNetlifyPublishDir({ framework: framework!, cwd: targetCwd }))
-      // Check publishDir existence and files to improve guidance (skip for Next runtime)
-      let publishDirExists: boolean = false
-      let publishDirFileCount: number = 0
-      if (publishDir) {
-        try {
-          const full = join(targetCwd, publishDir)
-          publishDirExists = await fsx.exists(full)
-          if (publishDirExists) publishDirFileCount = await countFiles(full)
-        } catch { /* ignore */ }
-      }
-      // Resolve site name and admin URL for enriched JSON summaries
-      let siteName: string | undefined
-      let adminUrl: string | undefined
-      try {
-        const siteId: string | undefined = effectiveProject
-        if (siteId) {
-          const siteRes = await proc.run({ cmd: `netlify api getSite --data '{"site_id":"${siteId}"}'`, cwd: targetCwd })
-          if (siteRes.ok) {
-            try { const js = JSON.parse(siteRes.stdout) as { name?: string; admin_url?: string }
-              if (typeof js.name === 'string') siteName = js.name
-              if (typeof js.admin_url === 'string') adminUrl = js.admin_url
-            } catch { /* ignore */ }
+        const cfgPath = await findNextConfig(targetCwd)
+        if (cfgPath) {
+          const machine: boolean = isJsonMode(opts.json) || Boolean(opts.ci)
+          let apply = machine
+          if (!apply) {
+            const ans = await clackConfirm({ message: 'Patch next.config.* for GitHub Pages (output:"export", images.unoptimized:true, trailingSlash:true)?', initialValue: true })
+            apply = !isCancel(ans) && ans === true
+          }
+          if (apply) {
+            const patched = await patchNextConfigForGithub({ path: cfgPath, setTrailing: true })
+            if (patched.changed) {
+              await writeFile(cfgPath, patched.content, 'utf8')
+              humanNote('Patched next.config for GitHub Pages static export.', 'Config')
+              if (isJsonMode(opts.json)) logger.json({ ok: true, action: 'start', event: 'fix', provider: 'github', fix: 'github-next-config', file: cfgPath, changes: patched.fixes })
+            }
           }
         }
       } catch { /* ignore */ }
-      // CI checklist data
-      const buildCommand: string = detection.buildCommand
-      let ciEnvFile: string | undefined
-      let envKeysExample: readonly string[] | undefined
+    }
+
+    // Cloudflare Pages: offer to generate wrangler.toml and patch next.config for SSR/hybrid
+    if (provider === 'cloudflare') {
       try {
-        const candidates: readonly string[] = envTarget === 'prod' ? ['.env.production.local', '.env'] : ['.env', '.env.local']
-        for (const f of candidates) { if (await fsx.exists(join(targetCwd, f))) { ciEnvFile = f; break } }
-        if (ciEnvFile) {
-          const keys = await parseEnvKeys(join(targetCwd, ciEnvFile))
-          envKeysExample = keys.slice(0, 10)
-        }
-      } catch { /* ignore */ }
-      const previewCmd = (usingNextRuntime
-        ? `netlify build && netlify deploy${effectiveProject ? ` --site ${effectiveProject}` : ''}`
-        : `netlify deploy${publishDir ? ` --dir ${publishDir}` : ''}${effectiveProject ? ` --site ${effectiveProject}` : ''}`
-      ).trim()
-      const prodCmd = (usingNextRuntime
-        ? `netlify build && netlify deploy --prod${effectiveProject ? ` --site ${effectiveProject}` : ''}`
-        : `netlify deploy --prod${publishDir ? ` --dir ${publishDir}` : ''}${effectiveProject ? ` --site ${effectiveProject}` : ''}`
-      ).trim()
-      if (opts.printCmd === true) {
-        logger.info(`$ ${previewCmd}`)
-        logger.info(`$ ${prodCmd}`)
-      }
-      // Decide deploy vs prepare-only
-      // For Netlify, default to prepare-only unless user explicitly passed --deploy=true
-      let shouldDeploy: boolean = opts.deploy === true
-      // In human mode, if user did not pass --deploy flag, confirm intention
-      if (opts.deploy === undefined && !opts.ci && !machineMode) {
-        const wantDeploy = await clackConfirm({ message: 'Deploy to Netlify now?', initialValue: true })
-        if (isCancel(wantDeploy)) { cancel('Cancelled'); return }
-        shouldDeploy = wantDeploy === true
-      }
-      if (shouldDeploy) {
-        // Always perform an explicit local build first for Netlify to avoid
-        // the CLI "skipped"/empty deploy edge cases. Users can opt out via --no-build.
-        const mustBuildFirst: boolean = opts.noBuild === true ? false : true
-        if (mustBuildFirst) {
-          const buildCmd = 'netlify build'
-          if (opts.printCmd) logger.info(`$ ${buildCmd}`)
-          const buildRes = await proc.run({ cmd: buildCmd, cwd: targetCwd })
-          if (!buildRes.ok) throw new Error('Netlify build failed')
-          // After building, recompute publishDir existence metrics for summaries
-          if (!usingNextRuntime) {
-            try {
-              const pub = publishDir ?? inferNetlifyPublishDir({ framework: framework!, cwd: targetCwd })
-              const full = join(targetCwd, pub)
-              publishDirExists = await fsx.exists(full)
-              publishDirFileCount = publishDirExists ? await countFiles(full) : 0
-              publishDir = pub
-            } catch { /* ignore */ }
+        const wranglerPath = join(targetCwd, 'wrangler.toml')
+        const existsWr = await fsx.exists(wranglerPath)
+        if (!existsWr) {
+          const machine: boolean = isJsonMode(opts.json) || Boolean(opts.ci)
+          const auto = machine
+          let apply = auto
+          if (!auto) {
+            const ans = await clackConfirm({ message: 'Generate wrangler.toml for Cloudflare Pages (Next on Pages defaults)?', initialValue: true })
+            apply = !isCancel(ans) && ans === true
+          }
+          if (apply) {
+            const content = [
+              'pages_build_output_dir = ".vercel/output/static"',
+              'pages_functions_directory = ".vercel/output/functions"',
+              'compatibility_flags = ["nodejs_compat"]',
+              ''
+            ].join('\n')
+            await writeFile(wranglerPath, content, 'utf8')
+            humanNote('Generated wrangler.toml with Next on Pages defaults.', 'Config')
+            if (isJsonMode(opts.json)) logger.json({ ok: true, action: 'start', event: 'fix', provider: 'cloudflare', fix: 'cloudflare-wrangler', file: wranglerPath })
           }
         }
-        // Machine mode requires a site id to avoid interactive linking
-        if (!effectiveProject && machineMode) {
-          throw new Error('Netlify site not linked. Provide --project <siteId> or run `netlify link` before deploying.')
+        const cfgPath = await findNextConfig(targetCwd)
+        if (cfgPath) {
+          const machine: boolean = isJsonMode(opts.json) || Boolean(opts.ci)
+          let apply = machine
+          if (!apply) {
+            const ans = await clackConfirm({ message: 'Patch next.config.* for Cloudflare Pages (remove output:"export", empty basePath, remove assetPrefix, trailingSlash:false)?', initialValue: true })
+            apply = !isCancel(ans) && ans === true
+          }
+          if (apply) {
+            const patched = await patchNextConfigForCloudflare({ path: cfgPath, setTrailing: true })
+            if (patched.changed) {
+              await writeFile(cfgPath, patched.content, 'utf8')
+              humanNote('Patched next.config for Cloudflare Pages SSR/hybrid.', 'Config')
+              if (isJsonMode(opts.json)) logger.json({ ok: true, action: 'start', event: 'fix', provider: 'cloudflare', fix: 'cloudflare-next-config', file: cfgPath, changes: patched.fixes })
+            }
+          }
         }
-        // Execute a real deploy via Netlify CLI (optional path)
-        const idleSeconds = Number(opts.idleTimeout)
-        const effIdle: number | undefined = Number.isFinite(idleSeconds) && idleSeconds > 0 ? Math.floor(idleSeconds) : (opts.ci ? 45 : undefined)
-        const { url } = await runDeploy({ provider: provider!, env: envTarget, cwd: targetCwd, json: Boolean(opts.json), project: effectiveProject, printCmd: opts.printCmd === true, publishDir, noBuild: true, showLogs: Boolean(opts.showLogs), timeoutSeconds: effectiveTimeout, idleTimeoutSeconds: effIdle })
-        // NDJSON parity: emit a logs event if available
-        if (process.env.OPD_NDJSON === '1' && adminUrl) {
-          logger.json({ action: 'start', provider, target: envTarget, event: 'logs', logsUrl: `${adminUrl}/deploys` })
-        }
-        if (isJsonMode(opts.json)) {
-          const summary = { ok: true, action: 'start' as const, provider, target: envTarget, mode: 'deploy' as const, projectId: effectiveProject, siteId: effectiveProject, siteName, url, logsUrl: adminUrl ? `${adminUrl}/deploys` : undefined, ciChecklist: { buildCommand, publishDir, envFile: ciEnvFile, exampleKeys: envKeysExample }, publishDirExists, publishDirFileCount, netlifyNextRuntime, ciUnlinkedNoProject, cwd: targetCwd, final: true }
-          logger.jsonPrint(summary)
-          if (!machineMode) outro('Deployed')
-          return
-        }
-        if (url) logger.success(`${envTarget === 'prod' ? 'Production' : 'Preview'}: ${url}`)
-        if (!machineMode) outro('Deployment complete')
-    setTimeout(() => { try { process.exit(0) } catch { /* ignore */ } }, 0)
-    // Final guard: some terminals on Windows may keep a stray handle open after shell openers.
-    // Exit cleanly after yielding the event loop once.
-    setTimeout(() => { try { process.exit(0) } catch { /* ignore */ } }, 0)
-        // Ensure the wizard terminates cleanly even if a stray handle remains (Windows shell/openers)
-        setTimeout(() => { try { process.exit(0) } catch { /* ignore */ } }, 0)
-        return
-      }
-      // NDJSON parity: emit a logs event if available
-      if (process.env.OPD_NDJSON === '1' && adminUrl) {
-        logger.json({ action: 'start', provider, target: envTarget, event: 'logs', logsUrl: `${adminUrl}/deploys` })
-      }
-      if (isJsonMode(opts.json)) {
-        const summary = {
-          ok: true,
-          action: 'start' as const,
-          provider,
-          target: envTarget,
-          mode: 'prepare-only',
-          projectId: effectiveProject,
-          siteId: effectiveProject,
-          siteName,
-          publishDir,
-          recommend: { previewCmd, prodCmd },
-          ciChecklist: { buildCommand, publishDir, envFile: ciEnvFile, exampleKeys: envKeysExample },
-          publishDirExists,
-          publishDirFileCount,
-          netlifyNextRuntime,
-          ciUnlinkedNoProject,
-          logsUrl: adminUrl ? `${adminUrl}/deploys` : undefined,
-          cwd: targetCwd,
-          final: true
-        }
-        logger.jsonPrint(summary)
-        if (!machineMode) outro('Prepared')
-        setTimeout(() => { try { process.exit(0) } catch { /* ignore */ } }, 0)
-        return
-      }
-      // Human messaging with Git/CI recommendation and CI checklist
-      logger.warn('Netlify (prepare-only): connect your repository and use Git/CI builds for reliability and caching. Local builds can be slower or time out on first runs.')
-      humanNote('Netlify Git/CI: In Netlify Admin → Connect to Git. Set Build command and Publish directory per framework, and add environment variables.', 'Recommendation')
-      if (!publishDirExists || publishDirFileCount === 0) {
-        humanNote(`Publish directory "${publishDir}" ${publishDirExists ? 'has no files' : 'was not found'}. Ensure your build outputs static assets there.`, 'Publish directory')
-      }
-      if (detection.framework === 'next') {
-        if (netlifyNextRuntime === true) humanNote('Netlify Next Runtime detected (optimal for Next.js on Netlify).', 'Next.js')
-        else humanNote('Using legacy Netlify Next plugin. For best SSR/Edge support, install @netlify/next.', 'Next.js')
-      }
-      humanNote(`Recommended preview deploy:\n${previewCmd}`, 'Netlify')
-      humanNote(`Recommended production deploy:\n${prodCmd}`, 'Netlify')
-      const lines: string[] = []
-      lines.push(`Build command: ${buildCommand}`)
-      lines.push(`Publish dir:  ${publishDir}`)
-      if (ciEnvFile) lines.push(`Env file:     ${ciEnvFile}`)
-      if (envKeysExample && envKeysExample.length > 0) lines.push(`Example keys: ${envKeysExample.join(', ')}${envKeysExample.length >= 10 ? '…' : ''}`)
-      humanNote(lines.join('\n'), 'CI Checklist')
-      if (!machineMode) outro('Preparation complete')
-      return
+      } catch { /* ignore */ }
     }
 
     // GitHub Pages special flow: decide Actions vs Branch before any deploy
@@ -1725,6 +1265,40 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
     const idleSeconds = Number(opts.idleTimeout)
     const effIdle: number | undefined = Number.isFinite(idleSeconds) && idleSeconds > 0 ? Math.floor(idleSeconds) : (opts.ci ? 45 : undefined)
     const { url, logsUrl, alias } = await runDeploy({ provider: provider!, env: envTarget, cwd: targetCwd, json: Boolean(opts.json), project: effectiveProject, org: opts.org ?? saved.org, printCmd: opts.printCmd === true, alias: opts.alias, showLogs: Boolean(opts.showLogs), timeoutSeconds: effectiveTimeout, idleTimeoutSeconds: effIdle })
+    let aliasAssigned: string | undefined = alias
+    let didPromote: boolean = false
+
+    // Non-interactive auto-promotion: if --promote and --alias are provided in machine mode (or JSON), set alias without prompting
+    if (provider === 'vercel' && envTarget === 'preview' && !didPromote && opts.promote === true && typeof opts.alias === 'string' && opts.alias.trim().length > 0) {
+      try {
+        let previewUrl: string | undefined = url
+        if (!previewUrl) {
+          const listRes = await proc.run({ cmd: 'vercel list --json -n 10', cwd: targetCwd })
+          if (listRes.ok) {
+            try {
+              const arr = JSON.parse(listRes.stdout) as Array<{ url?: string; readyState?: string; target?: string }>
+              const previews = arr.filter(d => (d.target ?? '').toLowerCase() !== 'production' && (d.readyState ?? '').toLowerCase() === 'ready')
+              previewUrl = previews[0]?.url ? (previews[0].url!.startsWith('http') ? previews[0].url! : `https://${previews[0].url!}`) : undefined
+            } catch { /* ignore parse */ }
+          }
+        }
+        if (previewUrl) {
+          const domain = opts.alias.replace(/^https?:\/\//i, '').trim()
+          const aliasCmd = `vercel alias set ${previewUrl} ${domain}`
+          if (opts.printCmd) logger.info(`$ ${aliasCmd}`)
+          const set = await runWithRetry({ cmd: aliasCmd, cwd: targetCwd })
+          if (set.ok) {
+            aliasAssigned = `https://${domain}`
+            didPromote = true
+          } else {
+            const msg = (set.stderr || set.stdout || 'Failed to set alias').trim()
+            logger.warn(`Promotion failed: ${msg}\nHint: Ensure the domain is added to your Vercel project (Project Settings → Domains) and that your account/team has permission to manage domains.`)
+          }
+        } else {
+          logger.warn('Promotion skipped: could not resolve preview URL to promote. Provide --alias and optionally use --print-cmd to inspect provider commands.')
+        }
+      } catch { /* ignore, keep deploy result */ }
+    }
     const cmd = buildNonInteractiveCmd({ provider: provider!, envTarget, path: targetPath, project: effectiveProject, org: opts.org ?? saved.org, syncEnv: doSync })
     // Build a small CI checklist for Vercel as well
     const buildCommand: string = detection.buildCommand
@@ -1764,7 +1338,7 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
     }
 
     if (isJsonMode(opts.json)) {
-      logger.json({ ok: true, action: 'start', provider, target: envTarget, mode: 'deploy', url, logsUrl, alias, cmd, ciChecklist: { buildCommand, envFile: ciEnvFile, exampleKeys: envKeysExample }, cwd: targetCwd, final: true })
+      logger.json({ ok: true, action: 'start', provider, target: envTarget, mode: 'deploy', url, logsUrl, alias: aliasAssigned, cmd, ciChecklist: { buildCommand, envFile: ciEnvFile, exampleKeys: envKeysExample }, cwd: targetCwd, final: true })
       if (!machineMode) outro('Done');
       return
     }
@@ -1913,12 +1487,13 @@ export function registerStartCommand(program: Command): void {
     .command('start')
     .description('Guided deploy wizard (select framework, provider, env, and deploy)')
     .option('--framework <name>', 'Framework: next|astro|sveltekit|remix|expo')
-    .option('--provider <name>', 'Provider: vercel|netlify|cloudflare|github')
+    .option('--provider <name>', 'Provider: vercel|cloudflare|github')
     .option('--env <env>', 'Environment: prod|preview', 'preview')
     .option('--path <dir>', 'Path to app directory (monorepo)')
     .option('--project <id>', 'Provider project/site ID')
     .option('--org <id>', 'Provider org/team ID (Vercel)')
     .option('--sync-env', 'Sync environment before deploy')
+    .option('--promote', 'Vercel: after a preview deploy, promote it to production by setting an alias (use with --alias)')
     .option('--json', 'JSON-only output')
     .option('--print-cmd', 'Print underlying provider commands that will be executed')
     .option('--ci', 'CI mode (non-interactive)')
@@ -1938,6 +1513,7 @@ export function registerStartCommand(program: Command): void {
     .option('--timeout <seconds>', 'Abort provider subprocess after N seconds (default 900 in --ci; unlimited otherwise)')
     .option('--debug-detect', 'Emit detection JSON payload (path, framework, build/publish hints) for debugging')
     .option('--generate-config-only', 'Write vercel.json/netlify.toml based on detection and exit')
+    .option('--minimal', 'Run with sensible defaults (non-interactive)')
     .action(async (opts: StartOptions): Promise<void> => {
       try { await runStartWizard(opts) } catch (err) {
         const message: string = err instanceof Error ? err.message : String(err)

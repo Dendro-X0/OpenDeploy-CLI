@@ -67,7 +67,7 @@ export function registerPlanCommand(program: Command): void {
             cmdPlan.push('gh-pages -d build')
           } else if (fw === 'next') {
             cmdPlan.push('# Next.js on GitHub Pages requires static export (next.config.js: output: "export").')
-            cmdPlan.push('next export && gh-pages -d out')
+            cmdPlan.push('next build && gh-pages -d out')
           } else {
             const dir = publishDir ?? 'dist'
             cmdPlan.push(`gh-pages -d ${dir}`)

@@ -19,7 +19,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "OpenDeploy CLI • Docs",
   description:
-    "Fast, web‑focused deploys. Generate provider configs (vercel.json, netlify.toml, turbo.json), sync/diff env, and ship to Vercel/Netlify with readable logs and CI‑friendly JSON/NDJSON.",
+    "Fast, web‑focused deploys. Generate provider configs (vercel.json, turbo.json), sync/diff env, and ship to Vercel with readable logs and CI‑friendly JSON/NDJSON. Logs/open supported for Cloudflare Pages and GitHub Pages.",
 };
 
 export const viewport: Viewport = {

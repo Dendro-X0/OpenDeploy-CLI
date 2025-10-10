@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.2.1 - 2025-10-10
+
+- Docs and onboarding
+  - Added 3-step quickstarts for Vercel, GitHub Pages, and Cloudflare Pages
+  - Linked quickstarts from sidebar, landing page tiles, and Quick Start Guide
+  - Published docs via GitHub Pages workflow
+- Provider scope
+  - Netlify support fully removed from CLI and docs; provider route deleted
+  - Please use the official Netlify CLI for Netlify deployments
+- Start wizard safe-fixes and Next.js config patchers
+  - GitHub Pages: ensure `public/.nojekyll`; patch Next.js config (`output: 'export'`, `images.unoptimized: true`, `trailingSlash: true`)
+  - Cloudflare Pages: generate `wrangler.toml` (Next on Pages defaults); patch Next.js config (remove `output: 'export'`, clear `basePath`, remove `assetPrefix`, set `trailingSlash: false`)
+- README simplified to five sections and points to the quickstarts
+
 ## 1.2.0 - 2025-10-04
 
 - Go sidecar hardening

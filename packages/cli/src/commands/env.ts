@@ -40,7 +40,7 @@ interface SyncOptions {
 }
 
 // Ajv validator for env summaries (top-level so helpers can use it)
-const envAjv = new Ajv({ allErrors: true, strict: false })
+const envAjv = new Ajv({ allErrors: true, strict: false, validateSchema: false })
 const envSchemaValidate = envAjv.compile(envSummarySchema as unknown as object)
 function annotateEnv(obj: Record<string, unknown>): Record<string, unknown> {
   const ok: boolean = envSchemaValidate(obj) as boolean
@@ -49,183 +49,51 @@ function annotateEnv(obj: Record<string, unknown>): Record<string, unknown> {
   return { ...obj, schemaOk: ok, schemaErrors: errs }
 }
 
-// ---------------- Netlify parity ----------------
-async function getNetlifySiteId(cwd: string, projectId?: string): Promise<string | undefined> {
-  if (projectId) return projectId
+// ---------------- Cloudflare Pages env sync ----------------
+async function getCfProjectName(cwd: string, projectName?: string): Promise<string> {
+  if (projectName && projectName.length > 0) return projectName
   try {
-    const st = await fsx.readJson<{ readonly siteId?: string }>(join(cwd, '.netlify', 'state.json'))
-    if (st && typeof st.siteId === 'string' && st.siteId.length > 0) return st.siteId
+    const raw = await (await import('node:fs/promises')).readFile(join(cwd, 'wrangler.toml'), 'utf8')
+    const m = raw.match(/\bname\s*=\s*"([^"]+)"/)
+    if (m && m[1]) return m[1]
   } catch { /* ignore */ }
-  return undefined
+  const base = cwd.replace(/\\/g,'/').split('/').filter(Boolean).pop() || 'site'
+  return base.toLowerCase().replace(/[^a-z0-9-]/g,'-').replace(/--+/g,'-').replace(/^-+|-+$/g,'')
 }
 
-async function fetchNetlifyEnvMap(args: { readonly cwd: string; readonly projectId?: string; readonly context?: string; readonly printCmd?: boolean }): Promise<Record<string, string>> {
-  try {
-    const siteId: string | undefined = await getNetlifySiteId(args.cwd, args.projectId)
-    const siteFlag: string = siteId ? ` --site ${siteId}` : ''
-    // Prefer JSON output when supported
-    const listJsonCmd = `netlify env:list --json${siteFlag}`.trim()
-    if (args.printCmd) logger.info(`$ ${listJsonCmd}`)
-    const jsonRes = await runWithRetry({ cmd: listJsonCmd, cwd: args.cwd })
-    if (jsonRes.ok) {
-      try {
-        const data = JSON.parse(jsonRes.stdout) as Array<{ key: string; values?: Array<{ context?: string; value?: string }> }>
-        const map: Record<string, string> = {}
-        for (const item of data) {
-          const v = (args.context
-            ? item.values?.find(x => (x.context ?? '').toLowerCase() === args.context?.toLowerCase() && typeof x.value === 'string')?.value
-            : undefined) ?? item.values?.find(x => typeof x.value === 'string')?.value
-          if (typeof v === 'string') map[item.key] = v
-        }
-        return map
-      } catch { /* fallthrough to plain parsing */ }
-    }
-    // Fallback: parse plain list output
-    const listCmd = `netlify env:list${siteFlag}`.trim()
-    if (args.printCmd) logger.info(`$ ${listCmd}`)
-    const out = await runWithRetry({ cmd: listCmd, cwd: args.cwd })
-    if (!out.ok) return {}
-    const map: Record<string, string> = {}
-    for (const line of out.stdout.split(/\r?\n/)) {
-      const mEq = line.match(/^([A-Z0-9_]+)\s*=\s*(.*)$/)
-      const mSp = !mEq ? line.match(/^([A-Z0-9_]+)\s+(.+)$/) : null
-      const k = mEq?.[1] ?? mSp?.[1]
-      const v = mEq?.[2] ?? mSp?.[2]
-      if (k && typeof v === 'string' && v.length > 0) map[k] = v.trim()
-    }
-    return map
-  } catch {
-    return {}
-  }
-}
-
-async function pullNetlify(args: { readonly cwd: string; readonly out?: string; readonly json: boolean; readonly projectId?: string; readonly context?: string; readonly printCmd?: boolean }): Promise<void> {
-  const sp = spinner('Netlify: pulling env')
-  try {
-    const siteId = await getNetlifySiteId(args.cwd, args.projectId)
-    await ensureNetlifyLinked({ cwd: args.cwd, projectId: siteId, printCmd: args.printCmd })
-    const outFile: string = args.out ?? '.env.local'
-    const remote = await fetchNetlifyEnvMap({ cwd: args.cwd, projectId: siteId, context: args.context, printCmd: args.printCmd })
-    const content: string = Object.entries(remote).map(([k, v]) => `${k}=${v}`).join('\n') + '\n'
-    await writeFile(join(args.cwd, outFile), content, 'utf8')
-    if (args.json === true) logger.jsonPrint(annotateEnv({ ok: true, action: 'env' as const, subcommand: 'pull' as const, provider: 'netlify' as const, out: outFile, count: Object.keys(remote).length, final: true }))
-    else { sp.succeed(`Netlify: pulled to ${outFile}`); logger.success(`Pulled Netlify env to ${outFile}`); printEnvPullSummary({ provider: 'netlify', out: outFile, count: Object.keys(remote).length }) }
-  } finally { sp.stop() }
-}
-
-async function syncNetlify(args: { readonly cwd: string; readonly file: string; readonly yes: boolean; readonly dryRun: boolean; readonly json: boolean; readonly ci: boolean; readonly projectId?: string; readonly ignore?: readonly string[]; readonly only?: readonly string[]; readonly optimizeWrites?: boolean; readonly mapFile?: string; readonly printCmd?: boolean }): Promise<void> {
+async function syncCloudflare(args: { readonly cwd: string; readonly file: string; readonly yes: boolean; readonly dryRun: boolean; readonly json: boolean; readonly ci: boolean; readonly projectName?: string; readonly ignore?: readonly string[]; readonly only?: readonly string[]; readonly mapFile?: string; readonly printCmd?: boolean }): Promise<void> {
   const envPath: string = join(args.cwd, args.file)
   const original = await parseEnvFile({ path: envPath })
   const kv = await applyEnvMapping({ cwd: args.cwd, kv: original, mapFile: args.mapFile })
   const entriesAll = Object.entries(kv)
   const entries = entriesAll.filter(([k]) => allowKey(k, args.only ?? [], args.ignore ?? []))
   if (entries.length === 0) { logger.warn(`No variables found in ${args.file}. Nothing to sync.`); return }
-  const siteId: string | undefined = await getNetlifySiteId(args.cwd, args.projectId)
-  await ensureNetlifyLinked({ cwd: args.cwd, projectId: siteId, printCmd: args.printCmd })
-  // Optimize writes by reading remote once
-  let remoteMap: Record<string, string> | undefined
-  if (args.optimizeWrites === true && !args.dryRun) {
-    try { remoteMap = await fetchNetlifyEnvMap({ cwd: args.cwd, projectId: siteId, printCmd: args.printCmd }) } catch { /* ignore */ }
-  }
+  const project = await getCfProjectName(args.cwd, args.projectName)
   const results: Array<{ key: string; status: 'set' | 'skipped' | 'failed'; error?: string }> = []
   for (const [key, value] of entries) {
-    const go = args.yes === true || args.ci === true || args.dryRun === true ? true : await confirm(`Set ${key}=${mask(value)} to Netlify?`, { defaultYes: true })
+    const go = args.yes === true || args.ci === true || args.dryRun === true ? true : await confirm(`Set ${key}=${mask(value)} to Cloudflare Pages?`, { defaultYes: true })
     if (!go) continue
-    if (args.dryRun === true) { logger.info(`[dry-run] netlify env:set ${key} ← ${mask(value)}`); results.push({ key, status: 'skipped' }); continue }
-    if (args.optimizeWrites === true && remoteMap && remoteMap[key] === value) {
-      logger.info(`Skip (same) ${key}`)
-      results.push({ key, status: 'skipped' })
-      continue
-    }
-    // Avoid passing --site as older/newer Netlify CLIs may not support it for env:set
-    const setCmd = `netlify env:set ${key} ${JSON.stringify(value)}`.trim()
-    if (args.printCmd) logger.info(`$ ${setCmd}`)
-    const res = await runWithRetry({ cmd: setCmd, cwd: args.cwd })
+    if (args.dryRun === true) { logger.info(`[dry-run] wrangler pages project secret put ${key} --project-name ${project}`); results.push({ key, status: 'skipped' }); continue }
+    const cmd = `wrangler pages project secret put ${key} --project-name ${project} --value ${JSON.stringify(value)}`
+    if (args.printCmd) logger.info(`$ ${cmd}`)
+    const res = await runWithRetry({ cmd, cwd: args.cwd })
     if (res.ok) { logger.success(`Set ${key}`); results.push({ key, status: 'set' }) }
     else { const errMsg: string = res.stderr.trim() || res.stdout.trim(); logger.warn(`Failed to set ${key}: ${errMsg}`); results.push({ key, status: 'failed', error: errMsg }) }
   }
   if (args.json === true) {
     const ok = results.every(r => r.status !== 'failed')
-    logger.jsonPrint(annotateEnv({ ok, action: 'env' as const, subcommand: 'sync' as const, provider: 'netlify' as const, file: args.file, envs: results, final: true }))
-  }
-  else {
+    logger.jsonPrint(annotateEnv({ ok, action: 'env' as const, subcommand: 'sync' as const, provider: 'cloudflare' as const, file: args.file, envs: results, final: true }))
+  } else {
     const setCount = results.filter(r => r.status === 'set').length
     const skippedCount = results.filter(r => r.status === 'skipped').length
     const failedCount = results.filter(r => r.status === 'failed').length
-    printEnvSyncSummary({ provider: 'netlify', file: args.file, setCount, skippedCount, failedCount })
-  }
-}
-
-async function diffNetlify(args: { readonly cwd: string; readonly file: string; readonly json: boolean; readonly ci: boolean; readonly projectId?: string; readonly context?: string; readonly ignore?: readonly string[]; readonly only?: readonly string[]; readonly failOnAdd?: boolean; readonly failOnRemove?: boolean; readonly printCmd?: boolean }): Promise<void> {
-  const sp = spinner('Netlify: diffing env')
-  const localPath: string = join(args.cwd, args.file)
-  const allLocal = await parseEnvFile({ path: localPath })
-  const local: Record<string, string> = {}
-  for (const [k, v] of Object.entries(allLocal)) if (allowKey(k, args.only ?? [], args.ignore ?? [])) local[k] = v
-  const siteId: string | undefined = await getNetlifySiteId(args.cwd, args.projectId)
-  await ensureNetlifyLinked({ cwd: args.cwd, projectId: siteId, printCmd: args.printCmd })
-  const remote = await fetchNetlifyEnvMap({ cwd: args.cwd, projectId: siteId, context: args.context, printCmd: args.printCmd })
-  const keys = Array.from(new Set([...Object.keys(local), ...Object.keys(remote)])).sort()
-  const added: string[] = []
-  const removed: string[] = []
-  const changed: Array<{ key: string; local: string; remote: string }> = []
-  for (const k of keys) {
-    const l = local[k]
-    const r = remote[k]
-    if (l === undefined && r !== undefined) removed.push(k)
-    else if (l !== undefined && r === undefined) added.push(k)
-    else if (l !== undefined && r !== undefined && l !== r) changed.push({ key: k, local: l, remote: r })
-  }
-  const ok: boolean = added.length === 0 && removed.length === 0 && changed.length === 0
-  if (args.json === true) logger.jsonPrint(annotateEnv({ ok, action: 'env' as const, subcommand: 'diff' as const, provider: 'netlify' as const, added, removed, changed, final: true }))
-  else {
-    sp.stop()
-    if (ok) logger.success('No differences between local file and Netlify environment.')
-    else logger.info('\n' + formatDiffHuman({ added, removed, changed }))
-    const total = added.length + removed.length + changed.length
-    printEnvDiffSummary({
-      provider: 'netlify',
-      added: added.length,
-      removed: removed.length,
-      changed: changed.length,
-      ok,
-      addedKeys: total <= 10 ? added : undefined,
-      removedKeys: total <= 10 ? removed : undefined,
-      changedKeys: total <= 10 ? changed.map(c => c.key) : undefined
-    })
-    const inCI = args.ci === true || process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true'
-    if (!ok && inCI) {
-      const addIsError = args.ci === true || args.failOnAdd === true
-      const removeIsError = args.ci === true || args.failOnRemove === true
-      const addTag = addIsError ? 'error' : 'warning'
-      const removeTag = removeIsError ? 'error' : 'warning'
-      const changedTag = args.ci === true ? 'error' : 'warning'
-      for (const k of added) console.log(`::${addTag} ::Only local: ${k}`)
-      for (const k of removed) console.log(`::${removeTag} ::Only remote: ${k}`)
-      for (const c of changed) console.log(`::${changedTag} ::Changed: ${c.key}`)
-    }
-  }
-  if (!ok && (args.ci === true || args.failOnAdd === true || args.failOnRemove === true)) {
-    const addHit = args.failOnAdd === true && added.length > 0
-    const removeHit = args.failOnRemove === true && removed.length > 0
-    if (args.ci === true || addHit || removeHit) process.exitCode = 1
-  }
-}
-
-async function ensureNetlifyLinked(args: { readonly cwd: string; readonly projectId?: string; readonly printCmd?: boolean }): Promise<void> {
-  // Netlify: link the directory to a site id when provided
-  if (!args.projectId) return
-  const linkCmd = `netlify link --id ${args.projectId}`
-  if (args.printCmd) logger.info(`$ ${linkCmd}`)
-  const res = await runWithRetry({ cmd: linkCmd, cwd: args.cwd })
-  if (!res.ok && !res.stdout.toLowerCase().includes('already linked')) {
-    throw new Error('Directory not linked to Netlify site. Run: netlify link --id <siteId>')
+    printEnvSyncSummary({ provider: 'cloudflare', file: args.file, setCount, skippedCount, failedCount })
   }
 }
 
 // Programmatic wrappers for use by other commands (e.g., run)
 export async function envSync(opts: {
-  readonly provider: 'vercel' | 'netlify'
+  readonly provider: 'vercel' | 'cloudflare'
   readonly cwd: string
   readonly file: string
   readonly env: EnvTarget
@@ -262,23 +130,22 @@ export async function envSync(opts: {
     })
     return
   }
-  await syncNetlify({
+  await syncCloudflare({
     cwd: opts.cwd,
     file: opts.file,
     yes: opts.yes === true,
     dryRun: opts.dryRun === true,
     json: opts.json === true,
     ci: opts.ci === true,
-    projectId: opts.projectId,
+    projectName: opts.projectId,
     ignore: opts.ignore,
     only: opts.only,
-    optimizeWrites: opts.optimizeWrites,
     mapFile: opts.mapFile,
   })
 }
 
 export async function envDiff(opts: {
-  readonly provider: 'vercel' | 'netlify'
+  readonly provider: 'vercel'
   readonly cwd: string
   readonly file: string
   readonly env: EnvTarget
@@ -291,28 +158,14 @@ export async function envDiff(opts: {
   readonly failOnAdd?: boolean
   readonly failOnRemove?: boolean
 }): Promise<void> {
-  if (opts.provider === 'vercel') {
-    await diffVercel({
-      cwd: opts.cwd,
-      file: opts.file,
-      env: opts.env,
-      json: opts.json === true,
-      ci: opts.ci === true,
-      projectId: opts.projectId,
-      orgId: opts.orgId,
-      ignore: opts.ignore,
-      only: opts.only,
-      failOnAdd: opts.failOnAdd,
-      failOnRemove: opts.failOnRemove,
-    })
-    return
-  }
-  await diffNetlify({
+  await diffVercel({
     cwd: opts.cwd,
     file: opts.file,
+    env: opts.env,
     json: opts.json === true,
     ci: opts.ci === true,
     projectId: opts.projectId,
+    orgId: opts.orgId,
     ignore: opts.ignore,
     only: opts.only,
     failOnAdd: opts.failOnAdd,
@@ -440,8 +293,8 @@ async function syncVercel(args: { readonly cwd: string; readonly file: string; r
     const tmpDir: string = await mkdtemp(join(tmpdir(), 'opendeploy-'))
     const tmpFile: string = join(tmpDir, `.env.remote.${vercelEnv}`)
     const pullCmd = `vercel env pull ${tmpFile} --environment ${vercelEnv}`
-  if (args.printCmd) logger.info(`$ ${pullCmd}`)
-  const pulled = await runWithRetry({ cmd: pullCmd, cwd: args.cwd })
+    if (args.printCmd) logger.info(`$ ${pullCmd}`)
+    const pulled = await runWithRetry({ cmd: pullCmd, cwd: args.cwd })
     if (pulled.ok) {
       const remote = await parseEnvFile({ path: tmpFile })
       await rm(tmpDir, { recursive: true, force: true })
@@ -605,7 +458,7 @@ export function registerEnvCommand(program: Command): void {
   env
     .command('sync')
     .description('Sync variables from a .env file to a provider')
-    .argument('<provider>', 'Target provider: vercel|netlify')
+    .argument('<provider>', 'Target provider: vercel | cloudflare')
     .option('--file <path>', 'Path to .env file', '.env')
     .option('--env <target>', 'Environment: prod|preview|development|all', 'preview')
     .option('--yes', 'Accept all prompts')
@@ -633,16 +486,16 @@ export function registerEnvCommand(program: Command): void {
         const jsonMode: boolean = isJsonMode(opts.json)
         if (jsonMode) logger.setJsonOnly(true)
         const envTarget = (opts.env ?? 'preview') as EnvTarget
-        const prov = provider === 'netlify' ? 'netlify' : provider === 'vercel' ? 'vercel' : undefined
+        const prov = provider === 'cloudflare' ? 'cloudflare' : provider === 'vercel' ? 'vercel' : undefined
         if (!prov) { logger.error(`Unknown provider: ${provider}`); process.exitCode = 1; return }
         if (prov === 'vercel') {
           await syncVercel({ cwd, file: opts.file ?? '.env', env: envTarget, yes: opts.yes === true, dryRun: opts.dryRun === true, json: jsonMode, ci: opts.ci === true, projectId: opts.projectId, orgId: opts.orgId, ignore: toPatterns(opts.ignore), only: toPatterns(opts.only), failOnAdd: opts.failOnAdd === true, failOnRemove: opts.failOnRemove === true, optimizeWrites: opts.optimizeWrites === true, mapFile: opts.map, printCmd: opts.printCmd === true })
         } else {
-          await syncNetlify({ cwd, file: opts.file ?? '.env', yes: opts.yes === true, dryRun: opts.dryRun === true, json: jsonMode, ci: opts.ci === true, projectId: opts.projectId, ignore: toPatterns(opts.ignore), only: toPatterns(opts.only), optimizeWrites: opts.optimizeWrites === true, mapFile: opts.map, printCmd: opts.printCmd === true })
+          await syncCloudflare({ cwd, file: opts.file ?? '.env', yes: opts.yes === true, dryRun: opts.dryRun === true, json: jsonMode, ci: opts.ci === true, projectName: opts.projectId, ignore: toPatterns(opts.ignore), only: toPatterns(opts.only), mapFile: opts.map, printCmd: opts.printCmd === true })
         }
       } catch (err) {
         const raw: string = err instanceof Error ? err.message : String(err)
-        const prov = provider === 'netlify' ? 'netlify' : provider === 'vercel' ? 'vercel' : provider
+        const prov = provider === 'cloudflare' ? 'cloudflare' : provider === 'vercel' ? 'vercel' : provider
         const info = mapProviderError(prov, raw)
         if (isJsonMode(opts.json)) {
           logger.jsonPrint({ ok: false, action: 'env' as const, subcommand: 'sync' as const, provider: prov, code: info.code, message: info.message, remedy: info.remedy, error: raw, final: true })
@@ -656,7 +509,7 @@ export function registerEnvCommand(program: Command): void {
   env
     .command('pull')
     .description('Pull variables from a provider into a local .env file')
-    .argument('<provider>', 'Target provider: vercel | netlify')
+    .argument('<provider>', 'Target provider: vercel')
     .option('--env <target>', 'Environment: prod|preview|development', 'preview')
     .option('--out <path>', 'Output file path (default depends on env)')
     .option('--json', 'Output JSON summary')
@@ -665,11 +518,11 @@ export function registerEnvCommand(program: Command): void {
     .option('--org-id <id>', 'Provider org ID for non-interactive link')
     .option('--ignore <patterns>', 'Comma-separated glob patterns to ignore (e.g. NEXT_PUBLIC_*)')
     .option('--only <patterns>', 'Comma-separated glob patterns to include')
-    .option('--context <name>', 'Netlify context: production|deploy-preview|branch|dev')
+    .option('--print-cmd', 'Print underlying provider commands that will be executed')
     .option('--retries <n>', 'Retries for provider commands (default 2)')
     .option('--timeout-ms <ms>', 'Timeout per provider command in milliseconds (default 120000)')
     .option('--base-delay-ms <ms>', 'Base delay for exponential backoff with jitter (default 300)')
-    .action(async (provider: string, opts: { env?: EnvTarget; out?: string; json?: boolean; ci?: boolean; projectId?: string; orgId?: string; ignore?: string; only?: string; context?: string; printCmd?: boolean; retries?: string; timeoutMs?: string; baseDelayMs?: string }): Promise<void> => {
+    .action(async (provider: string, opts: { env?: EnvTarget; out?: string; json?: boolean; ci?: boolean; projectId?: string; orgId?: string; ignore?: string; only?: string; printCmd?: boolean; retries?: string; timeoutMs?: string; baseDelayMs?: string }): Promise<void> => {
       const cwd: string = process.cwd()
       try {
         if (opts.retries) process.env.OPD_RETRIES = String(Math.max(0, Number(opts.retries) || 0))
@@ -677,17 +530,13 @@ export function registerEnvCommand(program: Command): void {
         if (opts.baseDelayMs) process.env.OPD_BASE_DELAY_MS = String(Math.max(0, Number(opts.baseDelayMs) || 0))
         const jsonMode: boolean = isJsonMode(opts.json)
         if (jsonMode) logger.setJsonOnly(true)
-        const prov = provider === 'netlify' ? 'netlify' : provider === 'vercel' ? 'vercel' : undefined
+        const prov = provider === 'vercel' ? 'vercel' : undefined
         if (!prov) { logger.error(`Unknown provider: ${provider}`); process.exitCode = 1; return }
-        if (prov === 'vercel') {
-          const envTarget = (opts.env ?? 'preview') as EnvTarget
-          await pullVercel({ cwd, env: envTarget, out: opts.out, json: jsonMode, ci: opts.ci === true, projectId: opts.projectId, orgId: opts.orgId, printCmd: opts.printCmd === true })
-        } else {
-          await pullNetlify({ cwd, out: opts.out, json: jsonMode, projectId: opts.projectId, context: opts.context, printCmd: opts.printCmd === true })
-        }
+        const envTarget = (opts.env ?? 'preview') as EnvTarget
+        await pullVercel({ cwd, env: envTarget, out: opts.out, json: jsonMode, ci: opts.ci === true, projectId: opts.projectId, orgId: opts.orgId, printCmd: opts.printCmd === true })
       } catch (err) {
         const raw: string = err instanceof Error ? err.message : String(err)
-        const provName = provider === 'netlify' ? 'netlify' : provider === 'vercel' ? 'vercel' : provider
+        const provName = provider === 'vercel' ? 'vercel' : provider
         const info = mapProviderError(provName, raw)
         if (isJsonMode(opts.json)) {
           logger.jsonPrint({ ok: false, action: 'env' as const, subcommand: 'pull' as const, provider: provName, code: info.code, message: info.message, remedy: info.remedy, error: raw, final: true })
@@ -701,7 +550,7 @@ export function registerEnvCommand(program: Command): void {
   env
     .command('diff')
     .description('Compare local .env values to provider environment (no changes)')
-    .argument('<provider>', 'Target provider: vercel | netlify')
+    .argument('<provider>', 'Target provider: vercel')
     .option('--file <path>', 'Path to local .env file', '.env')
     .option('--env <target>', 'Environment: prod|preview|development', 'preview')
     .option('--json', 'Output JSON diff')
@@ -713,11 +562,10 @@ export function registerEnvCommand(program: Command): void {
     .option('--only <patterns>', 'Comma-separated glob patterns to include')
     .option('--fail-on-add', 'Exit non-zero if new keys would be added')
     .option('--fail-on-remove', 'Exit non-zero if keys are missing remotely')
-    .option('--context <name>', 'Netlify context: production|deploy-preview|branch|dev')
     .option('--retries <n>', 'Retries for provider commands (default 2)')
     .option('--timeout-ms <ms>', 'Timeout per provider command in milliseconds (default 120000)')
     .option('--base-delay-ms <ms>', 'Base delay for exponential backoff with jitter (default 300)')
-    .action(async (provider: string, opts: { file?: string; env?: EnvTarget; json?: boolean; ci?: boolean; projectId?: string; orgId?: string; ignore?: string; only?: string; failOnAdd?: boolean; failOnRemove?: boolean; context?: string; printCmd?: boolean; retries?: string; timeoutMs?: string; baseDelayMs?: string }): Promise<void> => {
+    .action(async (provider: string, opts: { file?: string; env?: EnvTarget; json?: boolean; ci?: boolean; projectId?: string; orgId?: string; ignore?: string; only?: string; failOnAdd?: boolean; failOnRemove?: boolean; printCmd?: boolean; retries?: string; timeoutMs?: string; baseDelayMs?: string }): Promise<void> => {
       const cwd: string = process.cwd()
       try {
         if (opts.retries) process.env.OPD_RETRIES = String(Math.max(0, Number(opts.retries) || 0))
@@ -725,14 +573,10 @@ export function registerEnvCommand(program: Command): void {
         if (opts.baseDelayMs) process.env.OPD_BASE_DELAY_MS = String(Math.max(0, Number(opts.baseDelayMs) || 0))
         const jsonMode: boolean = isJsonMode(opts.json)
         if (jsonMode) logger.setJsonOnly(true)
-        const prov = provider === 'netlify' ? 'netlify' : provider === 'vercel' ? 'vercel' : undefined
+        const prov = provider === 'vercel' ? 'vercel' : undefined
         if (!prov) { logger.error(`Unknown provider: ${provider}`); process.exitCode = 1; return }
-        if (prov === 'vercel') {
-          const envTarget = (opts.env ?? 'preview') as EnvTarget
-          await diffVercel({ cwd, file: opts.file ?? '.env', env: envTarget, json: jsonMode, ci: opts.ci === true, projectId: opts.projectId, orgId: opts.orgId, ignore: toPatterns(opts.ignore), only: toPatterns(opts.only), failOnAdd: opts.failOnAdd === true, failOnRemove: opts.failOnRemove === true, printCmd: opts.printCmd === true })
-        } else {
-          await diffNetlify({ cwd, file: opts.file ?? '.env', json: jsonMode, ci: opts.ci === true, projectId: opts.projectId, ignore: toPatterns(opts.ignore), only: toPatterns(opts.only), failOnAdd: opts.failOnAdd === true, failOnRemove: opts.failOnRemove === true, context: opts.context, printCmd: opts.printCmd === true })
-        }
+        const envTarget = (opts.env ?? 'preview') as EnvTarget
+        await diffVercel({ cwd, file: opts.file ?? '.env', env: envTarget, json: jsonMode, ci: opts.ci === true, projectId: opts.projectId, orgId: opts.orgId, ignore: toPatterns(opts.ignore), only: toPatterns(opts.only), failOnAdd: opts.failOnAdd === true, failOnRemove: opts.failOnRemove === true, printCmd: opts.printCmd === true })
       } catch (err) {
         const message: string = err instanceof Error ? err.message : String(err)
         logger.error(message)

@@ -85,7 +85,12 @@ export function DocsLayout({
         )}
 
         {/* Main content area */}
-        <main className="flex-1 min-w-0 flex flex-col" id="main-content" role="main" aria-hidden={sidebarOpen ? true : undefined}>
+        <main className="relative flex-1 min-w-0 flex flex-col overflow-hidden" id="main-content" role="main" aria-hidden={sidebarOpen ? true : undefined}>
+          {/* Subtle background gradients (decorative) */}
+          <div aria-hidden className="pointer-events-none absolute inset-0 -z-10">
+            <div className="absolute left-[5%] top-[-10%] h-[280px] w-[520px] rounded-full bg-gradient-to-br from-sky-300/15 via-violet-300/10 to-transparent blur-3xl dark:from-sky-400/10 dark:via-violet-400/10" />
+            <div className="absolute right-[-8%] bottom-[-12%] h-[260px] w-[480px] rounded-full bg-gradient-to-tr from-emerald-200/15 via-cyan-200/10 to-transparent blur-3xl dark:from-emerald-300/10 dark:via-cyan-300/10" />
+          </div>
           <div className="flex-1 min-w-0 max-w-full mx-auto px-4 sm:px-6 py-8 pb-16">
             <div className="flex justify-center min-w-0 max-w-full">
               {/* Centered content container */}

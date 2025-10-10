@@ -2,63 +2,15 @@
 
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Badge } from "@/components/ui/badge"
-import { Code, FileText, Home, Rocket, Terminal, ChevronDown, ChevronRight, Cloud } from "lucide-react"
+import { ChevronDown, ChevronRight } from "lucide-react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { useEffect, useState } from "react"
-import type { LucideIcon } from "lucide-react"
 import VERSION from "@/lib/version"
+import { navigationItems, resourceItems, type NavLeaf, type NavSubGroup, type NavLink } from "./nav"
 
-type NavLeaf = { title: string; url: string }
-type NavSubGroup = { title: string; items: readonly NavLeaf[] }
-type NavLink = { title: string; icon: LucideIcon; url: string }
-type NavGroup = { title: string; icon: LucideIcon; items: readonly (NavLeaf | NavSubGroup)[] }
-type NavItem = NavLink | NavGroup
-
-const navigationItems: ReadonlyArray<NavItem> = [
-  {
-    title: "Overview",
-    icon: Home,
-    url: "/docs/opendeploy/overview",
-  },
-  {
-    title: "Getting Started",
-    icon: Rocket,
-    items: [
-      { title: "Install", url: "/docs/opendeploy/install" },
-      { title: "Quick Start", url: "/docs/opendeploy/overview#quick-start" },
-    ],
-  },
-  {
-    title: "CLI",
-    icon: Terminal,
-    items: [
-      { title: "Commands", url: "/docs/opendeploy/commands" },
-      { title: "Environment", url: "/docs/opendeploy/commands/environment" },
-      { title: "Deploy", url: "/docs/opendeploy/commands/deploy" },
-      { title: "System", url: "/docs/opendeploy/commands/system" },
-      { title: "CI Recipes", url: "/docs/opendeploy/ci" },
-      { title: "Troubleshooting", url: "/docs/opendeploy/troubleshooting" },
-    ],
-  },
-  {
-    title: "Providers",
-    icon: Cloud,
-    items: [
-      { title: "Vercel", url: "/docs/opendeploy/providers/vercel" },
-      { title: "Netlify", url: "/docs/opendeploy/providers/netlify" },
-      { title: "Cloudflare Pages", url: "/docs/opendeploy/providers/cloudflare" },
-      { title: "GitHub Pages", url: "/docs/opendeploy/providers/github" },
-    ],
-  },
-]
-
-type ResourceItem = { title: string; url: string; icon: LucideIcon; badge?: string }
-const resourceItems: ReadonlyArray<ResourceItem> = [
-  { title: "Changelog", url: "https://github.com/Dendro-X0/OpenDeploy-CLI/releases", icon: FileText, badge: "New" },
-  { title: "GitHub", url: "https://github.com/Dendro-X0/OpenDeploy-CLI", icon: Code },
-]
+// Navigation is sourced from ./nav to keep sidebar, pager, and other consumers in sync.
 
 interface DocsSidebarProps { onItemClick?: () => void }
 
@@ -110,7 +62,6 @@ export function DocsSidebar({ onItemClick }: DocsSidebarProps) {
                 <div key={item.title}>
                   {"items" in item ? (
                     <>
-                      {(() => { const Icon = item.icon; return null })()}
                       <button
                         onClick={() => toggleSection(item.title)}
                         className={cn(

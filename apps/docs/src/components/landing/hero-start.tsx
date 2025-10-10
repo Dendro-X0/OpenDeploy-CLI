@@ -36,8 +36,8 @@ export function HeroStartCommand(): React.ReactElement {
         </span>
       </button>
       <p className="text-sm text-muted-foreground max-w-2xl text-center">
-        Runs a quick, end‑to‑end flow: detect framework, ensure provider config (<code>vercel.json</code> / <code>netlify.toml</code>),
-        optionally sync env, and deploy.
+        Runs a quick, end‑to‑end flow: detect framework, ensure provider config (<code>vercel.json</code>),
+        optionally sync env, and deploy or open logs.
       </p>
     </div>
   )

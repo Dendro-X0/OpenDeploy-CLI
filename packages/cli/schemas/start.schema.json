@@ -7,7 +7,7 @@
     "provider": { "type": "string", "enum": ["netlify", "vercel"] },
     "action": { "const": "start" },
     "target": { "type": "string", "enum": ["prod", "preview"] },
-    "mode": { "type": "string", "enum": ["prepare-only", "deploy"] },
+    "mode": { "type": "string", "enum": ["prepare-only", "deploy", "dry-run"] },
     "url": { "type": "string" },
     "logsUrl": { "type": "string" },
     "alias": { "type": "string" },

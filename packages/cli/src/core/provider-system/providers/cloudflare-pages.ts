@@ -12,6 +12,7 @@ import type { ProviderCapabilities } from '../provider-capabilities'
 import type { ProjectRef, BuildInputs, BuildResult, DeployInputs, DeployResult } from '../provider-types'
 import { fsx } from '../../../utils/fs'
 import { detectApp as autoDetect } from '../../detectors/auto'
+import handleHints from '../../../utils/hints'
 
 /**
  * Cloudflare Pages provider implementing the Provider interface.
@@ -167,6 +168,7 @@ export class CloudflarePagesProvider implements Provider {
         let built = false
         for (const cmd of candidates) {
           const res = await proc.run({ cmd, cwd: args.cwd, env })
+          try { handleHints({ provider: 'cloudflare', text: (res.stderr || '') + ' ' + (res.stdout || '') }) } catch { /* ignore */ }
           if (res.ok) { built = true; break }
         }
         // Restore previous env file
@@ -238,6 +240,7 @@ export class CloudflarePagesProvider implements Provider {
     const projFlag = projectName ? ` --project-name ${projectName}` : ''
     const cmd = `${bin} pages deploy ${dir}${projFlag}`
     const out = await proc.run({ cmd, cwd: args.cwd })
+    try { handleHints({ provider: 'cloudflare', text: (out.stderr || '') + ' ' + (out.stdout || '') }) } catch { /* ignore */ }
     if (!out.ok) {
       const msg = (out.stderr || out.stdout || '').trim() || 'Cloudflare deploy failed'
       return { ok: false, message: msg }

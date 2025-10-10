@@ -7,6 +7,7 @@ import { readFile } from 'node:fs/promises'
 import { detectApp } from '../../detectors/auto'
 import { writeFile, stat } from 'node:fs/promises'
 import type { DetectionResult } from '../../../types/detection-result'
+import handleHints from '../../../utils/hints'
 
 /**
  * Vercel provider plugin implementing the Provider interface.
@@ -127,10 +128,12 @@ export class VercelProvider implements Provider {
       cwd: args.cwd,
       timeoutMs: deployTimeout,
       onStdout: (chunk: string): void => {
+        try { handleHints({ provider: 'vercel', text: chunk }) } catch { /* ignore */ }
         const m = chunk.match(urlRe)
         if (!deployedUrl && m && m.length > 0) deployedUrl = m[0]
       },
       onStderr: (chunk: string): void => {
+        try { handleHints({ provider: 'vercel', text: chunk }) } catch { /* ignore */ }
         if (!logsUrl) {
           const m = chunk.match(inspectRe)
           if (m && m.length > 0) logsUrl = m[0]

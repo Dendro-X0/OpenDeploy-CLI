@@ -30,7 +30,7 @@ export interface ProviderCaps {
 export type ProvidersCapsMap = Record<string, ProviderCaps>
 
 interface ProviderCapabilitiesProps {
-  /** provider id, e.g. `vercel`, `netlify`, `cloudflare`, `github` */
+  /** provider id, e.g. `vercel`, `cloudflare`, `github` */
   readonly provider: string
   /** optional title override */
   readonly title?: string
@@ -60,7 +60,6 @@ export function ProviderCapabilities({ provider, title, className }: ProviderCap
         // Fallback baseline that mirrors current CLI defaults
         const fallback: ProvidersCapsMap = {
           vercel: { name: "Vercel", capabilities: { static: true, serverless: true, link: true, env: true, build: true, deploy: true, logs: true, promote: true, rollback: true, ci: true } },
-          netlify: { name: "Netlify", capabilities: { static: true, serverless: true, link: true, env: true, build: true, deploy: true, logs: true, promote: true, rollback: true, ci: true }, notes: ["Local automation may prompt; CI recommended."] },
           cloudflare: { name: "Cloudflare Pages", capabilities: { static: true, serverless: false, link: true, env: true, build: true, deploy: true, logs: true, promote: false, rollback: false, ci: true } },
           github: { name: "GitHub Pages", capabilities: { static: true, serverless: false, link: false, env: false, build: true, deploy: true, logs: false, promote: false, rollback: false, ci: true } },
         }

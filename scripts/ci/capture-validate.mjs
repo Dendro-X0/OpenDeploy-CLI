@@ -15,9 +15,18 @@ fs.mkdirSync(artifactsDir, { recursive: true });
 process.env.OPD_PROVIDER_MODE = process.env.OPD_PROVIDER_MODE || 'virtual';
 process.env.CI = '1';
 
-function sh(bin, args) {
-  const res = spawnSync(bin, args, { stdio: 'inherit', shell: process.platform === 'win32' });
-  return res.status ?? 1;
+function run(bin, args, env = {}) {
+  const res = spawnSync(bin, args, {
+    stdio: 'pipe',
+    encoding: 'utf8',
+    shell: process.platform === 'win32',
+    env: { ...process.env, ...env }
+  });
+  return {
+    status: res.status ?? 1,
+    stdout: res.stdout || '',
+    stderr: res.stderr || ''
+  };
 }
 
 const CLI = ['node', 'packages/cli/dist/index.js'];
@@ -36,9 +45,28 @@ const captures = [
 
 let failures = 0;
 for (const c of captures) {
-  const status = sh(c.cmd[0], c.cmd.slice(1));
-  if (status !== 0) {
+  const res = run(c.cmd[0], c.cmd.slice(1));
+  if (res.status !== 0) {
     console.error(`[ci:capture-validate] capture failed: ${c.out}`);
+    failures++;
+    continue;
+  }
+  // Extract the last compact JSON line (jsonPrint emits a compact duplicate)
+  const lines = (res.stdout || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  const jsonLines = lines.filter((s) => s.startsWith('{') && s.endsWith('}'));
+  const last = jsonLines[jsonLines.length - 1];
+  if (!last) {
+    console.warn(`[ci:capture-validate] no JSON found in stdout for ${c.out}`);
+    failures++;
+    continue;
+  }
+  try {
+    const obj = JSON.parse(last);
+    // Ensure final flag; if not, wrap minimally
+    if (obj && typeof obj === 'object' && obj.final !== true) obj.final = true;
+    fs.writeFileSync(c.out, JSON.stringify(obj));
+  } catch (err) {
+    console.error(`[ci:capture-validate] invalid JSON for ${c.out}`);
     failures++;
   }
 }

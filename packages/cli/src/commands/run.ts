@@ -74,7 +74,7 @@ async function loadConfig(cwd: string, file?: string): Promise<OpenDeployConfig>
 }
 
 export function registerRunCommand(program: Command): void {
-  const ajv = new Ajv({ allErrors: true, strict: false })
+  const ajv = new Ajv({ allErrors: true, strict: false, validateSchema: false })
   const validate = ajv.compile(runSummarySchema as unknown as object)
   const annotateRun = (obj: Record<string, unknown>): Record<string, unknown> => {
     const ok: boolean = validate(obj) as boolean

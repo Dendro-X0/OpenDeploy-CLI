@@ -3,7 +3,7 @@ import { join } from 'node:path'
 
 interface ProviderEnvState { readonly projectId?: string }
 interface ProviderState { readonly prod?: ProviderEnvState; readonly preview?: ProviderEnvState }
-interface RootState { readonly vercel?: ProviderState; readonly netlify?: ProviderState }
+interface RootState { readonly vercel?: ProviderState; readonly cloudflare?: ProviderState; readonly github?: ProviderState }
 
 /**
  * Manages persisted state in .opendeploy/state.json

@@ -13,11 +13,11 @@ opd env sync vercel --file <path> --env <prod|preview|development|all> \
   [--optimize-writes]
   [--map <file>]
 ```
-Usage (Netlify):
+Usage (Cloudflare Pages):
 ```bash
-opd env sync netlify --file <path> \
+opd env sync cloudflare --file <path> \
   [--yes] [--dry-run] [--json] [--ci] \
-  [--project-id <siteId>] \
+  [--project-id <name>] \
   [--ignore <glob,glob>] [--only <glob,glob>]
 ```
 Behavior:
@@ -45,8 +45,8 @@ Examples:
 opd env sync vercel --file .env --env preview \
   --map ./env.map.json --optimize-writes --yes
 
-# Apply same mapping on Netlify
-opd env sync netlify --file .env \
+# Apply same mapping on Cloudflare Pages
+opd env sync cloudflare --file .env \
   --map ./env.map.json --yes
 ```
 
@@ -57,10 +57,7 @@ Usage (Vercel):
 ```bash
 opd env pull vercel --env <prod|preview|development> [--out <path>] [--json] [--ci] [--project-id <id>] [--org-id <id>]
 ```
-Usage (Netlify):
-```bash
-opd env pull netlify [--out <path>] [--json] [--project-id <siteId>] [--context <ctx>]
-```
+Note: Cloudflare Pages does not support pulling secrets; `env pull` is Vercel‑only.
 Behavior:
 - Defaults output file based on env: `.env.production.local`, `.env.preview.local`, or `.env.local`.
 - Requires a linked project (`vercel link`). In CI, provide `--project-id` and `--org-id` for non‑interactive linking.
@@ -92,13 +89,7 @@ opd env diff vercel --file <path> --env <prod|preview|development> \
   [--ignore <glob,glob>] [--only <glob,glob>] \
   [--fail-on-add] [--fail-on-remove]
 ```
-Usage (Netlify):
-```bash
-opd env diff netlify --file <path> \
-  [--json] [--ci] [--project-id <siteId>] [--context <ctx>] \
-  [--ignore <glob,glob>] [--only <glob,glob>] \
-  [--fail-on-add] [--fail-on-remove]
-```
+Note: Cloudflare Pages does not support listing secrets for diff; `env diff` is Vercel‑only.
 
 ## env validate [experimental]
 Validate a local `.env` against a schema of required keys. Supports three schema types and composition of multiple schemas via a comma‑separated list.

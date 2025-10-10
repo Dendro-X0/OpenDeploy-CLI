@@ -3,7 +3,7 @@ import { logger } from './logger'
 import { appendFile } from 'node:fs/promises'
 
 export interface DeploySummaryArgs {
-  readonly provider: 'vercel' | 'netlify'
+  readonly provider: 'vercel' | 'cloudflare' | 'github'
   readonly target: 'prod' | 'preview'
   readonly url?: string
   readonly projectId?: string
@@ -49,7 +49,7 @@ export function printDeploySummary(args: DeploySummaryArgs): void {
 }
 
 export interface EnvPullSummaryArgs {
-  readonly provider: 'vercel' | 'netlify'
+  readonly provider: 'vercel' | 'cloudflare' | 'github'
   readonly env?: 'prod' | 'preview' | 'development'
   readonly out: string
   readonly count?: number
@@ -66,7 +66,7 @@ export function printEnvPullSummary(args: EnvPullSummaryArgs): void {
 }
 
 export interface EnvSyncSummaryArgs {
-  readonly provider: 'vercel' | 'netlify'
+  readonly provider: 'vercel' | 'cloudflare' | 'github'
   readonly file: string
   readonly setCount: number
   readonly skippedCount: number
@@ -85,7 +85,7 @@ export function printEnvSyncSummary(args: EnvSyncSummaryArgs): void {
 }
 
 export interface EnvDiffSummaryArgs {
-  readonly provider: 'vercel' | 'netlify'
+  readonly provider: 'vercel' | 'cloudflare' | 'github'
   readonly env?: 'prod' | 'preview' | 'development'
   readonly added: number
   readonly removed: number
