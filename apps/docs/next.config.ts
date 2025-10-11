@@ -44,20 +44,15 @@ const nextConfig: NextConfig = {
   pageExtensions: ["ts", "tsx", "md", "mdx"],
   // Expose basePath to client so components can prefix static assets reliably on GitHub Pages
   env: {
-    NEXT_PUBLIC_BASE_PATH: effectiveBasePath,
+    NEXT_PUBLIC_BASE_PATH: '/OpenDeploy-CLI',
     ...(derivedVersion ? { NEXT_PUBLIC_OPD_VERSION: derivedVersion } : {}),
   },
-  // Static export and GitHub-only behaviours
-  ...(deployTarget === 'github' ? { output: 'export' as const } : {}),
-  ...(deployTarget === 'github' ? { images: { unoptimized: true } } : {}),
-  ...(deployTarget === 'github' ? { trailingSlash: true } : { trailingSlash: false }),
-  // Base path (only applied when non-empty); for GitHub we also set assetPrefix
-  ...(effectiveBasePath
-    ? {
-        basePath: effectiveBasePath,
-        ...(deployTarget === 'github' ? { assetPrefix: `${effectiveBasePath}/` } : {}),
-      }
-    : {}),
+  // Static export and GitHub Pages settings (literal values for preflight)
+  output: 'export',
+  images: { unoptimized: true },
+  trailingSlash: true,
+  basePath: '/OpenDeploy-CLI',
+  assetPrefix: '/OpenDeploy-CLI/',
 };
 
 export default withMDX(nextConfig);
