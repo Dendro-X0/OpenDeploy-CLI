@@ -1,4 +1,4 @@
-name: Reusable: Deploy App to Cloudflare Pages (Next on Pages)
+name: "Reusable: Deploy App to Cloudflare Pages (Next on Pages)"
 
 on:
   workflow_call:

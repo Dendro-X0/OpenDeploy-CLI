@@ -1,4 +1,4 @@
-name: Reusable: Deploy App to GitHub Pages
+name: "Reusable: Deploy App to GitHub Pages"
 
 on:
   workflow_call:
