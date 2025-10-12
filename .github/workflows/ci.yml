@@ -24,14 +24,14 @@ jobs:
       LC_ALL: 'C'
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: 'pnpm'
       - name: Enable Corepack & setup pnpm
         run: |
           corepack enable
           corepack prepare pnpm@10.13.1 --activate
+      - name: Debug versions
+        run: |
+          node -v
+          pnpm -v
       - name: Approve native build scripts
         run: pnpm approve-builds @tailwindcss/oxide esbuild sharp workerd
       - name: Install deps
