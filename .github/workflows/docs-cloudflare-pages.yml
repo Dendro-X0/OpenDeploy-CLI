@@ -31,10 +31,11 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: pnpm
 
-      - name: Install pnpm
-        run: npm i -g pnpm@10
+      - name: Setup PNPM
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
 
       - name: Approve native build scripts
         run: pnpm approve-builds @tailwindcss/oxide esbuild sharp workerd
@@ -45,7 +46,7 @@ jobs:
       - name: Build with Next on Pages
         run: |
           rm -rf .vercel/output .next
-          pnpm exec @cloudflare/next-on-pages
+          npx -y @cloudflare/next-on-pages@1
 
       - name: Upload .vercel output (on failure)
         if: failure()
