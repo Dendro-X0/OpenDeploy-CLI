@@ -23,16 +23,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - name: Setup Node + pnpm (corepack)
+        uses: ./.github/actions/setup-pnpm
         with:
           node-version: '20'
+          pnpm-version: '10.13.1'
           registry-url: 'https://registry.npmjs.org'
-
-      - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare pnpm@10.13.1 --activate
 
       - name: Install deps
         run: pnpm install --frozen-lockfile

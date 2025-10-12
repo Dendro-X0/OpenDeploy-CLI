@@ -2,6 +2,7 @@ name: CI
 
 on:
   push:
+    branches: [ main ]
     tags: [ 'v*' ]
   pull_request:
     branches: [ main ]
@@ -23,13 +24,11 @@ jobs:
       LC_ALL: 'C'
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Setup Node + pnpm (corepack)
+        uses: ./.github/actions/setup-pnpm
         with:
-          node-version: 20
-      - name: Enable Corepack & setup pnpm
-        run: |
-          corepack enable
-          corepack prepare pnpm@10.13.1 --activate
+          node-version: '20'
+          pnpm-version: '10.13.1'
       - name: Approve native build scripts
         run: pnpm approve-builds @tailwindcss/oxide esbuild sharp workerd
       - name: Install deps
