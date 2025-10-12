@@ -1,0 +1,61 @@
+name: Reusable: Deploy App to GitHub Pages
+
+on:
+  workflow_call:
+    inputs:
+      app_path:
+        description: "Relative path to the app under repo root (e.g., apps/docs)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages-${{ inputs.app_path }}"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.app_path }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Enable Corepack and prepare pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.13.1 --activate
+      - name: Debug versions
+        run: |
+          node -v
+          pnpm -v
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build (Next static export)
+        env:
+          DEPLOY_TARGET: github
+        run: pnpm build
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ inputs.app_path }}/out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
