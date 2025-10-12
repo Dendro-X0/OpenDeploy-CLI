@@ -37,6 +37,15 @@ jobs:
         with:
           version: 10
 
+      - name: Enable corepack
+        run: corepack enable
+
+      - name: Debug versions
+        run: |
+          node -v
+          pnpm -v
+          echo "CWD=$(pwd)"
+
       - name: Approve native build scripts
         run: pnpm approve-builds @tailwindcss/oxide esbuild sharp workerd
 
