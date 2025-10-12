@@ -30,17 +30,13 @@ jobs:
           echo "PWD=$(pwd)"
           ls -la
 
-      - name: Setup Node
-        continue-on-error: true
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: 'pnpm'
-
       - name: Setup PNPM
         uses: pnpm/action-setup@v4
         with:
           version: 10
+
+      - name: Enable corepack
+        run: corepack enable
 
       - name: Debug versions
         run: |
