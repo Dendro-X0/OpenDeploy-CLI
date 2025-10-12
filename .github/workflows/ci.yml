@@ -24,11 +24,14 @@ jobs:
       LC_ALL: 'C'
     steps:
       - uses: actions/checkout@v4
-      - name: Setup Node + pnpm (corepack)
-        uses: ./.github/actions/setup-pnpm
+      - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          pnpm-version: '10.13.1'
+          node-version: 20
+          cache: 'pnpm'
+      - name: Enable Corepack & setup pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.13.1 --activate
       - name: Approve native build scripts
         run: pnpm approve-builds @tailwindcss/oxide esbuild sharp workerd
       - name: Install deps
