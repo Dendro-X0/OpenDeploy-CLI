@@ -62,6 +62,29 @@ jobs:
           rm -rf .vercel/output .next
           npx -y @cloudflare/next-on-pages@1
 
+      - name: Deploy to Cloudflare Pages
+        if: ${{ env.CF_API_TOKEN != '' && env.CF_ACCOUNT_ID != '' }}
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ env.CF_API_TOKEN }}
+          accountId: ${{ env.CF_ACCOUNT_ID }}
+          command: pages project create opendeploy-cli-docs-site --production-branch main
+        continue-on-error: true
+
+      - name: Deploy to Cloudflare Pages (verbose)
+        if: ${{ env.CF_API_TOKEN != '' && env.CF_ACCOUNT_ID != '' }}
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ env.CF_API_TOKEN }}
+          accountId: ${{ env.CF_ACCOUNT_ID }}
+          command: pages deploy apps/docs/.vercel/output/static --project-name opendeploy-cli-docs-site --verbose
+
+      - name: Skip deploy (missing Cloudflare secrets)
+        if: ${{ env.CF_API_TOKEN == '' || env.CF_ACCOUNT_ID == '' }}
+        run: |
+          echo "Skipping Cloudflare deploy: missing CLOUDFLARE_API_TOKEN and/or CLOUDFLARE_ACCOUNT_ID repo secrets."
+          echo "Build succeeded and .vercel/output/* was generated. Configure secrets and re-run to deploy."
+
       - name: Upload .vercel output (on failure)
         if: failure()
         uses: actions/upload-artifact@v4
@@ -69,17 +92,3 @@ jobs:
           name: vercel-output
           path: apps/docs/.vercel/output
           if-no-files-found: warn
-
-      - name: Deploy to Cloudflare Pages
-        if: ${{ env.CF_API_TOKEN != '' && env.CF_ACCOUNT_ID != '' }}
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ env.CF_API_TOKEN }}
-          accountId: ${{ env.CF_ACCOUNT_ID }}
-          command: pages deploy apps/docs/.vercel/output/static --project-name opendeploy-cli-docs-site
-
-      - name: Skip deploy (missing Cloudflare secrets)
-        if: ${{ env.CF_API_TOKEN == '' || env.CF_ACCOUNT_ID == '' }}
-        run: |
-          echo "Skipping Cloudflare deploy: missing CLOUDFLARE_API_TOKEN and/or CLOUDFLARE_ACCOUNT_ID repo secrets."
-          echo "Build succeeded and .vercel/output/* was generated. Configure secrets and re-run to deploy."
