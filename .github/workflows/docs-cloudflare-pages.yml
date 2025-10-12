@@ -62,6 +62,29 @@ jobs:
           rm -rf .vercel/output .next
           npx -y @cloudflare/next-on-pages@1
 
+      - name: Verify artifact exists
+        run: |
+          set -euxo pipefail
+          ls -la .vercel || true
+          ls -la .vercel/output || true
+          # Show structure and ensure output exists (SSR or static)
+          find .vercel/output -maxdepth 2 -type d -print || true
+          test -d .vercel/output
+
+      - name: Wrangler version
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ env.CF_API_TOKEN }}
+          accountId: ${{ env.CF_ACCOUNT_ID }}
+          command: --version
+
+      - name: List Cloudflare Pages projects
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ env.CF_API_TOKEN }}
+          accountId: ${{ env.CF_ACCOUNT_ID }}
+          command: pages project list
+
       - name: Deploy to Cloudflare Pages
         if: ${{ env.CF_API_TOKEN != '' && env.CF_ACCOUNT_ID != '' }}
         uses: cloudflare/wrangler-action@v3
@@ -77,7 +100,7 @@ jobs:
         with:
           apiToken: ${{ env.CF_API_TOKEN }}
           accountId: ${{ env.CF_ACCOUNT_ID }}
-          command: pages deploy apps/docs/.vercel/output/static --project-name opendeploy-cli-docs-site --verbose
+          command: pages deploy apps/docs/.vercel/output --project-name opendeploy-cli-docs-site --branch main --verbose
 
       - name: Skip deploy (missing Cloudflare secrets)
         if: ${{ env.CF_API_TOKEN == '' || env.CF_ACCOUNT_ID == '' }}
