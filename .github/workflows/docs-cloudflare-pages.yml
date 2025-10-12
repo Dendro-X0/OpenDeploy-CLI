@@ -23,6 +23,8 @@ jobs:
       DEPLOY_TARGET: cloudflare
       NEXT_PUBLIC_BASE_PATH: ''
       NEXT_IGNORE_BUILD_CACHE: '1'
+      CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -69,8 +71,15 @@ jobs:
           if-no-files-found: warn
 
       - name: Deploy to Cloudflare Pages
+        if: ${{ env.CF_API_TOKEN != '' && env.CF_ACCOUNT_ID != '' }}
         uses: cloudflare/wrangler-action@v3
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          apiToken: ${{ env.CF_API_TOKEN }}
+          accountId: ${{ env.CF_ACCOUNT_ID }}
           command: pages deploy apps/docs/.vercel/output/static --project-name opendeploy-cli-docs-site
+
+      - name: Skip deploy (missing Cloudflare secrets)
+        if: ${{ env.CF_API_TOKEN == '' || env.CF_ACCOUNT_ID == '' }}
+        run: |
+          echo "Skipping Cloudflare deploy: missing CLOUDFLARE_API_TOKEN and/or CLOUDFLARE_ACCOUNT_ID repo secrets."
+          echo "Build succeeded and .vercel/output/* was generated. Configure secrets and re-run to deploy."
