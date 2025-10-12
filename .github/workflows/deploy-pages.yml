@@ -30,13 +30,15 @@ jobs:
           echo "PWD=$(pwd)"
           ls -la
 
-      - name: Setup PNPM
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10
+      - name: Sanity echo
+        run: |
+          echo "Hello from GH runner"
+          date
 
-      - name: Enable corepack
-        run: corepack enable
+      - name: Enable corepack and prepare pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10 --activate
 
       - name: Debug versions
         run: |
