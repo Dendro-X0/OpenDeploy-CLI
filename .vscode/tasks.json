@@ -1,0 +1,43 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "CI: Sync latest (ci.yml)",
+      "type": "shell",
+      "command": "pnpm ci:sync",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "CI: Sync latest (ci.yml, follow)",
+      "type": "shell",
+      "command": "pnpm ci:sync:follow",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "CI: Sync Cloudflare (follow)",
+      "type": "shell",
+      "command": "pnpm ci:sync:cf:follow",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Open CI logs folder",
+      "type": "shell",
+      "command": "code .artifacts/ci-logs",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "CI: Sync + Open (follow)",
+      "dependsOn": ["CI: Sync latest (ci.yml, follow)", "Open CI logs folder"],
+      "dependsOrder": "sequence"
+    },
+    {
+      "label": "CF: Sync + Open (follow)",
+      "dependsOn": ["CI: Sync Cloudflare (follow)", "Open CI logs folder"],
+      "dependsOrder": "sequence"
+    }
+  ]
+}

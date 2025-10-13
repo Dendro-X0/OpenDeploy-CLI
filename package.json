@@ -18,6 +18,10 @@
     "ci:download": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\.bin\\ci-download.ps1",
     "ci:exit-codes": "node scripts/ci/exit-codes.mjs",
     "ci:validate-schemas": "node scripts/ci/validate-schemas.mjs",
-    "ci:capture-validate": "node scripts/ci/capture-validate.mjs"
+    "ci:capture-validate": "node scripts/ci/capture-validate.mjs",
+    "ci:sync": "node packages/cli/dist/index.js ci sync --workflow ci.yml --out .artifacts/ci-logs",
+    "ci:sync:follow": "node packages/cli/dist/index.js ci sync --workflow ci.yml --out .artifacts/ci-logs --follow",
+    "ci:sync:cf": "node packages/cli/dist/index.js ci sync --workflow docs-cloudflare-pages.yml --out .artifacts/ci-logs",
+    "ci:sync:cf:follow": "node packages/cli/dist/index.js ci sync --workflow docs-cloudflare-pages.yml --out .artifacts/ci-logs --follow"
   }
 }
