@@ -38,6 +38,7 @@ import { writeFile } from 'node:fs/promises'
 import Ajv from 'ajv'
 import { doctorSummarySchema } from '../schemas/doctor-summary.schema'
 import { readFile as readFileFs } from 'node:fs/promises'
+import { resolveAppPath } from '../core/detectors/apps'
 
 // ---- GitHub Pages + Next static export checks (best-effort, non-fatal) ----
 async function checkNextGithubPages(cwd: string): Promise<CheckResult[]> {
@@ -255,7 +256,16 @@ export function registerDoctorCommand(program: Command): void {
         results.push(wranglerAuth)
         // Monorepo and workspace sanity
         const cwdRoot: string = process.cwd()
-        const cwd: string = opts.path ? join(cwdRoot, opts.path) : cwdRoot
+        let cwd: string
+        if (opts.path && opts.path.length > 0) {
+          cwd = join(cwdRoot, opts.path)
+        } else {
+          const ciMode: boolean = Boolean(opts.ci) || process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true' || process.env.OPD_FORCE_CI === '1' || process.env.OPD_NDJSON === '1' || process.env.OPD_JSON === '1'
+          const resolved = await resolveAppPath({ cwd: cwdRoot, ci: ciMode })
+          cwd = resolved.path
+          if (isJsonMode(opts.json)) logger.json({ event: 'app-path', path: cwd, candidates: resolved.candidates })
+          else if (cwd !== cwdRoot) logger.note(`Detected app path: ${cwd}`)
+        }
         const mono = await detectMonorepo({ cwd })
         results.push({ name: 'monorepo', ok: mono !== 'none', message: mono })
         if (mono !== 'none') {

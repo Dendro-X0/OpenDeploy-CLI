@@ -15,6 +15,7 @@ import { printDeploySummary } from '../utils/summarize'
 import { envSync } from './env'
 // duplicate import removed
 import { computeRedactors } from '../utils/redaction'
+import { resolveAppPath } from '../core/detectors/apps'
 
 interface DeployOptions {
   readonly env?: 'prod' | 'preview'
@@ -47,12 +48,25 @@ export function registerDeployCommand(program: Command): void {
     .option('--alias <domain>', 'After deploy, assign this alias to the deployment (vercel only)')
     .action(async (provider: string, opts: DeployOptions): Promise<void> => {
       const rootCwd: string = process.cwd()
-      const targetCwd: string = opts.path ? (isAbsolute(opts.path) ? opts.path : join(rootCwd, opts.path)) : rootCwd
+      // Resolve target app path for monorepos when --path is not specified
+      let targetCwd: string
+      if (opts.path && opts.path.length > 0) {
+        targetCwd = isAbsolute(opts.path) ? opts.path : join(rootCwd, opts.path)
+      } else {
+        const ciMode: boolean = Boolean(opts.ci) || process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true' || process.env.OPD_FORCE_CI === '1' || process.env.OPD_NDJSON === '1' || process.env.OPD_JSON === '1'
+        const resolved = await resolveAppPath({ cwd: rootCwd, ci: ciMode })
+        targetCwd = resolved.path
+        if (process.env.OPD_NDJSON === '1') logger.json({ event: 'app-path', path: targetCwd, candidates: resolved.candidates, provider })
+        else if (targetCwd !== rootCwd) logger.note(`Detected app path: ${targetCwd}`)
+      }
       try {
         const jsonMode: boolean = isJsonMode(opts.json)
         if (jsonMode) logger.setJsonOnly(true)
+        // Enable NDJSON mode when OPD_NDJSON=1 is present
+        const ndjsonOn: boolean = process.env.OPD_NDJSON === '1'
+        if (ndjsonOn) logger.setNdjson(true)
         // Force CI-friendly env to suppress interactive prompts in child processes
-        if (jsonMode || opts.ci === true || process.env.OPD_NDJSON === '1') {
+        if (jsonMode || opts.ci === true || ndjsonOn) {
           process.env.OPD_FORCE_CI = '1'
         }
         // Default: provider plugin flow. Use legacy only when OPD_LEGACY=1.
@@ -104,8 +118,13 @@ export function registerDeployCommand(program: Command): void {
           const buildRes = await p.build({ cwd: targetCwd, framework: frameworkHint, envTarget, publishDirHint, noBuild: false })
           const deployRes = await p.deploy({ cwd: targetCwd, envTarget, project: linked, artifactDir: buildRes.artifactDir, alias: opts.alias })
           const durationMs: number = Date.now() - t0
+          if (jsonMode && !deployRes.ok) {
+            const message: string = deployRes.message || 'Deploy failed'
+            logger.jsonPrint({ ok: false, action: 'deploy' as const, provider, target: (opts.env === 'prod' ? 'prod' : 'preview'), url: deployRes.url, logsUrl: deployRes.logsUrl, projectId: linked.projectId ?? opts.project, durationMs, message, final: true })
+            return
+          }
           if (jsonMode) {
-            logger.jsonPrint({ url: deployRes.url, logsUrl: deployRes.logsUrl, projectId: linked.projectId ?? opts.project, provider, target: (opts.env === 'prod' ? 'prod' : 'preview'), durationMs, final: true })
+            logger.jsonPrint({ ok: true, action: 'deploy' as const, provider, target: (opts.env === 'prod' ? 'prod' : 'preview'), url: deployRes.url, logsUrl: deployRes.logsUrl, projectId: linked.projectId ?? opts.project, durationMs, final: true })
             return
           }
           if (deployRes.ok) {
@@ -113,7 +132,9 @@ export function registerDeployCommand(program: Command): void {
             else logger.success('Deployed')
             printDeploySummary({ provider: provider as 'vercel' | 'cloudflare' | 'github', target: (opts.env === 'prod' ? 'prod' : 'preview'), url: deployRes.url, projectId: linked.projectId ?? opts.project, durationMs, logsUrl: deployRes.logsUrl })
           } else {
-            throw new Error(deployRes.message || 'Deploy failed')
+            const message: string = deployRes.message || 'Deploy failed'
+            if (deployRes.logsUrl) logger.info(`Logs: ${deployRes.logsUrl}`)
+            throw new Error(message)
           }
           return
         }
@@ -166,10 +187,25 @@ export function registerDeployCommand(program: Command): void {
               if (opts.org) linkFlags.push(`--org ${opts.org}`)
               await proc.run({ cmd: `vercel link ${linkFlags.join(' ')}`, cwd: runCwd })
             }
-            const cmd: string = opts.env === 'prod' ? 'vercel deploy --prod --yes' : 'vercel deploy --yes'
+            // Prefer local build + prebuilt deploy for monorepos or when explicitly requested
+            let cmd: string = opts.env === 'prod' ? 'vercel deploy --prod --yes' : 'vercel deploy --yes'
+            let usedPrebuilt = false
+            try {
+              const hasWorkspace: boolean = await fsx.exists(join(rootCwd, 'pnpm-workspace.yaml'))
+              const targetHasLock: boolean = await fsx.exists(join(runCwd, 'pnpm-lock.yaml'))
+              const wantLocalBuild: boolean = process.env.OPD_LOCAL_BUILD === '1' || (hasWorkspace && !targetHasLock)
+              if (wantLocalBuild) {
+                sp.update('Vercel: local build')
+                const buildCmd: string = 'vercel build'
+                const build = await proc.run({ cmd: buildCmd, cwd: runCwd })
+                if (!build.ok) { throw new Error(build.stderr.trim() || build.stdout.trim() || 'Vercel local build failed') }
+                cmd = opts.env === 'prod' ? 'vercel deploy --prebuilt --prod --yes' : 'vercel deploy --prebuilt --yes'
+                usedPrebuilt = true
+              }
+            } catch { /* fall back to remote build */ }
             const deployTimeout: number = Number.isFinite(Number(process.env.OPD_TIMEOUT_MS)) ? Number(process.env.OPD_TIMEOUT_MS) : 900_000
             const t0: number = Date.now()
-            if (process.env.OPD_NDJSON === '1') logger.json({ event: 'phase', phase: 'deploy', provider: 'vercel', command: cmd, cwd: runCwd })
+            if (process.env.OPD_NDJSON === '1') logger.json({ event: 'phase', phase: 'deploy', provider: 'vercel', command: cmd, cwd: runCwd, prebuilt: usedPrebuilt })
             sp.update('Vercel: deploying')
             const stop: Stopper = startHeartbeat({ label: 'vercel deploy', hint: 'Tip: opendeploy open vercel --path apps/web', intervalMs: process.env.OPD_NDJSON === '1' ? 5000 : 10000 })
             let capturedUrl: string | undefined
@@ -300,7 +336,9 @@ export function registerDeployCommand(program: Command): void {
       const targetCwd: string = opts.path ? (isAbsolute(opts.path) ? opts.path : join(rootCwd, opts.path)) : rootCwd
       try {
         if (opts.json === true) logger.setJsonOnly(true)
-        if (opts.json === true || process.env.OPD_NDJSON === '1') process.env.OPD_FORCE_CI = '1'
+        const ndjsonOn: boolean = process.env.OPD_NDJSON === '1'
+        if (ndjsonOn) logger.setNdjson(true)
+        if (opts.json === true || ndjsonOn) process.env.OPD_FORCE_CI = '1'
         if (provider !== 'vercel' && provider !== 'cloudflare') {
           logger.error(`Unknown provider: ${provider}`)
           process.exitCode = 1
@@ -347,7 +385,7 @@ export function registerDeployCommand(program: Command): void {
             }
           } catch { /* ignore */ }
           if (opts.json === true || isNd) {
-            logger.json({ ok: true, command: 'logs', provider: 'cloudflare', env: opts.env ?? 'prod', url: depUrlCf, inspectUrl: inspectUrlCf, project: projectName, final: true })
+            logger.json({ ok: true, action: 'logs', provider: 'cloudflare', env: opts.env ?? 'prod', url: depUrlCf, inspectUrl: inspectUrlCf, project: projectName, final: true })
             return
           }
           if (inspectUrlCf) logger.success(`Inspect: ${inspectUrlCf}`)
