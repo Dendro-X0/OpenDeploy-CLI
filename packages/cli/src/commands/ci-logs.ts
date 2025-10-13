@@ -2,6 +2,7 @@ import { Command } from 'commander'
 import { logger } from '../utils/logger'
 import { proc } from '../utils/process'
 import { join } from 'node:path'
+import { promises as fs } from 'node:fs'
 
 interface CiLogsOptions {
   readonly workflow?: string
@@ -96,6 +97,41 @@ function emitAnnotation(kind: 'error' | 'warning', msg: string): void {
   console.log(`::${kind} ::${msg}`)
 }
 
+/**
+ * Ensure a directory exists (mkdir -p).
+ */
+async function ensureDir(dir: string): Promise<void> {
+  await fs.mkdir(dir, { recursive: true })
+}
+
+/**
+ * Sanitize a string for safe filenames.
+ */
+function sanitizeFilename(name: string): string {
+  return name.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '')
+}
+
+/**
+ * Retrieve jobs for a run.
+ */
+async function getRunJobs(args: { readonly repo: string; readonly id: number }): Promise<Array<{ readonly id: number; readonly name: string }>> {
+  const res = await proc.run({ cmd: `gh run view ${args.id} --repo ${args.repo} --json jobs`, cwd: process.cwd() })
+  if (!res.ok) return []
+  try {
+    const js = JSON.parse(res.stdout) as { jobs?: Array<{ databaseId?: number; name?: string }> }
+    const jobs = js.jobs ?? []
+    return jobs.filter(j => typeof j.databaseId === 'number').map(j => ({ id: j.databaseId as number, name: sanitizeFilename(j.name ?? 'job') }))
+  } catch { return [] }
+}
+
+/**
+ * Write a text file ensuring parent dir exists.
+ */
+async function writeTextFile(path: string, data: string): Promise<void> {
+  await ensureDir(path.substring(0, path.lastIndexOf('/')) || '.')
+  await fs.writeFile(path, data, 'utf8')
+}
+
 function platformOpen(url: string): Promise<{ ok: boolean }> {
   const isWin: boolean = process.platform === 'win32'
   const isMac: boolean = process.platform === 'darwin'
@@ -173,6 +209,82 @@ export function registerCiLogsCommand(program: Command): void {
       else logger.info(`${info.status ?? 'status: unknown'} — ${url}`)
       if (!ok) emitAnnotation('error', `CI run failed: ${url}`)
       if (!ok) process.exitCode = 1
+    })
+
+  // ci sync — download latest run summary and per-job logs
+  ci
+    .command('sync')
+    .description('Download the latest run summary and job logs into a local directory for IDE debugging')
+    .option('--workflow <file>', 'Workflow file name (e.g., ci.yml, pages.yml)', 'ci.yml')
+    .option('--out <dir>', 'Output directory (default ./.artifacts/ci-logs)', '.artifacts/ci-logs')
+    .option('--pr <number>', 'Scope to a given PR number (resolves head branch)')
+    .option('--follow', 'Re-sync until run completes')
+    .option('--json', 'Emit structured JSON summary')
+    .action(async (opts: { readonly workflow?: string; readonly out?: string; readonly pr?: string; readonly follow?: boolean; readonly json?: boolean }): Promise<void> => {
+      const repo = await resolveRepo()
+      if (!repo) {
+        const msg = 'Unable to resolve GitHub repo. Set GITHUB_REPOSITORY or add a git origin remote.'
+        if (opts.json) logger.jsonPrint({ ok: false, action: 'ci-sync', message: msg, final: true })
+        else logger.error(msg)
+        process.exitCode = 1
+        return
+      }
+      const hasGh = await ghExists()
+      if (!hasGh) {
+        const msg = 'GitHub CLI (gh) not found. Install via: winget install GitHub.cli'
+        if (opts.json) logger.jsonPrint({ ok: false, action: 'ci-sync', repo, suggestion: 'install gh', final: true })
+        else logger.error(msg)
+        process.exitCode = 1
+        return
+      }
+      // Resolve branch from PR when provided; otherwise autodetect
+      let branch: string | undefined
+      if (opts.pr) {
+        const prRes = await proc.run({ cmd: `gh pr view ${opts.pr} --repo ${repo} --json headRefName`, cwd: process.cwd() })
+        if (prRes.ok) {
+          try { const js = JSON.parse(prRes.stdout) as { headRefName?: string }; if (js?.headRefName) branch = js.headRefName } catch { /* ignore */ }
+        }
+      }
+      if (!branch) branch = await resolveBranch()
+      const wf = String(opts.workflow || 'ci.yml')
+
+      async function syncOnce(): Promise<{ readonly ok: boolean; readonly id?: number; readonly status?: string; readonly conclusion?: string; readonly url?: string }> {
+        const info = await getLatestRun({ repo, branch, workflow: wf })
+        if (!info) return { ok: false }
+        const id = info.id
+        const url = runUrl(repo, id)
+        const outRoot = opts.out && opts.out.length > 0 ? opts.out : '.artifacts/ci-logs'
+        const runDir = join(process.cwd(), outRoot, sanitizeFilename(wf.replace(/\.yml$/i, '')), String(id))
+        await ensureDir(runDir)
+        const summary = await proc.run({ cmd: `gh run view ${id} --repo ${repo} --json url,conclusion,createdAt,updatedAt,jobs`, cwd: process.cwd() })
+        if (summary.ok) await writeTextFile(join(runDir, 'summary.json').replace(/\\/g, '/'), summary.stdout)
+        const jobs = await getRunJobs({ repo, id })
+        for (const j of jobs) {
+          const logPath = join(runDir, `job-${j.id}-${j.name}.log`).replace(/\\/g, '/')
+          const res = await proc.run({ cmd: `gh run view ${id} --repo ${repo} --job ${j.id} --log`, cwd: process.cwd() })
+          if (res.ok) await writeTextFile(logPath, res.stdout)
+        }
+        return { ok: true, id, status: info.status, conclusion: info.conclusion, url }
+      }
+
+      if (opts.follow) {
+        // Poll until completed; sleep between attempts
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const one = await syncOnce()
+          if (!one.ok) { if (opts.json) logger.jsonPrint({ ok: false, action: 'ci-sync', repo, branch, workflow: wf, message: 'No runs found', final: true }); else logger.warn('No runs found'); return }
+          const st = (one.status ?? '').toLowerCase()
+          const done = st === 'completed'
+          if (done) { if (opts.json) logger.jsonPrint({ ok: true, action: 'ci-sync', repo, branch, workflow: wf, id: one.id, url: one.url, status: one.status, conclusion: one.conclusion, follow: true, final: true }); else logger.info(`Synced: ${one.url}`); if ((one.conclusion ?? '').toLowerCase() === 'failure') process.exitCode = 1; return }
+          await new Promise(r => setTimeout(r, 5000))
+        }
+      } else {
+        const res = await syncOnce()
+        if (!res.ok) { if (opts.json) logger.jsonPrint({ ok: false, action: 'ci-sync', repo, branch, workflow: wf, message: 'No runs found', final: true }); else logger.warn('No runs found'); return }
+        if (opts.json) logger.jsonPrint({ ok: true, action: 'ci-sync', repo, branch, workflow: wf, id: res.id, url: res.url, status: res.status, conclusion: res.conclusion, final: true })
+        else logger.info(`Synced: ${res.url}`)
+        if ((res.conclusion ?? '').toLowerCase() === 'failure') process.exitCode = 1
+      }
     })
 
   // ci last — most recent run regardless of branch; optional --workflow and --pr
