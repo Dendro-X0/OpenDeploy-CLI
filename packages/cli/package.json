@@ -7,7 +7,7 @@
   "scripts": {
     "build": "tsup --clean",
     "prepare:dist": "tsup --clean",
-    "build:cjs": "tsup src/index.ts --format cjs --target node18 --out-dir dist-cjs --sourcemap --dts false --minify false --clean",
+    "build:cjs": "tsup src/index.ts --format cjs --target node18 --out-dir dist-cjs --sourcemap --no-dts --no-minify --clean",
     "build:bin": "pnpm build:cjs && pkg dist-cjs/index.js --targets node18-win-x64,node18-linux-x64,node18-macos-arm64 --output artifacts/bin/opd",
     "build:bin:win": "pnpm build:cjs && pkg dist-cjs/index.js --targets node18-win-x64 --output artifacts/bin/opd-win-x64.exe",
     "build:bin:linux": "pnpm build:cjs && pkg dist-cjs/index.js --targets node18-linux-x64 --output artifacts/bin/opd-linux-x64",
