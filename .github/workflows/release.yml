@@ -100,11 +100,11 @@ jobs:
             base=$(basename "$f")
             cp "$f" "artifacts/$base"
           done
-          # Checksums
+          # Checksums (files only at top-level)
           if command -v sha256sum >/dev/null 2>&1; then
-            sha256sum artifacts/* > artifacts/checksums.txt
+            find artifacts -maxdepth 1 -type f -exec sha256sum {} + > artifacts/checksums.txt
           else
-            shasum -a 256 artifacts/* > artifacts/checksums.txt
+            find artifacts -maxdepth 1 -type f -print0 | xargs -0 shasum -a 256 > artifacts/checksums.txt
           fi
       - name: Create GitHub Release
         uses: ncipollo/release-action@v1
