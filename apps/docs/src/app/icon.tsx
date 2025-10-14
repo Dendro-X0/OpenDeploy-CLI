@@ -1,6 +1,7 @@
 import { ImageResponse } from 'next/og'
 // Ensure static export compatibility for GitHub Pages
 export const dynamic = 'force-static'
+export const revalidate = 86400
 export const size = { width: 32, height: 32 }
 export const contentType = 'image/png'
 
