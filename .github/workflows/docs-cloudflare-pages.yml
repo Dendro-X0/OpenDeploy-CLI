@@ -76,7 +76,7 @@ jobs:
         with:
           apiToken: ${{ env.CF_API_TOKEN }}
           accountId: ${{ env.CF_ACCOUNT_ID }}
-          packageManager: npm
+          packageManager: pnpm
           command: --version
 
       - name: List Cloudflare Pages projects
@@ -84,7 +84,7 @@ jobs:
         with:
           apiToken: ${{ env.CF_API_TOKEN }}
           accountId: ${{ env.CF_ACCOUNT_ID }}
-          packageManager: npm
+          packageManager: pnpm
           command: pages project list
 
       - name: Deploy to Cloudflare Pages
@@ -93,7 +93,7 @@ jobs:
         with:
           apiToken: ${{ env.CF_API_TOKEN }}
           accountId: ${{ env.CF_ACCOUNT_ID }}
-          packageManager: npm
+          packageManager: pnpm
           command: pages project create opendeploy-cli-docs-site --production-branch main
         continue-on-error: true
 
@@ -103,7 +103,7 @@ jobs:
         with:
           apiToken: ${{ env.CF_API_TOKEN }}
           accountId: ${{ env.CF_ACCOUNT_ID }}
-          packageManager: npm
+          packageManager: pnpm
           command: pages deploy apps/docs/.vercel/output --project-name opendeploy-cli-docs-site --branch main --verbose
 
       - name: Skip deploy (missing Cloudflare secrets)
