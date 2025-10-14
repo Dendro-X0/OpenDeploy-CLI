@@ -18,7 +18,7 @@ JSON summary:
 ```
 
 ## Global Output & CI Flags
-For CI consumers, see also: [Response Shapes (CI)](./response-shapes.md)
+For CI consumers, see the section below for JSON/NDJSON shapes and flags.
 
 ### Schema Validation and Guardrail
 

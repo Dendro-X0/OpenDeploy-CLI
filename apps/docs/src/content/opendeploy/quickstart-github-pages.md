@@ -4,13 +4,11 @@ Deploy a static Next.js/SSG site to GitHub Pages using OpenDeploy CLI.
 
 ## 1) Install and Start
 
-```bash
-# macOS/Linux
-curl -fsSL "https://raw.githubusercontent.com/Dendro-X0/OpenDeploy-CLI/main/packages/cli/install/install.sh" | bash
-opd start
+Follow the steps in the [Install](./install.md) page to install from a tag (source) for now.
 
-# Windows PowerShell
-iwr "https://raw.githubusercontent.com/Dendro-X0/OpenDeploy-CLI/main/packages/cli/install/install.ps1" -UseBasicParsing | iex
+Then start the wizard:
+
+```bash
 opd start
 ```
 
