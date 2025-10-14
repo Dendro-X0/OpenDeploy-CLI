@@ -89,10 +89,18 @@ jobs:
           path: artifacts/bin
       - name: Prepare artifacts
         run: |
+          set -euo pipefail
           mkdir -p artifacts
+          # Optional JS dist for reference
           cp packages/cli/dist/index.js artifacts/opd.js || true
-          # Flatten binary names
-          for f in artifacts/bin/**; do base=$(basename "$f"); cp "$f" "artifacts/$base"; done
+          # Downloaded artifacts are under artifacts/bin/<artifact-name>/*
+          # Flatten only files (not directories) into artifacts/
+          shopt -s nullglob
+          for f in artifacts/bin/*/*; do
+            base=$(basename "$f")
+            cp "$f" "artifacts/$base"
+          done
+          # Checksums
           if command -v sha256sum >/dev/null 2>&1; then
             sha256sum artifacts/* > artifacts/checksums.txt
           else
