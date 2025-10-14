@@ -78,10 +78,10 @@ export class VercelProvider implements Provider {
 
   public async validateAuth(cwd: string): Promise<void> {
     const bin = await this.resolveVercel(cwd)
-    const stepTimeout = Number.isFinite(Number(process.env.OPD_TIMEOUT_MS)) ? Number(process.env.OPD_TIMEOUT_MS) : 120_000
-    const ver = await runWithRetry({ cmd: `${bin} --version`, cwd }, { timeoutMs: stepTimeout })
+    if (process.env.OPD_TEST_NO_SPAWN === '1') return
+    const ver = await proc.run({ cmd: `${bin} --version`, cwd })
     if (!ver.ok) throw new Error('Vercel CLI not found. Install from https://vercel.com/cli or npm i -g vercel')
-    const who = await runWithRetry({ cmd: `${bin} whoami`, cwd }, { timeoutMs: stepTimeout })
+    const who = await proc.run({ cmd: `${bin} whoami`, cwd })
     if (!who.ok) throw new Error('Vercel not logged in. Run: vercel login')
   }
 

@@ -135,7 +135,12 @@ async function writeTextFile(path: string, data: string): Promise<void> {
 function platformOpen(url: string): Promise<{ ok: boolean }> {
   const isWin: boolean = process.platform === 'win32'
   const isMac: boolean = process.platform === 'darwin'
-  const cmd: string = isWin ? `start "" "${url}"` : (isMac ? `open "${url}"` : `xdg-open "${url}"`)
+  if (isWin) {
+    // Prefer PowerShell for cross-shell reliability (Git Bash, PowerShell, CMD)
+    return proc.run({ cmd: `powershell -NoProfile -Command Start-Process \"${url}\"` })
+      .then(r => r.ok ? { ok: true } : proc.run({ cmd: `cmd /c start "" "${url}"` }).then(r2 => ({ ok: r2.ok })))
+  }
+  const cmd: string = isMac ? `open "${url}"` : `xdg-open "${url}"`
   return proc.run({ cmd }).then(r => ({ ok: r.ok }))
 }
 
@@ -240,9 +245,10 @@ export function registerCiLogsCommand(program: Command): void {
       if (!pnpmVersion) pnpmVersion = '10.16.1'
 
       const steps: Array<{ readonly name: string; readonly cmd: string }> = [
-        { name: 'Setup Node', cmd: `npx -y actions/setup-node@ignore || node -v` },
+        { name: 'Node version', cmd: 'node -v' },
         { name: 'Enable Corepack', cmd: 'corepack enable' },
         { name: 'Prepare pnpm', cmd: `corepack prepare pnpm@${pnpmVersion} --activate` },
+        { name: 'pnpm version', cmd: 'pnpm -v' },
         { name: 'Install', cmd: 'pnpm install -r --frozen-lockfile' },
         { name: 'Build', cmd: 'pnpm build' },
         { name: 'Test', cmd: `pnpm -C packages/cli test -- --reporter=dot${opts.tests ? ' ' + opts.tests : ''}` }
@@ -250,7 +256,11 @@ export function registerCiLogsCommand(program: Command): void {
       const results: Array<{ readonly name: string; readonly ok: boolean; readonly code: number; readonly stdout?: string; readonly stderr?: string }> = []
       for (const s of steps) {
         const r = await proc.run({ cmd: s.cmd, cwd: process.cwd() })
-        results.push({ name: s.name, ok: r.ok, code: r.code ?? -1, stdout: r.stdout, stderr: r.stderr })
+        const rc: number = ((): number => {
+          const maybe: unknown = (r as unknown as { code?: number }).code
+          return typeof maybe === 'number' ? maybe : (r.ok ? 0 : -1)
+        })()
+        results.push({ name: s.name, ok: r.ok, code: rc, stdout: r.stdout, stderr: r.stderr })
         if (!r.ok) break
       }
       const okAll = results.every(r => r.ok)

@@ -72,6 +72,7 @@ jobs:
           test -d .vercel/output
 
       - name: Wrangler version
+        if: ${{ env.CF_API_TOKEN != '' && env.CF_ACCOUNT_ID != '' }}
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ env.CF_API_TOKEN }}
@@ -80,6 +81,7 @@ jobs:
           command: --version
 
       - name: List Cloudflare Pages projects
+        if: ${{ env.CF_API_TOKEN != '' && env.CF_ACCOUNT_ID != '' }}
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ env.CF_API_TOKEN }}

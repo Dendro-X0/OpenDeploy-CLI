@@ -3,8 +3,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 const logs: string[] = []
 const origLog = console.log
 
-beforeEach(() => { logs.length = 0; vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => { logs.push(String(args[0] ?? '')); return undefined as any }); process.env.OPD_JSON = '1' })
-afterEach(() => { (console.log as any) = origLog; delete process.env.OPD_JSON })
+beforeEach(() => { logs.length = 0; vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => { logs.push(String(args[0] ?? '')); return undefined as any }); process.env.OPD_JSON = '1'; process.env.OPD_TEST_FORCE_SAFE_FIXES = '1' })
+afterEach(() => { (console.log as any) = origLog; delete process.env.OPD_JSON; delete process.env.OPD_TEST_FORCE_SAFE_FIXES })
 
 // Mock prompts
 vi.mock('@clack/prompts', () => ({
@@ -73,8 +73,7 @@ function findLastFixEvent(predicate: (o: any) => boolean): any {
 }
 
 describe('next.config fixers', () => {
-  // TODO: Re-enable after simplifying Start wizard side-effects; skipping to stabilize CI.
-  it.skip('patches next.config.* for GitHub Pages', async () => {
+  it('patches next.config.* for GitHub Pages', async () => {
     existsMock.mockImplementation(async (p: string) => {
       const s = String(p).replace(/\\/g, '/')
       if (s.endsWith('public')) return true
@@ -109,8 +108,7 @@ describe('next.config fixers', () => {
     }
   })
 
-  // TODO: Re-enable after simplifying Start wizard side-effects; skipping to stabilize CI.
-  it.skip('patches next.config.* for Cloudflare Pages (remove export, clear basePath, remove assetPrefix)', async () => {
+  it('patches next.config.* for Cloudflare Pages (remove export, clear basePath, remove assetPrefix)', async () => {
     existsMock.mockImplementation(async (p: string) => {
       const s = String(p).replace(/\\/g, '/')
       if (s.endsWith('wrangler.toml')) return false

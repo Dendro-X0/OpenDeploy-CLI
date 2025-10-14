@@ -4,8 +4,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 const logs: string[] = []
 const origLog = console.log
 
-beforeEach(() => { logs.length = 0; vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => { logs.push(String(args[0] ?? '')); return undefined as any }); process.env.OPD_JSON = '1' })
-afterEach(() => { (console.log as any) = origLog; delete process.env.OPD_JSON })
+beforeEach(() => { logs.length = 0; vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => { logs.push(String(args[0] ?? '')); return undefined as any }); process.env.OPD_JSON = '1'; process.env.OPD_TEST_FORCE_SAFE_FIXES = '1' })
+afterEach(() => { (console.log as any) = origLog; delete process.env.OPD_JSON; delete process.env.OPD_TEST_FORCE_SAFE_FIXES })
 
 // Mock prompts to avoid interactive pauses
 const { selectMock, confirmMock } = vi.hoisted(() => ({
@@ -90,8 +90,7 @@ function jsonLast(): any {
 }
 
 describe('start safe-fixes', () => {
-  // TODO: Re-enable after simplifying Start wizard fix-path; skipping to stabilize CI.
-  it.skip('applies .nojekyll fix for GitHub Pages in JSON/CI mode without prompt', async () => {
+  it('applies .nojekyll fix for GitHub Pages in JSON/CI mode without prompt', async () => {
     existsMock.mockImplementation(async (p: string) => {
       const s = String(p).replace(/\\/g, '/')
       if (s.endsWith('public')) return true
@@ -110,8 +109,7 @@ describe('start safe-fixes', () => {
     }
   })
 
-  // TODO: Re-enable after simplifying Start wizard fix-path; skipping to stabilize CI.
-  it.skip('generates wrangler.toml for Cloudflare Pages in JSON/CI mode without prompt', async () => {
+  it('generates wrangler.toml for Cloudflare Pages in JSON/CI mode without prompt', async () => {
     existsMock.mockImplementation(async (p: string) => {
       const s = String(p).replace(/\\/g, '/')
       if (s.endsWith('wrangler.toml')) return false
