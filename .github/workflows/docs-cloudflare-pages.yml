@@ -60,7 +60,7 @@ jobs:
       - name: Build with Next on Pages
         run: |
           rm -rf .vercel/output .next
-          npx -y @cloudflare/next-on-pages@1
+          npx -y @cloudflare/next-on-pages@1.13.5
 
       - name: Verify artifact exists
         run: |
@@ -77,7 +77,7 @@ jobs:
         with:
           apiToken: ${{ env.CF_API_TOKEN }}
           accountId: ${{ env.CF_ACCOUNT_ID }}
-          packageManager: pnpm
+          packageManager: npm
           command: --version
 
       - name: List Cloudflare Pages projects
@@ -86,7 +86,7 @@ jobs:
         with:
           apiToken: ${{ env.CF_API_TOKEN }}
           accountId: ${{ env.CF_ACCOUNT_ID }}
-          packageManager: pnpm
+          packageManager: npm
           command: pages project list
 
       - name: Deploy to Cloudflare Pages
@@ -95,7 +95,7 @@ jobs:
         with:
           apiToken: ${{ env.CF_API_TOKEN }}
           accountId: ${{ env.CF_ACCOUNT_ID }}
-          packageManager: pnpm
+          packageManager: npm
           command: pages project create opendeploy-cli-docs-site --production-branch main
         continue-on-error: true
 
@@ -105,7 +105,7 @@ jobs:
         with:
           apiToken: ${{ env.CF_API_TOKEN }}
           accountId: ${{ env.CF_ACCOUNT_ID }}
-          packageManager: pnpm
+          packageManager: npm
           command: pages deploy apps/docs/.vercel/output --project-name opendeploy-cli-docs-site --branch main --verbose
 
       - name: Skip deploy (missing Cloudflare secrets)
