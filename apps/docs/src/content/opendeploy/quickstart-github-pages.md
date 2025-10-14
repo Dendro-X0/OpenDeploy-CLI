@@ -21,12 +21,20 @@ The Start wizard detects your framework and provider. For GitHub Pages, it offer
   - `output: 'export'`
   - `images.unoptimized: true`
   - `trailingSlash: true` (recommended)
+  - `basePath` and `assetPrefix` for Project Pages: expected `basePath` is `/<repo>`, and `assetPrefix` is `/<repo>/`
 
 In JSON/CI mode, these fixes auto‑apply.
 
 ## 2) Configure CI Workflow
 
 Use the wizard’s “GitHub Actions (recommended)” option. It writes `.github/workflows/deploy-pages.yml` and prints a deep‑link to Actions.
+
+Per‑app reusable workflow (monorepo):
+
+```bash
+opd generate github --reusable
+# writes .github/workflows/deploy-app-gh-pages.yml using _reusable-gh-pages.yml
+```
 
 Then commit and push:
 
@@ -63,6 +71,11 @@ pnpm build && pnpm next export
 opd doctor --strict
 opd up github --preflight-only --strict-preflight --json
 ```
+
+Notes:
+
+- The CLI ensures a `.nojekyll` marker in your artifact so `_next/` assets are published.
+- For Project Pages, mismatched `basePath`/`assetPrefix` is the most common cause of missing CSS/JS. The CLI now prints explicit hints if it detects a mismatch.
 
 ## Screenshots (placeholders)
 

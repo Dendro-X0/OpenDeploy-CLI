@@ -264,3 +264,47 @@ Examples:
 opd ci dispatch --workflow ci.yml --yes
 opd ci dispatch --workflow deploy-docs.yml --ref main --inputs site=docs,region=us --yes
 ```
+
+## ci last
+
+Show the most recent GitHub Actions run across any branch. Optionally scope to a PR (by head branch) or a specific workflow.
+
+Usage:
+
+```bash
+opd ci last [--workflow <file>] [--pr <number>] [--json]
+```
+
+Notes:
+
+- Prints the direct run URL and a compact JSON summary in `--json` mode.
+
+## ci summarize
+
+Produce a compact summary of the latest run for a workflow, including failing jobs and short error excerpts. Ensures the latest run summary and job logs are synced locally for IDE inspection.
+
+Usage:
+
+```bash
+opd ci summarize [--workflow <file>] [--out <dir>] [--pr <number>] [--json]
+```
+
+Notes:
+
+- Logs are stored under `./.artifacts/ci-logs/<workflow>/<runId>/`.
+- VSCode task: "CI: Summarize latest (ci.yml)" is included in `.vscode/tasks.json`.
+
+## ci sync
+
+Download the latest run summary and per-job logs for a workflow into a local directory for IDE debugging.
+
+Usage:
+
+```bash
+opd ci sync [--workflow <file>] [--out <dir>] [--follow] [--pr <number>] [--json]
+```
+
+Notes:
+
+- With `--follow`, re-syncs until the run completes.
+- Output directory defaults to `./.artifacts/ci-logs`.

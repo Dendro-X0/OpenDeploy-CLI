@@ -39,8 +39,8 @@ export function registerRollbackCommand(program: Command): void {
   }
   program
     .command('rollback')
-    .description('Rollback production to a previous successful deployment (provider-specific)')
-    .argument('<provider>', 'Target provider: vercel | netlify')
+    .description('Rollback production to a previous successful deployment (Vercel)')
+    .argument('<provider>', 'Target provider: vercel')
     .option('--alias <domain>', 'Production alias/domain (Vercel)')
     .option('--to <urlOrSha>', 'Specific deployment URL or commit SHA to rollback to (provider-dependent)')
     .option('--path <dir>', 'Path to app directory (for monorepos)')
@@ -61,24 +61,18 @@ export function registerRollbackCommand(program: Command): void {
         if (opts.baseDelayMs) process.env.OPD_BASE_DELAY_MS = String(Math.max(0, Number(opts.baseDelayMs) || 0))
         const jsonMode: boolean = isJsonMode(opts.json)
         if (jsonMode) logger.setJsonOnly(true)
+        const ndjsonOn: boolean = process.env.OPD_NDJSON === '1'
+        if (ndjsonOn) logger.setNdjson(true)
+        if (jsonMode || ndjsonOn) process.env.OPD_FORCE_CI = '1'
         // Early dry-run summary to avoid side effects
         if (opts.dryRun === true) {
-          const prov: 'vercel' | 'netlify' = provider === 'netlify' ? 'netlify' : 'vercel'
-          const base = { ok: true, provider: prov, action: 'rollback' as const, target: 'prod' as const }
-          const cmdPlan: string[] = prov === 'vercel'
-            ? [
-                `vercel list --json -n 20`,
-                ...(opts.alias ? [`vercel alias set ${opts.to ?? '<deployment-url>'} ${opts.alias}`] : [])
-              ]
-            : [
-                `netlify api listSiteDeploys --data '{"site_id":"${opts.project ?? '<site-id>'}","per_page":10}'${opts.project ? ' --site ' + opts.project : ''}`.trim(),
-                `netlify api restoreDeploy --data '{"deploy_id":"<deploy-id>"}'${opts.project ? ' --site ' + opts.project : ''}`.trim()
-              ]
-          if (jsonMode) {
-            logger.jsonPrint(annotate({ ...base, cmdPlan, final: true }))
-          } else {
-            logger.info(`[dry-run] rollback ${prov}`)
-          }
+          const base = { ok: true, provider: 'vercel' as const, action: 'rollback' as const, target: 'prod' as const }
+          const cmdPlan: string[] = [
+            `vercel list --json -n 20`,
+            ...(opts.alias ? [`vercel alias set ${opts.to ?? '<deployment-url>'} ${opts.alias}`] : [])
+          ]
+          if (jsonMode) { logger.jsonPrint(annotate({ ...base, cmdPlan, final: true })) }
+          else { logger.info(`[dry-run] rollback vercel`) }
           return
         }
         if (provider === 'vercel') {
@@ -142,56 +136,7 @@ export function registerRollbackCommand(program: Command): void {
           if (opts.alias) printDeploySummary({ provider: 'vercel', target: 'prod', url: `https://${opts.alias}` })
           return
         }
-        if (provider === 'netlify') {
-          const siteFlag: string = opts.project ? ` --site ${opts.project}` : ''
-          // Get previous production deploy id
-          const sp = spinner('Netlify: resolving previous production deploy')
-          const listCmd = `netlify api listSiteDeploys --data '{"site_id":"${opts.project ?? ''}","per_page":10}'${siteFlag}`
-          if (opts.printCmd) logger.info(`$ ${listCmd}`)
-          const ls = await runWithRetry({ cmd: listCmd, cwd: targetCwd })
-          sp.stop()
-          if (!ls.ok) throw new Error(ls.stderr.trim() || ls.stdout.trim() || 'Failed to list Netlify deploys')
-          let prevId: string | undefined
-          let siteName: string | undefined
-          try {
-            const arr = JSON.parse(ls.stdout) as Array<{ id?: string; context?: string; state?: string }>
-            const prod = arr.filter(d => (d.context ?? '').toLowerCase() === 'production' && (d.state ?? '').toLowerCase() === 'ready')
-            if (prod.length >= 2) prevId = prod[1].id
-            else if (prod.length === 1) prevId = prod[0].id
-          } catch { /* ignore */ }
-          // Resolve site name for dashboard URL
-          try {
-            const siteCmd = `netlify api getSite --data '{"site_id":"${opts.project ?? ''}"}'${siteFlag}`
-            if (opts.printCmd) logger.info(`$ ${siteCmd}`)
-            const siteRes = await runWithRetry({ cmd: siteCmd, cwd: targetCwd })
-            if (siteRes.ok) {
-              const js = JSON.parse(siteRes.stdout) as { name?: string }
-              if (typeof js.name === 'string') siteName = js.name
-            }
-          } catch { /* ignore */ }
-          if (!prevId) {
-            const dash = siteName ? `https://app.netlify.com/sites/${siteName}/deploys` : undefined
-            const msg = `Could not resolve previous production deploy. ${dash ? `Open: ${dash}` : ''}`
-            if (jsonMode) { logger.jsonPrint(annotate({ ok: false, provider: 'netlify', action: 'rollback', target: 'prod', message: msg, dashboard: dash, final: true })); return }
-            logger.error(msg)
-            return
-          }
-          // Attempt restore via API (may require CLI auth + permissions)
-          const restoreCmd = `netlify api restoreDeploy --data '{"deploy_id":"${prevId}"}'${siteFlag}`
-          if (opts.printCmd) logger.info(`$ ${restoreCmd}`)
-          const restore = await runWithRetry({ cmd: restoreCmd, cwd: targetCwd })
-          if (!restore.ok) {
-            const dash = siteName ? `https://app.netlify.com/sites/${siteName}/deploys/${prevId}` : undefined
-            if (jsonMode) { logger.jsonPrint(annotate({ ok: false, provider: 'netlify', action: 'rollback', target: 'prod', message: 'Restore failed. Use dashboard to restore.', dashboard: dash, final: true })); return }
-            logger.warn('Netlify restore API failed. Open the dashboard to restore this deploy:')
-            if (dash) logger.info(dash)
-            return
-          }
-          if (jsonMode) { logger.jsonPrint(annotate({ ok: true, provider: 'netlify', action: 'rollback', target: 'prod', deployId: prevId, final: true })); return }
-          logger.success(`Requested restore of deploy ${prevId}`)
-          printDeploySummary({ provider: 'netlify', target: 'prod' })
-          return
-        }
+        
         logger.error(`Unknown provider: ${provider}`)
         process.exitCode = 1
       } catch (err) {

@@ -11,63 +11,11 @@ permissions:
   id-token: write
 
 concurrency:
-  group: "pages"
+  group: "pages-docs"
   cancel-in-progress: false
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: apps/docs
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Debug runner
-        run: |
-          echo "Runner: $(uname -a)"
-          echo "PWD=$(pwd)"
-          ls -la
-
-      - name: Sanity echo
-        run: |
-          echo "Hello from GH runner"
-          date
-
-      - name: Enable corepack and prepare pnpm
-        run: |
-          corepack enable
-          corepack prepare pnpm@10 --activate
-
-      - name: Debug versions
-        run: |
-          node -v
-          pnpm -v
-
-      - name: Install deps
-        run: pnpm install --frozen-lockfile
-
-      - name: Build (Next 15 static export)
-        env:
-          NEXT_PUBLIC_SITE_ORIGIN: https://Dendro-X0.github.io
-          NEXT_PUBLIC_BASE_PATH: /OpenDeploy-CLI
-          NEXT_BASE_PATH: /OpenDeploy-CLI
-          DEPLOY_TARGET: github
-        run: pnpm build
-
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: apps/docs/out
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+  deploy-docs:
+    uses: ./.github/workflows/_reusable-gh-pages.yml
+    with:
+      app_path: apps/docs

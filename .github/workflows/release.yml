@@ -16,37 +16,82 @@ permissions:
   packages: write
 
 jobs:
-  build-artifacts:
-    runs-on: ubuntu-latest
-    needs: go-binaries
+  build-binaries:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Setup Node + pnpm (corepack)
-        uses: ./.github/actions/setup-pnpm
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: '20'
-          pnpm-version: '10.13.1'
+          cache: 'pnpm'
+      - name: Enable pnpm via Corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.16.1 --activate
+      - name: Install deps (monorepo)
+        run: pnpm install --frozen-lockfile
+      - name: Build CJS dist for pkg
+        run: pnpm -C packages/cli build:cjs
+      - name: Build OS binary
+        shell: bash
+        run: |
+          set -euxo pipefail
+          case "${{ matrix.os }}" in
+            ubuntu-*)  pnpm -C packages/cli build:bin:linux ;;
+            macos-*)   pnpm -C packages/cli build:bin:mac ;;
+            windows-*) pnpm -C packages/cli build:bin:win ;;
+          esac
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: opd-${{ matrix.os }}
+          path: packages/cli/artifacts/bin/*
+          if-no-files-found: error
 
+  create-release:
+    needs: build-binaries
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+      - name: Enable pnpm via Corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.16.1 --activate
       - name: Install deps (CLI)
         run: pnpm install --frozen-lockfile
-
-      - name: Build (CLI)
-        run: pnpm build
-
+      - name: Build JS dist
+        run: pnpm -C packages/cli build
+      - name: Download all binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/bin
       - name: Prepare artifacts
         run: |
           mkdir -p artifacts
-          cp packages/cli/dist/index.js artifacts/opd.js || echo "No Node dist found; skipping JS artifact"
+          cp packages/cli/dist/index.js artifacts/opd.js || true
+          # Flatten binary names
+          for f in artifacts/bin/**; do base=$(basename "$f"); cp "$f" "artifacts/$base"; done
           if command -v sha256sum >/dev/null 2>&1; then
-            sha256sum artifacts/opd.js > artifacts/checksums.txt
+            sha256sum artifacts/* > artifacts/checksums.txt
           else
-            shasum -a 256 artifacts/opd.js > artifacts/checksums.txt
+            shasum -a 256 artifacts/* > artifacts/checksums.txt
           fi
-
       - name: Create GitHub Release
         uses: ncipollo/release-action@v1
         with:
@@ -56,63 +101,3 @@ jobs:
           allowUpdates: true
           artifactErrorsFailBuild: true
           token: ${{ secrets.GITHUB_TOKEN }}
-
-  go-binaries:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Create or update tag (manual dispatch)
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.tag != '' }}
-        run: |
-          set -euxo pipefail
-          TAG="${{ inputs.tag }}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -f "$TAG"
-          git push -f origin "refs/tags/$TAG"
-          git fetch --tags --force
-          git checkout "tags/$TAG"
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.25'
-      - name: GoReleaser (build & upload opd binaries)
-        uses: goreleaser/goreleaser-action@v6
-        with:
-          distribution: goreleaser
-          version: latest
-          args: release --clean -f "packages/cli/.goreleaser.yml"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  docker:
-    needs: [build-artifacts, go-binaries]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and Push Docker image
-        uses: docker/build-push-action@v6
-        with:
-          context: "."
-          file: "packages/cli/Dockerfile"
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/opd:latest
-            ghcr.io/${{ github.repository_owner }}/opd:${{ github.event.inputs.tag || github.ref_name }}

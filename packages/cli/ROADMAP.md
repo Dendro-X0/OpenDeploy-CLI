@@ -5,7 +5,7 @@ Updated: 2025‑09. The OpenDeploy CLI is now a plugin‑based toolkit focused o
 Supported today
 
 - Frameworks: Next.js, Astro, SvelteKit, Nuxt, Remix (Beta)
-- Providers: Vercel, Netlify, Cloudflare Pages, GitHub Pages
+- Providers: Vercel, Cloudflare Pages, GitHub Pages
 
 Guiding principles (always on)
 
@@ -16,7 +16,6 @@ Guiding principles (always on)
 Near‑term focus (Q4 2025)
 
 - Provider parity and polish
-  - Netlify: reduce prompts/hangs (prefer API linking), tuned backoff/jitter for status APIs, reliable `--no-build` and `publishDir` detection, clearer `logsUrl`.
   - Cloudflare Pages: robust project auto‑create, publish dir/env detection, static exports first, explicit limits in docs.
   - GitHub Pages: static export basePath defaults, `.nojekyll`, branch/source checks, faster no‑prompt publish.
   - Vercel: solidify promote/rollback surfaces, edge/runtime hints, consistent logs/open.
@@ -28,6 +27,11 @@ Near‑term focus (Q4 2025)
   - Lean GHA templates for preview/prod, deterministic final summaries, NDJSON streaming, and `providers.json` auto‑sync in docs (already added).
 - Docs
   - Provider pages with deep‑links, end‑to‑end examples, and live capability matrix fed by `providers.json`.
+- Release & Demo Prep
+  - Stabilize existing providers (Vercel, Cloudflare Pages, GitHub Pages) end‑to‑end.
+  - Ensure deterministic `{ "final": true }` JSON summaries across start/up/deploy.
+  - Polish prompts, preflight messages, and error remediation tips.
+  - Finalize Quick Start and provider guides; prepare a concise demo script.
 
 Milestones
 
@@ -37,11 +41,11 @@ Milestones
   - Timeouts/retries across long‑running steps; processes are cleaned up on timeout.
   - Windows path resolution and CLI detection hardened.
   - Docs: capabilities panel (providers.json) and provider pages with anchors/examples.
-- M1 — Provider polish (Vercel, Netlify, Cloudflare Pages, GitHub Pages)
-  - Netlify reliability (API linking, tuned polling, publishDir validation) and no‑prompt CI flows.
+- M1 — Provider polish (Vercel, Cloudflare Pages, GitHub Pages) and Release & Demo Prep
   - Cloudflare Pages: project auto‑create, publishDir/env detection, explicit static constraints.
   - GitHub Pages: fast `gh-pages` publish, basePath/.nojekyll safeguards, URL detection.
   - Vercel: promote/rollback UX and logs/open parity.
+  - Release & Demo Prep: finalize Quick Start, stable summaries, and demo script.
 - M2 — Framework UX (Next.js first)
   - One‑shot `opd up <provider>` with safe defaults, `explain`/`doctor --fix`, and monorepo hints.
   - Config generators for Astro/SvelteKit/Nuxt refined; Remix static path improved.
@@ -56,13 +60,17 @@ Acceptance criteria (snapshot)
   - `up` can complete non‑interactively with clear failures and links.
 - Provider specific
   - Vercel: `deploy`, `promote`, `rollback`, `logs` parity; edge/runtime hints.
-  - Netlify: API linking preference; reliable deploys with tuned backoff; clear `logsUrl`.
   - Cloudflare Pages: static export flow with auto‑create and correct publishDir/env handling.
   - GitHub Pages: static export with basePath; `.nojekyll`; no‑prompt publish.
 
 Scope reminder
 
 - We will add more stacks/providers later; near‑term focus is on shipping a rock‑solid experience for the supported frameworks/providers above.
+
+## Deferred (Post‑Stable)
+
+- VSCode Extension (Companion): NDJSON logs, Explain Plan, provider shortcuts, status bar.
+- Provider Adapters (Railway, Render): experimental adapters (detect/build/deploy, logs/open, minimal env sync, quickstart docs/CI).
 
 ## Archived Roadmap
 
@@ -188,7 +196,7 @@ Known limitations (kept short in release notes)
 
 ## 1.1.0 Plan (Next)
 
-Scope: 2–3 week cycle, small and focused.
+Scope: 2–3 week cycle, small and focused. (Deferred until after stable release and demo.)
 
 - Priority: Netlify Deployment Experience
   - Wizard: make `start --deploy` a smooth path on Netlify (beyond prepare-only) with reliable build/no-build flows.
@@ -215,7 +223,8 @@ Scope: 2–3 week cycle, small and focused.
 
 - Providers (Next targets)
   - GitHub Pages: simplified provider and `generate gh-pages` workflow (optional path) to reduce CI/CD friction for OSS sites.
-  - Cloudflare Pages: exploratory provider plugin (static export first), document limits and basePath behavior.
+  - Cloudflare Pages: expand SSR/hybrid guidance and preflight checks.
+  - Railway/Render: experimental adapters with minimal deploy/logs/env flows.
 
 Rationale
 
@@ -224,7 +233,7 @@ Rationale
 ## Backlog (Not committed to a release)
 
 - Recipes scaffolding (`opendeploy recipe apply ...`) for Astro/SvelteKit/Remix/Expo.
-- Additional providers (Cloudflare Pages, Render, Fly.io) behind feature flags.
+- Additional providers (Railway, Render, Fly.io) behind feature flags.
 - Secret manager integrations (GitHub Environments, 1Password Connect, AWS SSM).
 - Opt‑in telemetry/allowlist and richer audit logs.
 
@@ -303,7 +312,7 @@ Initial targets
 
 ## Post‑1.0 Direction
 
-- Additional providers: Cloudflare Pages, Fly.io, Render, etc.
+- Additional providers: Railway, Render, Fly.io, etc.
 - Secret manager integrations: GitHub Environments, 1Password Connect, AWS SSM.
 - Encrypted env at rest (e.g., SOPS/age) support for `.env.*`.
 - Deeper framework detection (Astro, Remix, SvelteKit) and multi‑app monorepos.

@@ -78,6 +78,7 @@ jobs:
         with:
           apiToken: ${{ env.CF_API_TOKEN }}
           accountId: ${{ env.CF_ACCOUNT_ID }}
+          packageManager: npm
           command: pages deploy ${{ inputs.app_path }}/.vercel/output/static --project-name ${{ inputs.project_name }}
 
       - name: Skip deploy (missing Cloudflare secrets)

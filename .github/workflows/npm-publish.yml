@@ -15,20 +15,24 @@ permissions:
 
 jobs:
   publish-npm:
-    runs-on: ubuntu-latest
     if: ${{ secrets.NPM_TOKEN != '' }}
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Setup Node + pnpm (corepack)
-        uses: ./.github/actions/setup-pnpm
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: '20'
-          pnpm-version: '10.13.1'
+          cache: 'pnpm'
           registry-url: 'https://registry.npmjs.org'
+      - name: Enable pnpm via Corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.16.1 --activate
 
       - name: Install deps
         run: pnpm install --frozen-lockfile

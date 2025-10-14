@@ -10,7 +10,7 @@ import type { ProviderCapabilities } from '../provider-capabilities'
 import type { ProjectRef, BuildInputs, BuildResult, DeployInputs, DeployResult } from '../provider-types'
 import { fsx } from '../../../utils/fs'
 import { detectApp as autoDetect } from '../../detectors/auto'
-import { writeFile, stat } from 'node:fs/promises'
+import { writeFile, stat, readFile } from 'node:fs/promises'
 import handleHints from '../../../utils/hints'
 import type { DetectionResult } from '../../../types/detection-result'
 
@@ -160,6 +160,8 @@ export class GithubPagesProvider implements Provider {
           logger.note('GitHub Pages: building Next.js for static export (next build with output: "export")')
           const b = await proc.run({ cmd: 'npx -y next build', cwd: args.cwd, env: { ...process.env, DEPLOY_TARGET: 'github' } })
           if (!b.ok) logger.warn(b.stderr.trim() || b.stdout.trim() || 'next build failed')
+          // Emit Next config hints
+          try { await this.checkNextHints(args.cwd) } catch { /* ignore */ }
           // Validate expected artifact
           const outDir = join(args.cwd, 'out')
           try { if (!(await fsx.exists(outDir))) logger.warn('Next.js build did not produce ./out. Ensure next.config.js sets output: "export" and images.unoptimized: true.') } catch { /* ignore */ }
@@ -236,5 +238,50 @@ export class GithubPagesProvider implements Provider {
     }
     await writeFile(p, '', 'utf8')
     return p
+  }
+
+  /**
+   * Emit actionable hints for Next.js static export on GitHub Pages.
+   */
+  private async checkNextHints(cwd: string): Promise<void> {
+    // Read next.config.* when present
+    const files = ['next.config.ts', 'next.config.js', 'next.config.mjs']
+    let cfg = ''
+    for (const f of files) {
+      try {
+        const p = join(cwd, f)
+        if (await fsx.exists(p)) { cfg = await readFile(p, 'utf8'); break }
+      } catch { /* ignore */ }
+    }
+    if (!cfg) return
+    // Compute expected repo-based basePath when origin is GitHub
+    let expectedBase: string | undefined
+    try {
+      const origin = await proc.run({ cmd: 'git remote get-url origin', cwd })
+      if (origin.ok) {
+        const { repo } = parseGitRemote(origin.stdout.trim())
+        if (repo) expectedBase = `/${repo}`
+      }
+    } catch { /* ignore */ }
+    // Hints
+    const hasExport = /\boutput\s*:\s*['"]export['"]/m.test(cfg)
+    if (!hasExport) logger.warn("next.config: missing output: 'export' (required for static export)")
+    const hasTrailing = /\btrailingSlash\s*:\s*true/m.test(cfg)
+    if (!hasTrailing) logger.warn('next.config: trailingSlash not set to true (recommended for GitHub Pages)')
+    const hasUnopt = /images\s*:\s*\{[^}]*unoptimized\s*:\s*true/m.test(cfg)
+    if (!hasUnopt) logger.warn('next.config: images.unoptimized not set to true (recommended for GitHub Pages)')
+    const basePathMatch = /basePath\s*:\s*['"][^'"]+['"]/m.exec(cfg)
+    if (!basePathMatch) logger.warn('next.config: basePath is not set (recommended for Project Pages)')
+    if (expectedBase && basePathMatch) {
+      const val = (basePathMatch[0].split(':')[1] || '').replace(/['"\s]/g,'')
+      if (val !== expectedBase) logger.warn(`next.config: basePath mismatch (expected ${expectedBase}, got ${val})`)
+    }
+    const assetPrefixMatch = /assetPrefix\s*:\s*['"][^'"]+['"]/m.exec(cfg)
+    if (!assetPrefixMatch) logger.warn('next.config: assetPrefix is not set (recommended for Project Pages)')
+    if (expectedBase && assetPrefixMatch) {
+      const val = (assetPrefixMatch[0].split(':')[1] || '').replace(/['"\s]/g,'')
+      const want = `${expectedBase}/`
+      if (val !== want) logger.warn(`next.config: assetPrefix mismatch (expected ${want}, got ${val})`)
+    }
   }
 }

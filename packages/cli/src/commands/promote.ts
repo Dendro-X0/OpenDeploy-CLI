@@ -61,6 +61,9 @@ export function registerPromoteCommand(program: Command): void {
         if (opts.baseDelayMs) process.env.OPD_BASE_DELAY_MS = String(Math.max(0, Number(opts.baseDelayMs) || 0))
         const jsonMode: boolean = isJsonMode(opts.json)
         if (jsonMode) logger.setJsonOnly(true)
+        const ndjsonOn: boolean = process.env.OPD_NDJSON === '1'
+        if (ndjsonOn) logger.setNdjson(true)
+        if (jsonMode || ndjsonOn) process.env.OPD_FORCE_CI = '1'
         // Early dry-run summary to avoid side effects
         if (opts.dryRun === true) {
           const base = { ok: true, provider: 'vercel' as const, action: 'promote' as const, target: 'prod' as const }

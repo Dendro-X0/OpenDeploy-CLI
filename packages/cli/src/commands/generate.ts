@@ -4,8 +4,9 @@ import { join } from 'node:path'
 import { logger, isJsonMode } from '../utils/logger'
 import { detectApp } from '../core/detectors/auto'
 import { loadProvider } from '../core/provider-system/provider'
+import { resolveAppPath } from '../core/detectors/apps'
 
-interface GenerateOptions { readonly overwrite?: boolean; readonly json?: boolean; readonly nextOnPages?: boolean }
+interface GenerateOptions { readonly overwrite?: boolean; readonly json?: boolean; readonly nextOnPages?: boolean; readonly reusable?: boolean; readonly app?: string; readonly projectName?: string }
 
 /**
  * Register the `generate` command which emits provider-specific config files.
@@ -18,6 +19,9 @@ export function registerGenerateCommand(program: Command): void {
     .option('--overwrite', 'Overwrite existing files')
     .option('--json', 'Output JSON with generated file path')
     .option('--next-on-pages', 'For Cloudflare: scaffold wrangler.toml configured for Next on Pages')
+    .option('--reusable', 'Generate a per-app caller workflow that uses a reusable workflow')
+    .option('--app <path>', 'App path to use in reusable workflow (defaults to auto-detected)')
+    .option('--project-name <name>', 'Cloudflare Pages project name for reusable workflow')
     .action(async (provider: string, opts: GenerateOptions): Promise<void> => {
       const cwd: string = process.cwd()
       try {
@@ -56,6 +60,38 @@ export function registerGenerateCommand(program: Command): void {
             logger.note('Deploy:  wrangler pages deploy .vercel/output/static')
             return
           }
+          // Reusable per-app caller workflow
+          if (opts.reusable === true) {
+            // Determine app_path
+            let appPath: string = opts.app && opts.app.length > 0 ? opts.app : ''
+            if (!appPath) {
+              const resolved = await resolveAppPath({ cwd, ci: true })
+              appPath = resolved.path === cwd ? '.' : resolved.path.replace(cwd + (cwd.endsWith('\\') || cwd.endsWith('/') ? '' : (process.platform === 'win32' ? '\\' : '/')), '')
+              appPath = appPath.replace(/\\/g, '/')
+            }
+            // Determine project name
+            const slugify = (s: string): string => s.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/--+/g, '-').replace(/^-+|-+$/g, '')
+            const projName: string = opts.projectName && opts.projectName.length > 0 ? opts.projectName : slugify((appPath === '.' ? cwd : appPath).split('/').filter(Boolean).pop() || 'site')
+            const relDir = '.github/workflows'
+            const file = join(cwd, relDir, 'deploy-app-cloudflare.yml')
+            try { await (await import('node:fs/promises')).mkdir(join(cwd, relDir), { recursive: true }) } catch { /* ignore */ }
+            const body = `name: Deploy App (Cloudflare Pages)\n\n` +
+`on:\n` +
+`  push:\n` +
+`    branches: [ main ]\n` +
+`  workflow_dispatch:\n\n` +
+`jobs:\n` +
+`  deploy:\n` +
+`    uses: ./.github/workflows/_reusable-cloudflare-pages.yml\n` +
+`    with:\n` +
+`      app_path: ${appPath}\n` +
+`      project_name: ${projName}\n`
+            await writeFile(file, body, 'utf8')
+            if (jsonMode) { logger.jsonPrint({ ok: true, action: 'generate', provider: 'cloudflare', mode: 'reusable', path: file, app_path: appPath, project_name: projName, final: true }); return }
+            logger.success(`Generated Cloudflare per-app workflow at ${file}`)
+            logger.note(`Project: ${projName} | App: ${appPath}`)
+            return
+          }
           // Minimal static Pages config via provider
           const plugin = await loadProvider('cloudflare')
           const writtenPath: string = await plugin.generateConfig({ detection, cwd, overwrite: opts.overwrite === true })
@@ -71,6 +107,36 @@ export function registerGenerateCommand(program: Command): void {
           const relDir = '.github/workflows'
           const dir = join(cwd, relDir)
           try { await (await import('node:fs/promises')).mkdir(dir, { recursive: true }) } catch { /* ignore */ }
+          // Reusable per-app caller workflow
+          if (opts.reusable === true) {
+            let appPath: string = opts.app && opts.app.length > 0 ? opts.app : ''
+            if (!appPath) {
+              const resolved = await resolveAppPath({ cwd, ci: true })
+              appPath = resolved.path === cwd ? '.' : resolved.path.replace(cwd + (cwd.endsWith('\\') || cwd.endsWith('/') ? '' : (process.platform === 'win32' ? '\\' : '/')), '')
+              appPath = appPath.replace(/\\/g, '/')
+            }
+            const file = join(dir, 'deploy-app-gh-pages.yml')
+            const body = `name: Deploy App (GitHub Pages)\n\n` +
+`on:\n` +
+`  push:\n` +
+`    branches: [ main ]\n` +
+`  workflow_dispatch:\n\n` +
+`permissions:\n` +
+`  contents: read\n` +
+`  pages: write\n` +
+`  id-token: write\n\n` +
+`jobs:\n` +
+`  deploy:\n` +
+`    uses: ./.github/workflows/_reusable-gh-pages.yml\n` +
+`    with:\n` +
+`      app_path: ${appPath}\n`
+            await writeFile(file, body, 'utf8')
+            if (jsonMode) { logger.jsonPrint({ ok: true, action: 'generate', provider: 'github', mode: 'reusable', path: file, app_path: appPath, final: true }); return }
+            logger.success(`Generated GitHub Pages per-app workflow at ${file}`)
+            logger.note(`App: ${appPath}`)
+            return
+          }
+          // Standalone GH Pages workflow (non-reusable)
           const outDir: string = ((): string => {
             const pub = detection.publishDir?.trim()
             if (pub && pub.length > 0) return pub

@@ -25,14 +25,26 @@ OpenDeploy’s roadmap captures near‑term priorities, planned enhancements, an
   - Dynamic site version (synced from CLI) with release links.
   - A11y and layout polish across sidebar, pager, and reading indicator.
 
+### Release & Demo Prep
+
+- Stabilize existing providers (Vercel, Cloudflare Pages, GitHub Pages) end‑to‑end.
+- Ensure deterministic `{ "final": true }` JSON summaries across start/up/deploy.
+- Polish prompts, preflight messages, and error remediation tips.
+- Finalize Quick Start and provider guides; prepare a concise demo script.
+
 ## Medium‑Term (Outlook)
 
 - __Stacks__
   - Go and Rust support (detectors, build outputs, and minimal templates).
 - __Providers__
-  - AWS (e.g., Amplify/CloudFront/Lambda@Edge) exploration; Render/Fly.io adapters backlog.
+  - Fly.io exploration; AWS (Amplify/CloudFront/Lambda@Edge) research.
 - __Tooling__
   - IDE extension and/or MCP integration for in‑editor flows (detect, plan, env, deploy).
+
+## Deferred (Post‑Stable)
+
+- VSCode Extension (Companion): NDJSON logs, Explain Plan, provider shortcuts, status bar.
+- Provider Adapters (Railway, Render): experimental adapters (detect/build/deploy, logs/open, minimal env sync, quickstart docs/CI).
 
 ## UX & CI Improvements
 
@@ -48,4 +60,4 @@ OpenDeploy’s roadmap captures near‑term priorities, planned enhancements, an
 ## Change Log & Updates
 
 - Release notes ship with every tag on GitHub.
-- See also: `docs/commands.md` and `docs/recipes.md` for usage patterns.
+- See also: `commands/index.md` and `recipes.md` for usage patterns.

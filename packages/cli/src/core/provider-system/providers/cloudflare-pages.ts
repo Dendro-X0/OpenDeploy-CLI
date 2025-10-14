@@ -255,6 +255,21 @@ export class CloudflarePagesProvider implements Provider {
       // Generic dashboard deep-link; account segment is resolved by Cloudflare automatically
       logsUrl = `https://dash.cloudflare.com/?to=/:account/pages/view/${projectName}`
     }
+    // Attempt to refine logs/inspect URL using latest deployment info
+    if (projectName) {
+      try {
+        const listCmd = `${bin} pages deployments list --project-name ${projectName} --limit 1`
+        const info = await proc.run({ cmd: listCmd, cwd: args.cwd })
+        if (info.ok) {
+          const m = info.stdout.match(/https?:\/\/[^\s]+/g)
+          if (m && m.length > 0) {
+            // Prefer an Inspect or Dashboard link if present in the list output
+            const inspect = m.find(u => /dash\.cloudflare\.com\//i.test(u))
+            if (inspect) logsUrl = inspect
+          }
+        }
+      } catch { /* ignore */ }
+    }
     return { ok: true, url: deployUrl, logsUrl }
   }
 

@@ -178,32 +178,33 @@ export function registerCiLogsCommand(program: Command): void {
       }
       if (!branch) branch = await resolveBranch()
       const wf = String(opts.workflow || 'ci.yml')
+      const repoName: string = repo
       if (opts.follow) {
-        const first = await getLatestRun({ repo, branch, workflow: wf })
-        if (first) logger.info(`Run: ${runUrl(repo, first.id)}`)
-        await proc.run({ cmd: `gh run watch --repo ${repo} --exit-status --interval 5`, cwd: process.cwd() })
-        const last = await getLatestRun({ repo, branch, workflow: wf })
+        const first = await getLatestRun({ repo: repoName, branch, workflow: wf })
+        if (first) logger.info(`Run: ${runUrl(repoName, first.id)}`)
+        await proc.run({ cmd: `gh run watch --repo ${repoName} --exit-status --interval 5`, cwd: process.cwd() })
+        const last = await getLatestRun({ repo: repoName, branch, workflow: wf })
         if (last) {
-          const url: string = runUrl(repo, last.id)
+          const url: string = runUrl(repoName, last.id)
           const ok: boolean = (last.conclusion ?? '').toLowerCase() === 'success'
-          if (opts.json) logger.jsonPrint({ ok, action: 'ci-logs', repo, branch, workflow: wf, id: last.id, url, status: last.status, conclusion: last.conclusion, follow: true, final: true })
+          if (opts.json) logger.jsonPrint({ ok, action: 'ci-logs', repo: repoName, branch, workflow: wf, id: last.id, url, status: last.status, conclusion: last.conclusion, follow: true, final: true })
           else logger.info(`${ok ? 'Success' : 'Done'}: ${url}`)
           if (!ok) emitAnnotation('error', `CI run failed: ${url}`)
           if (!ok) process.exitCode = 1
         } else {
-          if (opts.json) logger.jsonPrint({ ok: false, action: 'ci-logs', repo, branch, workflow: wf, message: 'No runs found after watch', final: true })
+          if (opts.json) logger.jsonPrint({ ok: false, action: 'ci-logs', repo: repoName, branch, workflow: wf, message: 'No runs found after watch', final: true })
           else logger.warn('No runs found after watch')
         }
         return
       }
-      const info = await getLatestRun({ repo, branch, workflow: wf })
+      const info = await getLatestRun({ repo: repoName, branch, workflow: wf })
       if (!info) {
         const msg = 'No runs found (trigger a workflow first).'
         if (opts.json) logger.jsonPrint({ ok: false, action: 'ci-logs', repo, branch, workflow: wf, message: msg, final: true })
         else logger.warn(msg)
         return
       }
-      const url = runUrl(repo, info.id)
+      const url = runUrl(repoName, info.id)
       const ok = (info.conclusion ?? '').toLowerCase() !== 'failure'
       if (opts.json) logger.jsonPrint({ ok, action: 'ci-logs', repo, branch, workflow: wf, id: info.id, url, status: info.status, conclusion: info.conclusion, final: true })
       else logger.info(`${info.status ?? 'status: unknown'} — ${url}`)
@@ -211,6 +212,99 @@ export function registerCiLogsCommand(program: Command): void {
       if (!ok) process.exitCode = 1
     })
 
+  // ci reproduce — run local steps similar to CI using the environment snapshot
+  ci
+    .command('reproduce')
+    .description('Reproduce the CI build locally: applies Node/pnpm versions (Corepack), installs deps, builds, and runs tests')
+    .option('--snapshot <file>', 'Path to CI snapshot JSON (default ./.artifacts/ci.snapshot.json)', '.artifacts/ci.snapshot.json')
+    .option('--tests <pattern>', 'Optional test filter or extra args to pass to vitest (CLI package)')
+    .option('--json', 'Emit structured JSON summary')
+    .action(async (opts: { readonly snapshot?: string; readonly tests?: string; readonly json?: boolean }): Promise<void> => {
+      const snapPath = (opts.snapshot && opts.snapshot.length > 0) ? opts.snapshot : '.artifacts/ci.snapshot.json'
+      const abs = join(process.cwd(), snapPath)
+      let nodeVersion: string | undefined
+      let pnpmVersion: string | undefined
+      try {
+        const raw = await fs.readFile(abs, 'utf8')
+        const js = JSON.parse(raw) as Record<string, unknown>
+        // Try common shapes
+        // Example shapes we attempt: { node: { version: '20.x' }, tools: { pnpm: '10.x' }, env: {...} }
+        const nodeObj = (js as any)?.node
+        const tools = (js as any)?.tools
+        if (typeof nodeObj?.version === 'string' && nodeObj.version.length > 0) nodeVersion = String(nodeObj.version).replace(/^v/i, '')
+        if (typeof tools?.pnpm === 'string' && tools.pnpm.length > 0) pnpmVersion = String(tools.pnpm)
+      } catch {
+        // snapshot is optional; fall back to current versions
+      }
+      if (!nodeVersion) nodeVersion = process.version.replace(/^v/i, '')
+      if (!pnpmVersion) pnpmVersion = '10.16.1'
+
+      const steps: Array<{ readonly name: string; readonly cmd: string }> = [
+        { name: 'Setup Node', cmd: `npx -y actions/setup-node@ignore || node -v` },
+        { name: 'Enable Corepack', cmd: 'corepack enable' },
+        { name: 'Prepare pnpm', cmd: `corepack prepare pnpm@${pnpmVersion} --activate` },
+        { name: 'Install', cmd: 'pnpm install -r --frozen-lockfile' },
+        { name: 'Build', cmd: 'pnpm build' },
+        { name: 'Test', cmd: `pnpm -C packages/cli test -- --reporter=dot${opts.tests ? ' ' + opts.tests : ''}` }
+      ]
+      const results: Array<{ readonly name: string; readonly ok: boolean; readonly code: number; readonly stdout?: string; readonly stderr?: string }> = []
+      for (const s of steps) {
+        const r = await proc.run({ cmd: s.cmd, cwd: process.cwd() })
+        results.push({ name: s.name, ok: r.ok, code: r.code ?? -1, stdout: r.stdout, stderr: r.stderr })
+        if (!r.ok) break
+      }
+      const okAll = results.every(r => r.ok)
+      if (opts.json) {
+        logger.jsonPrint({ ok: okAll, action: 'ci-reproduce', node: nodeVersion, pnpm: pnpmVersion, results, final: true })
+      } else {
+        for (const r of results) logger.info(`${r.ok ? '✓' : '✗'} ${r.name} (code ${r.code})`)
+        if (!okAll) process.exitCode = 1
+      }
+    })
+
+  // ci env apply — print export commands for environment variables from the snapshot
+  ci
+    .command('env')
+    .description('CI environment helpers')
+    .command('apply')
+    .description('Read CI snapshot and print shell commands to apply its environment locally')
+    .option('--snapshot <file>', 'Path to CI snapshot JSON (default ./.artifacts/ci.snapshot.json)', '.artifacts/ci.snapshot.json')
+    .option('--shell <kind>', 'Print export commands for: bash|pwsh (default bash)', 'bash')
+    .option('--json', 'Emit structured JSON summary')
+    .action(async (opts: { readonly snapshot?: string; readonly shell?: 'bash' | 'pwsh'; readonly json?: boolean }): Promise<void> => {
+      const snapPath = (opts.snapshot && opts.snapshot.length > 0) ? opts.snapshot : '.artifacts/ci.snapshot.json'
+      const abs = join(process.cwd(), snapPath)
+      let envObj: Record<string, string> | undefined
+      try {
+        const raw = await fs.readFile(abs, 'utf8')
+        const js = JSON.parse(raw) as Record<string, unknown>
+        // Try common shapes: { env: { KEY: 'VALUE' } } or flat object
+        if (js && typeof (js as any).env === 'object') envObj = (js as any).env as Record<string, string>
+        else if (js && typeof js === 'object') {
+          const candidate: Record<string, string> = {}
+          for (const [k, v] of Object.entries(js)) if (typeof v === 'string') candidate[k] = v
+          if (Object.keys(candidate).length > 0) envObj = candidate
+        }
+      } catch {
+        // ignore
+      }
+      envObj = envObj ?? {}
+      const lines: string[] = []
+      const sh = (opts.shell === 'pwsh' ? 'pwsh' : 'bash')
+      for (const [k, v] of Object.entries(envObj)) {
+        if (sh === 'bash') lines.push(`export ${k}=${JSON.stringify(v)}`)
+        else lines.push(`$Env:${k} = ${JSON.stringify(v)}`)
+      }
+      if (opts.json) {
+        logger.jsonPrint({ ok: true, action: 'ci-env-apply', shell: sh, count: lines.length, final: true })
+      } else {
+        if (lines.length === 0) logger.warn('No environment variables found in snapshot (env object missing).')
+        else {
+          logger.info(`# To apply in current shell (${sh}), run:`)
+          for (const l of lines) logger.info(l)
+        }
+      }
+    })
   // ci sync — download latest run summary and per-job logs
   ci
     .command('sync')
@@ -247,21 +341,22 @@ export function registerCiLogsCommand(program: Command): void {
       }
       if (!branch) branch = await resolveBranch()
       const wf = String(opts.workflow || 'ci.yml')
-
+      const repoName: string = repo
+      
       async function syncOnce(): Promise<{ readonly ok: boolean; readonly id?: number; readonly status?: string; readonly conclusion?: string; readonly url?: string }> {
-        const info = await getLatestRun({ repo, branch, workflow: wf })
+        const info = await getLatestRun({ repo: repoName, branch, workflow: wf })
         if (!info) return { ok: false }
         const id = info.id
-        const url = runUrl(repo, id)
+        const url = runUrl(repoName, id)
         const outRoot = opts.out && opts.out.length > 0 ? opts.out : '.artifacts/ci-logs'
         const runDir = join(process.cwd(), outRoot, sanitizeFilename(wf.replace(/\.yml$/i, '')), String(id))
         await ensureDir(runDir)
-        const summary = await proc.run({ cmd: `gh run view ${id} --repo ${repo} --json url,conclusion,createdAt,updatedAt,jobs`, cwd: process.cwd() })
+        const summary = await proc.run({ cmd: `gh run view ${id} --repo ${repoName} --json url,conclusion,createdAt,updatedAt,jobs`, cwd: process.cwd() })
         if (summary.ok) await writeTextFile(join(runDir, 'summary.json').replace(/\\/g, '/'), summary.stdout)
-        const jobs = await getRunJobs({ repo, id })
+        const jobs = await getRunJobs({ repo: repoName, id })
         for (const j of jobs) {
           const logPath = join(runDir, `job-${j.id}-${j.name}.log`).replace(/\\/g, '/')
-          const res = await proc.run({ cmd: `gh run view ${id} --repo ${repo} --job ${j.id} --log`, cwd: process.cwd() })
+          const res = await proc.run({ cmd: `gh run view ${id} --repo ${repoName} --job ${j.id} --log`, cwd: process.cwd() })
           if (res.ok) await writeTextFile(logPath, res.stdout)
         }
         return { ok: true, id, status: info.status, conclusion: info.conclusion, url }
@@ -379,6 +474,120 @@ export function registerCiLogsCommand(program: Command): void {
       if (opts.json) logger.jsonPrint({ ok: opened.ok, action: 'ci-open', repo, branch, workflow: wf, id: info.id, url, status: info.status, conclusion: info.conclusion, final: true })
       else logger.info(`Opened: ${url}`)
       if (!opened.ok) process.exitCode = 1
+    })
+
+  // ci summarize — compact failure digest for the latest run; fetch logs if missing
+  ci
+    .command('summarize')
+    .description('Produce a compact summary of the latest run with failing jobs and error excerpts')
+    .option('--workflow <file>', 'Workflow file name (e.g., ci.yml, pages.yml)', 'ci.yml')
+    .option('--out <dir>', 'Logs directory (default ./.artifacts/ci-logs)', '.artifacts/ci-logs')
+    .option('--pr <number>', 'Scope to a given PR number (resolves head branch)')
+    .option('--json', 'Emit structured JSON summary')
+    .action(async (opts: { readonly workflow?: string; readonly out?: string; readonly pr?: string; readonly json?: boolean }): Promise<void> => {
+      const repo = await resolveRepo()
+      if (!repo) {
+        const msg = 'Unable to resolve GitHub repo. Set GITHUB_REPOSITORY or add a git origin remote.'
+        if (opts.json) logger.jsonPrint({ ok: false, action: 'ci-summarize', message: msg, final: true })
+        else logger.error(msg)
+        process.exitCode = 1
+        return
+      }
+      const hasGh = await ghExists()
+      if (!hasGh) {
+        const msg = 'GitHub CLI (gh) not found. Install via: winget install GitHub.cli'
+        if (opts.json) logger.jsonPrint({ ok: false, action: 'ci-summarize', repo, suggestion: 'install gh', final: true })
+        else logger.error(msg)
+        process.exitCode = 1
+        return
+      }
+      // Resolve branch from PR when provided
+      let branch: string | undefined
+      if (opts.pr) {
+        const prRes = await proc.run({ cmd: `gh pr view ${opts.pr} --repo ${repo} --json headRefName`, cwd: process.cwd() })
+        if (prRes.ok) {
+          try { const js = JSON.parse(prRes.stdout) as { headRefName?: string }; if (js?.headRefName) branch = js.headRefName } catch { /* ignore */ }
+        }
+      }
+      if (!branch) branch = await resolveBranch()
+      const wf = String(opts.workflow || 'ci.yml')
+      const repoName: string = repo
+      const run = await getLatestRun({ repo: repoName, branch, workflow: wf })
+      if (!run) {
+        const msg = 'No runs found (trigger a workflow first).'
+        if (opts.json) logger.jsonPrint({ ok: false, action: 'ci-summarize', repo: repoName, branch, workflow: wf, message: msg, final: true })
+        else logger.warn(msg)
+        return
+      }
+      const runId: number = run.id
+      const outRoot = opts.out && opts.out.length > 0 ? opts.out : '.artifacts/ci-logs'
+      const runDir = join(process.cwd(), outRoot, sanitizeFilename(wf.replace(/\.yml$/i, '')), String(runId))
+      await ensureDir(runDir)
+      // Ensure summary.json and logs exist (fetch if missing)
+      async function ensureSynced(): Promise<void> {
+        const summaryPath = join(runDir, 'summary.json').replace(/\\/g, '/')
+        let haveSummary = false
+        try { await fs.access(summaryPath); haveSummary = true } catch { /* missing */ }
+        if (!haveSummary) {
+          const summary = await proc.run({ cmd: `gh run view ${runId} --repo ${repoName} --json url,conclusion,createdAt,updatedAt,jobs`, cwd: process.cwd() })
+          if (summary.ok) await writeTextFile(summaryPath, summary.stdout)
+        }
+        // Fetch per-job logs if missing
+        const jobs = await getRunJobs({ repo: repoName, id: runId })
+        for (const j of jobs) {
+          const logPath = join(runDir, `job-${j.id}-${j.name}.log`).replace(/\\/g, '/')
+          let haveLog = false
+          try { await fs.access(logPath); haveLog = true } catch { /* missing */ }
+          if (!haveLog) {
+            const res = await proc.run({ cmd: `gh run view ${runId} --repo ${repoName} --job ${j.id} --log`, cwd: process.cwd() })
+            if (res.ok) await writeTextFile(logPath, res.stdout)
+          }
+        }
+      }
+      await ensureSynced()
+      // Read summary
+      let summaryObj: { readonly url?: string; readonly conclusion?: string; readonly jobs?: Array<{ readonly databaseId?: number; readonly name?: string; readonly conclusion?: string }> } | undefined
+      try {
+        const raw = await fs.readFile(join(runDir, 'summary.json'), 'utf8')
+        summaryObj = JSON.parse(raw) as { readonly url?: string; readonly conclusion?: string; readonly jobs?: Array<{ readonly databaseId?: number; readonly name?: string; readonly conclusion?: string }> }
+      } catch { /* ignore */ }
+      const runUrlStr: string = summaryObj?.url ?? runUrl(repoName, runId)
+      // Collect failing jobs and error excerpts
+      type FailItem = { readonly id: number; readonly name: string; readonly conclusion?: string; readonly errors?: string[] }
+      const failures: FailItem[] = []
+      const jobs = summaryObj?.jobs ?? []
+      for (const j of jobs) {
+        const id = typeof j.databaseId === 'number' ? j.databaseId : undefined
+        const name = sanitizeFilename(j.name ?? 'job')
+        const concl = (j.conclusion ?? '').toLowerCase()
+        if (id && (concl === 'failure' || concl === 'cancelled' || concl === 'timed_out')) {
+          const logPath = join(runDir, `job-${id}-${name}.log`).replace(/\\/g, '/')
+          let errors: string[] = []
+          try {
+            const txt = await fs.readFile(logPath, 'utf8')
+            const lines = txt.split(/\r?\n/)
+            const errLines = lines.filter(l => /(::error|\berror\b|\bERR!\b|\bFailed\b)/i.test(l))
+            errors = errLines.slice(-10)
+            if (errors.length === 0) errors = lines.slice(-20) // fallback tail
+          } catch { /* ignore */ }
+          failures.push({ id, name, conclusion: j.conclusion, errors })
+        }
+      }
+      const ok: boolean = (run.conclusion ?? '').toLowerCase() === 'success'
+      if (opts.json) {
+        logger.jsonPrint({ ok, action: 'ci-summarize', repo: repoName, branch, workflow: wf, id: runId, url: runUrlStr, failures, final: true })
+      } else {
+        logger.info(`${ok ? 'Success' : 'Done'} — ${runUrlStr}`)
+        if (failures.length === 0) {
+          logger.note('No failing jobs found.')
+        } else {
+          for (const f of failures) {
+            logger.warn(`Job failed: ${f.name} (#${f.id})`)
+            for (const line of f.errors ?? []) logger.info(`  ${line}`)
+          }
+        }
+      }
+      if (!ok) process.exitCode = 1
     })
 
   // ci dispatch — trigger a workflow

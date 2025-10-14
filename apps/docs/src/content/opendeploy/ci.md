@@ -155,6 +155,44 @@ opd ci dispatch --workflow deploy-docs.yml --ref main --inputs site=docs,region=
 
 ---
 
+### `ci summarize`
+
+Produce a compact summary of the latest run for a workflow, including failing jobs and short error excerpts. Ensures the latest run summary and job logs are synced locally for IDE inspection.
+
+Usage:
+
+```bash
+opd ci summarize [--workflow <file>] [--out <dir>] [--pr <number>] [--json]
+```
+
+Options:
+
+- `--workflow <file>`: workflow file (e.g., `ci.yml`). Defaults to `ci.yml`.
+- `--out <dir>`: output folder for synced logs (default `.artifacts/ci-logs`).
+- `--pr <number>`: scope to a PR (uses its head branch).
+- `--json`: print a structured JSON summary `{ ok, repo, branch, workflow, id, url, failures[], final: true }`.
+
+Examples:
+
+```bash
+# Summarize the latest CI run for ci.yml
+opd ci summarize
+
+# Machine-readable summary for tooling
+opd ci summarize --json
+
+# Summarize a PR's latest run
+opd ci summarize --pr 123
+```
+
+Notes:
+
+- Stores logs at `./.artifacts/ci-logs/<workflow>/<runId>/`.
+- Each failing job includes up to 10 error lines; if none are detected, the tail of the log is shown.
+- Requires GitHub CLI (`gh`). On Windows, install with `winget install GitHub.cli`.
+
+---
+
 ## GitHub Actions Integration
 
 Use `ci logs --follow` in troubleshooting jobs to stream and annotate errors; or call `ci last --json` to record outcomes.

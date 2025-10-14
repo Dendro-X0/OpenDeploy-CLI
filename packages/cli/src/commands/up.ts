@@ -137,7 +137,8 @@ export function registerUpCommand(program: Command): void {
           }
         }
         const jsonMode: boolean = isJsonMode(opts.json)
-        const ndjsonOn: boolean = opts.ndjson === true
+        const ndjsonOn: boolean = opts.ndjson === true || process.env.OPD_NDJSON === '1'
+        if (ndjsonOn) logger.setNdjson(true)
         // Structured preflight capture for JSON consumers
         const preflight: Array<{ readonly name: string; readonly ok: boolean; readonly level: 'warn' | 'note'; readonly message?: string }> = []
         if (jsonMode) logger.setJsonOnly(true)
@@ -462,12 +463,19 @@ export function registerUpCommand(program: Command): void {
           const deploySchemaErrors: string[] = Array.isArray(validateDeploy.errors) ? validateDeploy.errors.map(e => `${e.instancePath || '/'} ${e.message ?? ''}`.trim()) : []
           const durationMs = Date.now() - t0
           const targetShort: 'prod' | 'preview' = envTargetUp === 'production' ? 'prod' : 'preview'
+          if (jsonMode && !deployRes.ok) {
+            const message: string = deployRes.message || 'Deploy failed'
+            logger.jsonPrint(annotate({ ok: false, action: 'up' as const, provider: prov, target: targetShort, message, url: deployRes.url, logsUrl: deployRes.logsUrl, preflight, buildSchemaOk, buildSchemaErrors, deploySchemaOk, deploySchemaErrors, final: true }))
+            return
+          }
           if (jsonMode) { logger.jsonPrint(annotate({ ok: true, action: 'up' as const, provider: prov, target: targetShort, url: deployRes.url, logsUrl: deployRes.logsUrl, durationMs, preflight, buildSchemaOk, buildSchemaErrors, deploySchemaOk, deploySchemaErrors, final: true })); return }
           if (deployRes.ok) {
             if (deployRes.url) logger.success(`${opts.env === 'prod' ? 'Production' : 'Preview'}: ${deployRes.url}`)
             else logger.success(`${opts.env === 'prod' ? 'Production' : 'Preview'} deploy complete`)
           } else {
-            throw new Error(deployRes.message || 'Deploy failed')
+            const message: string = deployRes.message || 'Deploy failed'
+            if (deployRes.logsUrl) logger.info(`Logs: ${deployRes.logsUrl}`)
+            throw new Error(message)
           }
           return
         }

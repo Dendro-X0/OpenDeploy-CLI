@@ -28,7 +28,7 @@ opd start --provider cloudflare --env preview --json
 ```
 
 - Streams deploy and prints a final JSON summary with `final: true`.
-- Also prints a logs/dashboard URL if available.
+- Also prints a logs/dashboard/Inspect URL when available.
 
 Tip (Windows): Next on Pages is most reliable on Linux/CI or WSL; prefer the generated GitHub Actions workflow for repeatable builds.
 
@@ -53,6 +53,15 @@ opd deploy logs cloudflare --open
 ```bash
 opd up cloudflare --preflight-only --strict-preflight --json
 ```
+
+ - Monorepo: generate a per‑app reusable workflow that builds with Next on Pages on Linux runners:
+
+```bash
+opd generate cloudflare --reusable --project-name <pages-project>
+# writes .github/workflows/deploy-app-cloudflare.yml using _reusable-cloudflare-pages.yml
+```
+
+ - Redirects for stale subpath links: the CLI can add a `_redirects` file when it detects leftover GitHub Pages subpaths in built HTML, or when `OPD_CF_ADD_SUBPATH_REDIRECTS=1` is set.
 
 ## Screenshots (placeholders)
 

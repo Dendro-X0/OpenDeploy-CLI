@@ -6,6 +6,12 @@
   "bin": { "opd": "dist/index.js" },
   "scripts": {
     "build": "tsup --clean",
+    "prepare:dist": "tsup --clean",
+    "build:cjs": "tsup src/index.ts --format cjs --target node18 --out-dir dist-cjs --sourcemap --dts false --minify false --banner.js=\"#!/usr/bin/env node\" --clean",
+    "build:bin": "pnpm build:cjs && pkg dist-cjs/index.js --targets node18-win-x64,node18-linux-x64,node18-macos-arm64 --output artifacts/bin/opd",
+    "build:bin:win": "pnpm build:cjs && pkg dist-cjs/index.js --targets node18-win-x64 --output artifacts/bin/opd-win-x64.exe",
+    "build:bin:linux": "pnpm build:cjs && pkg dist-cjs/index.js --targets node18-linux-x64 --output artifacts/bin/opd-linux-x64",
+    "build:bin:mac": "pnpm build:cjs && pkg dist-cjs/index.js --targets node18-macos-arm64 --output artifacts/bin/opd-macos-arm64",
     "test": "vitest run",
     "lint": "biome check .",
     "format": "biome format --write ."
@@ -23,6 +29,12 @@
     "tsup": "^8.5.0",
     "vitest": "^3.2.4",
     "@biomejs/biome": "^2.2.4",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2",
+    "pkg": "^5.8.1"
+  },
+  "pkg": {
+    "scripts": [],
+    "assets": [],
+    "outputPath": "artifacts/bin"
   }
 }

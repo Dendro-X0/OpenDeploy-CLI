@@ -38,6 +38,65 @@
       "label": "CF: Sync + Open (follow)",
       "dependsOn": ["CI: Sync Cloudflare (follow)", "Open CI logs folder"],
       "dependsOrder": "sequence"
+    },
+    {
+      "label": "CI: Sync Matrix (follow)",
+      "type": "shell",
+      "command": "pnpm ci:sync:matrix:follow",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "CI Matrix: Sync + Open (follow)",
+      "dependsOn": ["CI: Sync Matrix (follow)", "Open CI logs folder"],
+      "dependsOrder": "sequence"
+    },
+    {
+      "label": "Open latest failure (ci)",
+      "type": "shell",
+      "command": "pnpm ci:open-failure",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Open latest failure (matrix)",
+      "type": "shell",
+      "command": "pnpm ci:open-failure:matrix",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Open latest failure (cloudflare)",
+      "type": "shell",
+      "command": "pnpm ci:open-failure:cf",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "CI: Summarize latest (ci.yml)",
+      "type": "shell",
+      "command": "pnpm ci:summarize",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": [
+        {
+          "owner": "opendeploy-ci",
+          "severity": "error",
+          "fileLocation": "autoDetect",
+          "pattern": {
+            "regexp": "^Job failed: (.*)$",
+            "message": 1
+          }
+        },
+        {
+          "owner": "opendeploy-ci",
+          "severity": "error",
+          "fileLocation": "autoDetect",
+          "pattern": {
+            "regexp": "^\\s{2}(?:(?:::error|Error|ERR!|Failed).*)$",
+            "message": 0
+          }
+        }
+      ]
     }
   ]
 }

@@ -1,0 +1,21 @@
+name: Docs Link Check
+
+on:
+  pull_request:
+    paths:
+      - 'apps/docs/src/content/opendeploy/**'
+      - 'scripts/docs-link-check.mjs'
+      - '.github/workflows/docs-link-check.yml'
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run docs link/anchor checker
+        run: node scripts/docs-link-check.mjs

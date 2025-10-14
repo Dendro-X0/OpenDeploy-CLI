@@ -12,7 +12,7 @@ Use these flags with any command to tailor output for CI or local use:
 - `--timestamps` — add ISO timestamps to human logs and JSON objects.
 - `--summary-only` — suppress intermediate JSON and print only final summary objects (`{ final: true }`).
 
-For CI consumers, see also: [Response Shapes (CI)](../response-shapes.md)
+For CI consumers, see also: [CI Helpers](../ci.md)
 
 ## Result Codes & CI behavior
 
@@ -34,4 +34,4 @@ For CI consumers, see also: [Response Shapes (CI)](../response-shapes.md)
 - Deploy
   - [deploy, up, logs/inspect, promote, rollback](./deploy.md)
 - System
-  - [start, detect, doctor, completion, ci logs, ci open, ci dispatch](./system.md)
+  - [start, detect, doctor, completion, ci logs, ci last, ci open, ci dispatch, ci summarize, ci sync](./system.md)

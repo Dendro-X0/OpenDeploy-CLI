@@ -1,49 +1,74 @@
 # Install
 
-This page describes supported installation methods for the OpenDeploy CLI. The recommended method is GitHub Releases, which gives you the short `opd` command.
+This page describes supported installation methods for the OpenDeploy CLI.
 
-## Install (recommended)
+> Note
+> Releases with prebuilt binaries are not published yet (tags exist, but no release assets). Use the "From Tag (source)" method below for now. The "GitHub Releases" section will work once releases are published.
 
-Download a prebuilt binary from GitHub Releases, make it executable, and place it in your PATH.
+## Install from Tag (source) — works today
+
+Download the latest tagged source archive, build the CLI, and run it locally.
+
+- Windows (PowerShell) — single command to download latest tag (adds TLS1.2 and User-Agent):
+```powershell
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;$H=@{ 'User-Agent'='opd-installer' };$O='Dendro-X0';$R='OpenDeploy-CLI';$t=Invoke-RestMethod -Headers $H "https://api.github.com/repos/$O/$R/tags?per_page=1";$Tag=if($t){$t[0].name}else{'main'};$Zip="$env:TEMP/opd-$Tag.zip";Invoke-WebRequest -Headers $H -Uri "https://github.com/$O/$R/archive/refs/tags/$Tag.zip" -OutFile $Zip;Expand-Archive -Force $Zip -DestinationPath .;Write-Host "Downloaded $Tag"
+```
+
+- macOS/Linux (bash) — single command to download latest tag (no jq required):
+```bash
+TAG=$(curl -sH 'User-Agent: opd-installer' https://api.github.com/repos/Dendro-X0/OpenDeploy-CLI/tags?per_page=1 | sed -n 's/.*"name"\s*:\s*"\([^"]*\)".*/\1/p' | head -n1); TAG=${TAG:-main}; curl -L "https://github.com/Dendro-X0/OpenDeploy-CLI/archive/refs/tags/$TAG.tar.gz" | tar -xz; echo "Downloaded $TAG"
+```
+
+Build and run (from the extracted folder; building from source requires Node 20+ and pnpm via Corepack):
+```bash
+# enable pnpm
+corepack enable && corepack prepare pnpm@10.13.1 --activate
+# install deps for the monorepo
+pnpm install -r --frozen-lockfile
+# build CLI
+pnpm -C packages/cli build
+# run CLI
+node packages/cli/dist/index.js -v
+```
+
+Optional: create a small shell wrapper named `opd` in your PATH that executes `node <path>/packages/cli/dist/index.js %*` (Windows `.cmd`) or `node <path>/packages/cli/dist/index.js "$@"` (Unix). We will replace this with a single binary once releases are published.
+
+## Install (GitHub Releases) — coming soon
+
+When releases are published, download a prebuilt binary and place it in your PATH.
 
 - Windows (PowerShell):
 ```powershell
-$version = "v1.1.1"
-$dest = "$env:USERPROFILE\\bin"
+$dest = "$env:USERPROFILE\bin"
 New-Item -ItemType Directory -Force -Path $dest | Out-Null
-Invoke-WebRequest -Uri "https://github.com/Dendro-X0/OpenDeploy-CLI/releases/download/$version/opd-windows-x64.exe" -OutFile "$dest/opd.exe"
+Invoke-WebRequest -Uri "https://github.com/Dendro-X0/OpenDeploy-CLI/releases/latest/download/opd-win-x64.exe" -OutFile "$dest/opd.exe"
 # Ensure $env:USERPROFILE\bin is on PATH, then:
-opd -h
+& "$dest\opd.exe" -h
 ```
 
 - macOS (Apple Silicon):
 ```bash
-VERSION=v1.1.1
-curl -L -o opd https://github.com/Dendro-X0/OpenDeploy-CLI/releases/download/$VERSION/opd-darwin-arm64
+curl -L -o opd https://github.com/Dendro-X0/OpenDeploy-CLI/releases/latest/download/opd-macos-arm64
 chmod +x opd && sudo mv opd /usr/local/bin/opd
 opd -h
 ```
 
 - macOS (Intel):
 ```bash
-VERSION=v1.1.1
-curl -L -o opd https://github.com/Dendro-X0/OpenDeploy-CLI/releases/download/$VERSION/opd-darwin-x64
-chmod +x opd && sudo mv opd /usr/local/bin/opd
-opd -h
+# Intel builds may be added later; use source install if not available.
+echo "See Install from Tag (source) above"
 ```
 
 - Linux (x64):
 ```bash
-VERSION=v1.1.1
-curl -L -o opd https://github.com/Dendro-X0/OpenDeploy-CLI/releases/download/$VERSION/opd-linux-x64
+curl -L -o opd https://github.com/Dendro-X0/OpenDeploy-CLI/releases/latest/download/opd-linux-x64
 chmod +x opd && sudo mv opd /usr/local/bin/opd
 opd -h
 ```
 
 - Linux (arm64):
 ```bash
-VERSION=v1.1.1
-curl -L -o opd https://github.com/Dendro-X0/OpenDeploy-CLI/releases/download/$VERSION/opd-linux-arm64
+curl -L -o opd https://github.com/Dendro-X0/OpenDeploy-CLI/releases/latest/download/opd-linux-arm64
 chmod +x opd && sudo mv opd /usr/local/bin/opd
 opd -h
 ```
@@ -57,14 +82,14 @@ Notes:
 ```powershell
 $Owner = 'Dendro-X0'
 $Repo  = 'OpenDeploy-CLI'
-# Detect latest tag; set $Version = 'v1.1.1' to pin
+# Detect latest tag; set $Version = 'vX.Y.Z' to pin to a specific release
 $hdr   = @{ 'User-Agent' = 'opd-installer' }
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $rel   = Invoke-RestMethod -Headers $hdr "https://api.github.com/repos/$Owner/$Repo/releases/latest"
 $Version = $rel.tag_name
 $arch = (Get-CimInstance Win32_Processor).Architecture
 $isArm = ($arch -eq 12)
-$asset = if ($isArm) { 'opd-windows-arm64.exe' } else { 'opd-windows-x64.exe' }
+$asset = 'opd-win-x64.exe'
 $url = ($rel.assets | Where-Object name -eq $asset).browser_download_url
 if (-not $url) { throw "Asset not found: $asset in $Version" }
 $dest = "$env:USERPROFILE\bin"
@@ -79,7 +104,8 @@ Invoke-WebRequest -Headers $hdr -Uri $url -OutFile "$dest/opd.exe"
 set -euo pipefail
 OWNER=Dendro-X0 REPO=OpenDeploy-CLI UA=opd-installer
 VERSION=$(curl -sH "User-Agent: $UA" https://api.github.com/repos/$OWNER/$REPO/releases/latest | jq -r .tag_name)
-OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+U=$(uname -s)
+case "$U" in Darwin) OS=macos ;; Linux) OS=linux ;; *) echo "Unsupported OS: $U"; exit 1 ;; esac
 ARCH=$(uname -m)
 case "$ARCH" in x86_64) ARCH=x64 ;; aarch64|arm64) ARCH=arm64 ;; *) echo "Unsupported arch: $ARCH"; exit 1 ;; esac
 NAME="opd-${OS}-${ARCH}"
@@ -90,6 +116,7 @@ opd -v
 
 Troubleshooting downloads:
 - If `Invoke-WebRequest` shows an HTML page or fails with a web exception, the URL may be wrong (no release/tag yet) or headers are missing. Use the API‑based scripts above, ensure a tag like `v1.1.1` exists, and that assets are attached (e.g., `opd-windows-x64.exe`).
+ - If using the direct `latest/download` URLs above, verify that a release is published with the corresponding asset name for your OS/arch (e.g., `opd-windows-x64.exe`).
 
 ## Docker/OCI (no Node required)
 

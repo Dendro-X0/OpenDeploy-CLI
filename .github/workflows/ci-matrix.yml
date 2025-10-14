@@ -26,11 +26,15 @@ jobs:
         node: [18.x, 20.x, 22.x]
     steps:
       - uses: actions/checkout@v4
-      - name: Setup Node + pnpm (corepack)
-        uses: ./.github/actions/setup-pnpm
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-          pnpm-version: '10.13.1'
+          cache: 'pnpm'
+      - name: Enable pnpm via Corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.16.1 --activate
       - name: Approve native build scripts
         run: pnpm approve-builds @tailwindcss/oxide esbuild sharp workerd
       - name: Install dependencies

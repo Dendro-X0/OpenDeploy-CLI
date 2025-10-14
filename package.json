@@ -22,6 +22,11 @@
     "ci:sync": "node packages/cli/dist/index.js ci sync --workflow ci.yml --out .artifacts/ci-logs",
     "ci:sync:follow": "node packages/cli/dist/index.js ci sync --workflow ci.yml --out .artifacts/ci-logs --follow",
     "ci:sync:cf": "node packages/cli/dist/index.js ci sync --workflow docs-cloudflare-pages.yml --out .artifacts/ci-logs",
-    "ci:sync:cf:follow": "node packages/cli/dist/index.js ci sync --workflow docs-cloudflare-pages.yml --out .artifacts/ci-logs --follow"
+    "ci:sync:cf:follow": "node packages/cli/dist/index.js ci sync --workflow docs-cloudflare-pages.yml --out .artifacts/ci-logs --follow",
+    "ci:summarize": "node packages/cli/dist/index.js ci summarize --workflow ci.yml --out .artifacts/ci-logs",
+    "ci:sync:matrix:follow": "node packages/cli/dist/index.js ci sync --workflow ci-matrix.yml --out .artifacts/ci-logs --follow",
+    "ci:open-failure": "node scripts/ci/open-latest-failure.mjs ci.yml",
+    "ci:open-failure:matrix": "node scripts/ci/open-latest-failure.mjs ci-matrix.yml",
+    "ci:open-failure:cf": "node scripts/ci/open-latest-failure.mjs docs-cloudflare-pages.yml"
   }
 }

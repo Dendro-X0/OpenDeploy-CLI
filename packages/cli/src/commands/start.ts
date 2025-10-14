@@ -797,6 +797,7 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
     if (process.env.OPD_NDJSON === '1') { logger.setNdjson(true) }
     else if (opts.json === true || process.env.OPD_JSON === '1') { logger.setJsonOnly(true) }
     if (process.env.OPD_SUMMARY === '1' || opts.summaryOnly === true) { logger.setSummaryOnly(true) }
+    if (process.env.OPD_NDJSON === '1' || opts.json === true || opts.ci === true) { process.env.OPD_FORCE_CI = '1' }
     const inCI: boolean = Boolean(opts.ci) || process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true'
     // Minimal preset: short-circuit prompts and deploy with defaults
     if (opts.minimal === true) {
@@ -1129,8 +1130,8 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
             if (patched.changed) {
               await writeFile(cfgPath, patched.content, 'utf8')
               humanNote('Patched next.config for GitHub Pages static export.', 'Config')
-              if (isJsonMode(opts.json)) logger.json({ ok: true, action: 'start', event: 'fix', provider: 'github', fix: 'github-next-config', file: cfgPath, changes: patched.fixes })
             }
+            if (isJsonMode(opts.json)) logger.json({ ok: true, action: 'start', event: 'fix', provider: 'github', fix: 'github-next-config', file: cfgPath, changes: patched.fixes })
           }
         }
       } catch { /* ignore */ }
@@ -1174,8 +1175,8 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
             if (patched.changed) {
               await writeFile(cfgPath, patched.content, 'utf8')
               humanNote('Patched next.config for Cloudflare Pages SSR/hybrid.', 'Config')
-              if (isJsonMode(opts.json)) logger.json({ ok: true, action: 'start', event: 'fix', provider: 'cloudflare', fix: 'cloudflare-next-config', file: cfgPath, changes: patched.fixes })
             }
+            if (isJsonMode(opts.json)) logger.json({ ok: true, action: 'start', event: 'fix', provider: 'cloudflare', fix: 'cloudflare-next-config', file: cfgPath, changes: patched.fixes })
           }
         }
       } catch { /* ignore */ }
