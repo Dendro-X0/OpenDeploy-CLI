@@ -8,11 +8,11 @@ WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@10.13.1 --activate
 
 # Copy manifests first for better caching
-COPY package.json pnpm-lock.yaml tsconfig.json tsup.config.ts ./
+COPY package.json tsconfig.json tsup.config.ts ./
 COPY src ./src
 
 # Install and build
-RUN pnpm install --frozen-lockfile \
+RUN pnpm install \
     && pnpm build \
     && pnpm prune --prod
 
