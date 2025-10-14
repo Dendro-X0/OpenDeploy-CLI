@@ -3,9 +3,9 @@
 This page describes supported installation methods for the OpenDeploy CLI.
 
 > Note
-> Releases with prebuilt binaries are not published yet (tags exist, but no release assets). Use the "From Tag (source)" method below for now. The "GitHub Releases" section will work once releases are published.
+> Recommended: install from GitHub Releases (prebuilt binaries). If a release is not visible yet, use the "From Tag (source)" method as a fallback.
 
-## Install from Tag (source) — works today
+## Install from Tag (source) — alternative
 
 Download the latest tagged source archive, build the CLI, and run it locally.
 
@@ -33,9 +33,9 @@ node packages/cli/dist/index.js -v
 
 Optional: create a small shell wrapper named `opd` in your PATH that executes `node <path>/packages/cli/dist/index.js %*` (Windows `.cmd`) or `node <path>/packages/cli/dist/index.js "$@"` (Unix). We will replace this with a single binary once releases are published.
 
-## Install (GitHub Releases) — coming soon
+## Install from GitHub Releases — recommended
 
-When releases are published, download a prebuilt binary and place it in your PATH.
+Download a prebuilt binary and place it in your PATH.
 
 - Windows (PowerShell):
 ```powershell

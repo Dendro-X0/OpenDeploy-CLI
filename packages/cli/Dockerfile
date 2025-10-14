@@ -26,5 +26,6 @@ COPY --from=build /app/dist /usr/local/lib/opd/dist
 COPY --from=build /app/package.json /usr/local/lib/opd/package.json
 COPY --from=build /app/node_modules /usr/local/lib/opd/node_modules
 
+# Default entrypoint runs the CLI
 ENTRYPOINT ["node", "/usr/local/lib/opd/dist/index.js"]
-CMD ["--help"]
+CMD ["-h"]
