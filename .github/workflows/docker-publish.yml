@@ -48,6 +48,8 @@ jobs:
           context: ./packages/cli
           push: true
           tags: ${{ steps.meta.outputs.tags }}
-          platforms: linux/amd64,linux/arm64
+          # Note: arm64 builds under QEMU on GitHub-hosted runners can crash with SIGILL
+          # when using Alpine base images and Node. Limit to amd64 for stability before demo.
+          platforms: linux/amd64
           cache-from: type=gha
           cache-to: type=gha,mode=max
