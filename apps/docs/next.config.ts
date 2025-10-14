@@ -59,6 +59,17 @@ const nextConfig: NextConfig = {
     : {
         trailingSlash: false,
       }),
+  webpack: (config, { isServer }) => {
+    // During static export on GitHub Pages, some libraries may reference `self`.
+    // Ensure `self` is defined on the server build to avoid "self is not defined".
+    if (isServer && deployTarget === 'github') {
+      config.plugins = config.plugins || []
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { DefinePlugin } = require('webpack')
+      config.plugins.push(new DefinePlugin({ self: 'globalThis' }))
+    }
+    return config
+  },
 };
 
 export default withMDX(nextConfig);
