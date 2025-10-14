@@ -100,6 +100,8 @@ jobs:
             base=$(basename "$f")
             cp "$f" "artifacts/$base"
           done
+          # Remove downloaded artifact directories to avoid uploading directories as assets
+          rm -rf artifacts/bin
           # Checksums (files only at top-level)
           if command -v sha256sum >/dev/null 2>&1; then
             find artifacts -maxdepth 1 -type f -exec sha256sum {} + > artifacts/checksums.txt
