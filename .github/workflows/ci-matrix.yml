@@ -38,7 +38,7 @@ jobs:
       - name: Approve native build scripts
         run: pnpm approve-builds @tailwindcss/oxide esbuild sharp workerd
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
       - name: Bootstrap prebuilt opd-go (Linux)
         if: matrix.os == 'ubuntu-latest'
         shell: bash

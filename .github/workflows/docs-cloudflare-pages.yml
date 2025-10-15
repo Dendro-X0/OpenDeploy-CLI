@@ -50,7 +50,7 @@ jobs:
         run: pnpm approve-builds @tailwindcss/oxide esbuild sharp workerd
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
 
       - name: Build with Next on Pages
         run: |

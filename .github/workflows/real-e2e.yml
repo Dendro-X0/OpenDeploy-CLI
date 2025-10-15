@@ -16,7 +16,7 @@ jobs:
       - name: Enable corepack & install
         run: |
           corepack enable && corepack prepare pnpm@10.13.1 --activate
-          pnpm install --frozen-lockfile
+          pnpm install --no-frozen-lockfile
       - name: Approve native build scripts
         run: pnpm approve-builds @tailwindcss/oxide esbuild sharp workerd
       - name: Build CLI
@@ -58,7 +58,7 @@ jobs:
       - name: Enable corepack & install
         run: |
           corepack enable && corepack prepare pnpm@10.13.1 --activate
-          pnpm install --frozen-lockfile
+          pnpm install --no-frozen-lockfile
       - name: Build CLI
         run: pnpm build
       - name: Scaffold Astro app

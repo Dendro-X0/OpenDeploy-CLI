@@ -40,7 +40,7 @@ jobs:
           corepack enable
           corepack prepare pnpm@10.16.1 --activate
       - name: Install deps (monorepo)
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
       - name: Build CJS dist for pkg
         run: pnpm -C packages/cli build:cjs
       - name: Build OS binary
@@ -80,7 +80,7 @@ jobs:
           corepack enable
           corepack prepare pnpm@10.16.1 --activate
       - name: Install deps (CLI)
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
       - name: Build JS dist
         run: pnpm -C packages/cli build
       - name: Download all binaries

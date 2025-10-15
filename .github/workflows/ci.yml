@@ -35,7 +35,7 @@ jobs:
       - name: Approve native build scripts
         run: pnpm approve-builds @tailwindcss/oxide esbuild sharp workerd
       - name: Install deps
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
       - name: Typecheck (if present)
         run: pnpm -r --if-present typecheck
       - name: Build

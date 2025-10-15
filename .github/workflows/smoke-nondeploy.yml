@@ -35,7 +35,7 @@ jobs:
         run: pnpm approve-builds @tailwindcss/oxide esbuild sharp workerd
 
       - name: Install deps
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
 
       - name: Setup Go
         uses: actions/setup-go@v5

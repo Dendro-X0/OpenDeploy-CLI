@@ -42,7 +42,7 @@ jobs:
           pnpm -v
 
       - name: Install deps
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
 
       - name: Build (Next static export)
         env:

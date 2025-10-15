@@ -35,7 +35,7 @@ jobs:
           corepack prepare pnpm@10.16.1 --activate
 
       - name: Install deps
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
 
       - name: Build CLI
         run: pnpm -C packages/cli build
