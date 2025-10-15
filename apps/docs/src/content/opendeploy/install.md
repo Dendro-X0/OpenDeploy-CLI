@@ -3,7 +3,22 @@
 This page describes supported installation methods for the OpenDeploy CLI.
 
 > Note
-> Recommended: install from GitHub Releases (prebuilt binaries). If a release is not visible yet, use the "From Tag (source)" method as a fallback.
+> Recommended: install from npm (no cloning required). Releases and Docker are available as alternatives.
+
+## Install from npm — recommended
+
+Requires Node.js 18+ (includes npm 9/10). No repository clone required.
+
+- One-off (always latest):
+```bash
+npx opendeploy@latest -h
+```
+
+- Global install (adds `opd` to PATH):
+```bash
+npm i -g opendeploy
+opd -h
+```
 
 ## Install from Tag (source) — alternative
 
@@ -33,7 +48,7 @@ node packages/cli/dist/index.js -v
 
 Optional: create a small shell wrapper named `opd` in your PATH that executes `node <path>/packages/cli/dist/index.js %*` (Windows `.cmd`) or `node <path>/packages/cli/dist/index.js "$@"` (Unix). We will replace this with a single binary once releases are published.
 
-## Install from GitHub Releases — recommended
+## Install from GitHub Releases — alternative
 
 Download a prebuilt binary and place it in your PATH.
 

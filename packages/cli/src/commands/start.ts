@@ -17,7 +17,6 @@ import { detectNuxtApp } from '../core/detectors/nuxt'
 import { detectExpoApp } from '../core/detectors/expo'
 import { detectApp as autoDetect, detectCandidates as detectMarks } from '../core/detectors/auto'
 import { fsx } from '../utils/fs'
-import clipboard from 'clipboardy'
 import { readFile, readdir, writeFile, mkdir } from 'node:fs/promises'
 
 import type { DetectionResult } from '../types/detection-result'
@@ -911,7 +910,7 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
     if (!framework) framework = await autoDetectFramework(targetCwd)
     if (!framework) {
       if (opts.ci) {
-        throw new Error('Framework not detected. Pass --framework <next|astro|sveltekit|remix|nuxt> in CI mode.')
+        throw new Error('Framework not detected. Pass --framework <next|astro|sveltekit|remix|expo> in CI mode.')
       }
       const marks = await detectMarks({ cwd: targetCwd })
       const options: Array<{ value: Framework; label: string }> = [
@@ -1443,14 +1442,11 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
     }
     humanNote(`Rerun non-interactively:\n${cmd}`, 'Command')
     const wantCopy = await clackConfirm({ message: 'Copy command to clipboard?', initialValue: false })
-    if (!isCancel(wantCopy) && wantCopy) {
-      try { await clipboard.write(cmd); humanNote('Copied command to clipboard', 'Command') } catch { /* ignore */ }
-    }
+    if (isCancel(wantCopy)) return cancel('Cancelled')
+    if (wantCopy) { const ok = await tryCopyToClipboard(cmd); if (ok) humanNote('Copied command to clipboard', 'Command') }
     if (logsUrl) {
       const wantCopyLogs = await clackConfirm({ message: 'Copy logs URL to clipboard?', initialValue: false })
-      if (!isCancel(wantCopyLogs) && wantCopyLogs) {
-        try { await clipboard.write(logsUrl); humanNote('Copied logs URL to clipboard', 'Command') } catch { /* ignore */ }
-      }
+      if (!isCancel(wantCopyLogs) && wantCopyLogs) { const ok = await tryCopyToClipboard(logsUrl); if (ok) humanNote('Copied logs URL to clipboard', 'Command') }
     }
     // Offer to open logs/dashboard (non-blocking with timeout)
     const openMsg: string = logsUrl ? `Open provider dashboard/logs now?\n${makeHyperlink(logsUrl, 'Open logs in browser')}` : 'Open provider dashboard/logs now?'
@@ -1568,6 +1564,35 @@ function buildNonInteractiveCmd(args: { readonly provider: Provider; readonly en
   if (args.project) parts.push('--project', args.project)
   if (args.org) parts.push('--org', args.org)
   return parts.join(' ')
+}
+
+/**
+ * Try to copy text to clipboard in a way that works for packaged binaries.
+ * - Windows: PowerShell Set-Clipboard
+ * - macOS: pbcopy
+ * - Linux: best-effort dynamic import of 'clipboardy' (may be unavailable)
+ */
+async function tryCopyToClipboard(text: string): Promise<boolean> {
+  try {
+    const value: string = text ?? ''
+    if (process.platform === 'win32') {
+      // Use PowerShell to avoid Node ESM issues in pkg snapshots
+      const ps: string = `powershell -NoProfile -Command \"Set-Clipboard -Value @'\n${value}\n'@\"`
+      const res = await proc.run({ cmd: ps })
+      return res.ok
+    }
+    if (process.platform === 'darwin') {
+      const res = await proc.run({ cmd: `printf %s ${JSON.stringify(value)} | pbcopy` })
+      return res.ok
+    }
+    // Linux/others: try dynamic import of clipboardy
+    try {
+      // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+      const mod: any = await import('clipboardy').catch(() => null)
+      if (mod && typeof mod.write === 'function') { await mod.write(value); return true }
+    } catch { /* ignore */ }
+  } catch { /* ignore */ }
+  return false
 }
 
 /** Register the guided start command. */
