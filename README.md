@@ -1,5 +1,11 @@
 # OpenDeploy CLI (opd)
 
+> Status: Project On Hold — Major Refactor Planned
+>
+> This project is temporarily unavailable while we redesign core architecture for reliability, integration, and scalability. The CLI and VSCode extension are not supported during this pause. If you need to reference prior work, treat the documentation below as historical only.
+>
+> Last updated: 2025‑10‑14
+
 [![CI](https://github.com/Dendro-X0/OpenDeploy-CLI/actions/workflows/ci.yml/badge.svg)](https://github.com/Dendro-X0/OpenDeploy-CLI/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Version](https://img.shields.io/github/v/tag/Dendro-X0/OpenDeploy-CLI?label=version)](https://github.com/Dendro-X0/OpenDeploy-CLI/releases)

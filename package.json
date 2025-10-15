@@ -4,11 +4,12 @@
   "packageManager": "pnpm@10.16.1",
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
-    "build": "pnpm -r build",
-    "test": "pnpm -r test",
-    "typecheck": "pnpm -r typecheck",
-    "lint": "pnpm -r lint",
-    "format": "pnpm -r format",
+    "dev": "turbo run dev --parallel",
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint",
+    "format": "turbo run format",
     "ci:watch": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\.bin\\ci-watch.ps1",
     "ci:watch:ci": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\.bin\\ci-watch.ps1 -Workflow ci.yml",
     "ci:dispatch": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\.bin\\ci-dispatch.ps1",
@@ -28,5 +29,8 @@
     "ci:open-failure": "node scripts/ci/open-latest-failure.mjs ci.yml",
     "ci:open-failure:matrix": "node scripts/ci/open-latest-failure.mjs ci-matrix.yml",
     "ci:open-failure:cf": "node scripts/ci/open-latest-failure.mjs docs-cloudflare-pages.yml"
+  },
+  "devDependencies": {
+    "turbo": "^2.5.8"
   }
 }

@@ -2,6 +2,13 @@
   "version": "2.0.0",
   "tasks": [
     {
+      "label": "ext:build",
+      "type": "shell",
+      "command": "pnpm -C apps/extension build",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
       "label": "CI: Sync latest (ci.yml)",
       "type": "shell",
       "command": "pnpm ci:sync",

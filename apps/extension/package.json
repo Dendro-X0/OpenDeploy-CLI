@@ -1,0 +1,107 @@
+{
+  "name": "opendeploy-vscode",
+  "displayName": "OpenDeploy",
+  "description": "Plan and deploy web apps from VSCode using OpenDeploy.",
+  "version": "0.1.0",
+  "publisher": "opendeploy",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Dendro-X0/OpenDeploy-CLI"
+  },
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": ["Other"],
+  "main": "./dist/extension.js",
+  "files": [
+    "dist/**",
+    "package.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "contributes": {
+    "commands": [
+      { "command": "opendeploy.panel", "title": "OpenDeploy: Control Panel" },
+      { "command": "opendeploy.plan", "title": "OpenDeploy: Plan" },
+      { "command": "opendeploy.deploy", "title": "OpenDeploy: Deploy" },
+      { "command": "opendeploy.detect", "title": "OpenDeploy: Detect App" },
+      { "command": "opendeploy.summary", "title": "OpenDeploy: Summary" },
+      { "command": "opendeploy.toggleJson", "title": "OpenDeploy: Toggle JSON View" },
+      { "command": "opendeploy.checkVercelAuth", "title": "OpenDeploy: Check Vercel Auth" },
+      { "command": "opendeploy.checkCloudflareAuth", "title": "OpenDeploy: Check Cloudflare Auth" },
+      { "command": "opendeploy.generateGhPagesWorkflow", "title": "OpenDeploy: Generate GH Pages Workflow" },
+      { "command": "opendeploy.doctor", "title": "OpenDeploy: Doctor" }
+    ],
+    "keybindings": [
+      {
+        "command": "opendeploy.panel",
+        "key": "ctrl+alt+u",
+        "mac": "cmd+alt+u",
+        "when": "workbenchState != 'empty'"
+      },
+      {
+        "command": "opendeploy.toggleJson",
+        "key": "ctrl+alt+j",
+        "mac": "cmd+alt+j",
+        "when": "workbenchState != 'empty'"
+      },
+      {
+        "command": "opendeploy.summary",
+        "key": "ctrl+alt+o",
+        "mac": "cmd+alt+o",
+        "when": "workbenchState != 'empty'"
+      }
+      ,{
+        "command": "opendeploy.plan",
+        "key": "ctrl+alt+p",
+        "mac": "cmd+alt+p",
+        "when": "workbenchState != 'empty'"
+      }
+    ],
+    "configuration": {
+      "title": "OpenDeploy",
+      "properties": {
+        "opendeploy.runner": {
+          "type": "string",
+          "enum": ["npm", "docker"],
+          "default": "npm",
+          "markdownDescription": "Backend used to run OpenDeploy (npm via npx, or Docker image)."
+        },
+        "opendeploy.npmBinary": {
+          "type": "string",
+          "default": "npx opendeploy@latest",
+          "markdownDescription": "Command used to run OpenDeploy via npm."
+        },
+        "opendeploy.dockerImage": {
+          "type": "string",
+          "default": "ghcr.io/dendro-x0/opd:latest",
+          "markdownDescription": "Docker image to run when runner is 'docker'."
+        },
+        "opendeploy.defaultPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Default path of the app in the workspace (for monorepos)."
+        },
+        "opendeploy.preferJson": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Prefer JSON output rendering when available."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "watch": "tsc -w -p .",
+    "package": "vsce package",
+    "publish": "vsce publish",
+    "stage:pack": "node ./scripts/stage-package.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.0",
+    "@types/vscode": "^1.80.0",
+    "typescript": "^5.9.0",
+    "vsce": "^2.15.0"
+  }
+}
