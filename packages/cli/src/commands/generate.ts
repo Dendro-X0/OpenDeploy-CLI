@@ -32,7 +32,7 @@ export function registerGenerateCommand(program: Command): void {
           const plugin = await loadProvider('vercel')
           const writtenPath: string = await plugin.generateConfig({ detection, cwd, overwrite: opts.overwrite === true })
           if (jsonMode) {
-            const summary = { ok: true, action: 'generate' as const, provider: 'vercel' as const, path: writtenPath, final: true }
+            const summary = { ok: true, action: 'generate' as const, provider: 'vercel' as const, path: writtenPath, hints: [] as string[], final: true }
             logger.jsonPrint(summary)
             return
           }
@@ -51,7 +51,7 @@ export function registerGenerateCommand(program: Command): void {
               await writeFile(path, body, 'utf8')
             }
             if (jsonMode) {
-              logger.jsonPrint({ ok: true, action: 'generate' as const, provider: 'cloudflare' as const, mode: 'next-on-pages' as const, path, final: true })
+              logger.jsonPrint({ ok: true, action: 'generate' as const, provider: 'cloudflare-pages' as const, mode: 'next-on-pages' as const, path, hints: [] as string[], final: true })
               return
             }
             logger.success('Generated Cloudflare wrangler.toml for Next on Pages')
@@ -87,7 +87,7 @@ export function registerGenerateCommand(program: Command): void {
 `      app_path: ${appPath}\n` +
 `      project_name: ${projName}\n`
             await writeFile(file, body, 'utf8')
-            if (jsonMode) { logger.jsonPrint({ ok: true, action: 'generate', provider: 'cloudflare', mode: 'reusable', path: file, app_path: appPath, project_name: projName, final: true }); return }
+            if (jsonMode) { logger.jsonPrint({ ok: true, action: 'generate' as const, provider: 'cloudflare-pages' as const, mode: 'reusable' as const, path: file, app_path: appPath, project_name: projName, hints: [] as string[], final: true }); return }
             logger.success(`Generated Cloudflare per-app workflow at ${file}`)
             logger.note(`Project: ${projName} | App: ${appPath}`)
             return
@@ -96,7 +96,7 @@ export function registerGenerateCommand(program: Command): void {
           const plugin = await loadProvider('cloudflare')
           const writtenPath: string = await plugin.generateConfig({ detection, cwd, overwrite: opts.overwrite === true })
           if (jsonMode) {
-            logger.jsonPrint({ ok: true, action: 'generate' as const, provider: 'cloudflare' as const, path: writtenPath, final: true })
+            logger.jsonPrint({ ok: true, action: 'generate' as const, provider: 'cloudflare-pages' as const, path: writtenPath, hints: [] as string[], final: true })
             return
           }
           logger.success(`Generated Cloudflare config at ${writtenPath}`)
@@ -131,7 +131,7 @@ export function registerGenerateCommand(program: Command): void {
 `    with:\n` +
 `      app_path: ${appPath}\n`
             await writeFile(file, body, 'utf8')
-            if (jsonMode) { logger.jsonPrint({ ok: true, action: 'generate', provider: 'github', mode: 'reusable', path: file, app_path: appPath, final: true }); return }
+            if (jsonMode) { logger.jsonPrint({ ok: true, action: 'generate' as const, provider: 'github-pages' as const, mode: 'reusable' as const, path: file, app_path: appPath, hints: [] as string[], final: true }); return }
             logger.success(`Generated GitHub Pages per-app workflow at ${file}`)
             logger.note(`App: ${appPath}`)
             return
@@ -183,7 +183,7 @@ export function registerGenerateCommand(program: Command): void {
 `      - id: deployment\n` +
 `        uses: actions/deploy-pages@v4\n`
           await writeFile(file, body, 'utf8')
-          if (jsonMode) { logger.jsonPrint({ ok: true, action: 'generate' as const, provider: 'github' as const, path: file, final: true }); return }
+          if (jsonMode) { logger.jsonPrint({ ok: true, action: 'generate' as const, provider: 'github-pages' as const, path: file, hints: [] as string[], final: true }); return }
           logger.success(`Generated GitHub Pages workflow at ${file}`)
           if ((detection.framework || '').toLowerCase() === 'next') {
             logger.note('Next.js → GitHub Pages: set next.config output: "export" and run next export to produce out/.')
@@ -205,7 +205,7 @@ export function registerGenerateCommand(program: Command): void {
             await writeFile(path, `${JSON.stringify(turbo, null, 2)}\n`, 'utf8')
           }
           if (jsonMode) {
-            logger.jsonPrint({ ok: true, action: 'generate' as const, provider: 'turbo' as const, path, final: true })
+            logger.jsonPrint({ ok: true, action: 'generate' as const, provider: 'turbo' as const, path, hints: [] as string[], final: true })
             return
           }
           logger.success(`Generated Turborepo config at ${path}`)

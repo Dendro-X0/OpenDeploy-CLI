@@ -46,6 +46,16 @@ export const navigationItems: ReadonlyArray<NavItem> = [
       { title: "GitHub Pages", url: "/docs/opendeploy/providers/github" },
     ],
   },
+  {
+    title: "Architecture",
+    icon: FileText,
+    items: [
+      { title: "Output Contract", url: "/docs/opendeploy/architecture/output-contract" },
+      { title: "NDJSON Consumption", url: "/docs/opendeploy/architecture/ndjson-consumption" },
+      { title: "Doctor & Preflight", url: "/docs/opendeploy/doctor-preflight" },
+      { title: "Providers vNext", url: "/docs/opendeploy/architecture/providers-vnext" },
+    ],
+  },
 ] as const
 
 export type ResourceItem = { title: string; url: string; icon: LucideIcon; badge?: string }

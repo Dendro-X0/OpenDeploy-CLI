@@ -3,7 +3,7 @@ import { getSettings } from './config'
 import { listProjectCandidates, ProjectCandidate } from './detect'
 import { getWs } from './storage'
 
-export type RunAction = 'plan' | 'deploy' | 'doctor' | 'detect'
+export type RunAction = 'plan' | 'deploy' | 'doctor' | 'detect' | 'logs'
 
 export type PanelMessage =
   | { type: 'toggle-json' }
@@ -90,6 +90,7 @@ function getHtml(): string {
         <button id="btnPlan" class="primary">Plan</button>
         <button id="btnDeploy" class="primary">Deploy</button>
         <button id="btnDoctor" class="ghost">Doctor</button>
+        <button id="btnLogs" class="ghost">Follow Logs</button>
         <button id="btnDetect" class="ghost">Detect</button>
       </div>
       <div class="row">
@@ -161,6 +162,7 @@ function getHtml(): string {
       document.getElementById('btnPlan').onclick = ()=> post({ type: 'run', action: 'plan', cwd: cwd() })
       document.getElementById('btnDeploy').onclick = ()=> post({ type: 'run', action: 'deploy', cwd: cwd() })
       document.getElementById('btnDoctor').onclick = ()=> post({ type: 'run', action: 'doctor', cwd: cwd() })
+      document.getElementById('btnLogs').onclick = ()=> post({ type: 'run', action: 'logs', cwd: cwd() })
       document.getElementById('btnDetect').onclick = ()=> post({ type: 'run', action: 'detect', cwd: cwd() })
       document.getElementById('btnGenGH').onclick = ()=> { const tpl = document.getElementById('tplSel').value; post({ type: 'generate-gh', cwd: cwd(), template: tpl }) }
       document.getElementById('btnVercel').onclick = ()=> post({ type: 'auth', provider: 'vercel' })

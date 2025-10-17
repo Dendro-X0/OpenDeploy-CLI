@@ -22,7 +22,15 @@ export async function runOpenDeploy(opts: RunArgs): Promise<RunnerResult> {
   const cmd: string = buildCommand(opts)
   output.appendLine(`$ ${cmd}`)
   return await new Promise<RunnerResult>((resolve) => {
-    const childProc = child.spawn(cmd, { cwd: opts.cwd, shell: true })
+    const childProc = child.spawn(cmd, {
+      cwd: opts.cwd,
+      shell: true,
+      env: {
+        ...process.env,
+        // Enable NDJSON streaming when JSON view is preferred
+        OPD_NDJSON: opts.settings.preferJson ? '1' : undefined
+      }
+    })
     let buf = ''
     let logsUrl: string | undefined
     const urlCandidates: Set<string> = new Set()
@@ -37,17 +45,24 @@ export async function runOpenDeploy(opts: RunArgs): Promise<RunnerResult> {
         // JSON summary line
         if (line.startsWith('{') && line.endsWith('}')) {
           try {
-            const obj = JSON.parse(line) as { logsUrl?: string; final?: boolean; provider?: string; phase?: string; ok?: boolean; app?: string; project?: string; message?: string; error?: string }
+            const obj = JSON.parse(line) as { logsUrl?: string; final?: boolean; provider?: string; phase?: string; ok?: boolean; app?: string; project?: string; message?: string; error?: string; action?: string; results?: Array<{ name?: string; ok?: boolean; message?: string }>; suggestions?: string[] }
             if (obj.logsUrl) urlCandidates.add(obj.logsUrl)
             printJsonSummary(obj)
             if (opts.onJson) opts.onJson(obj)
             // Send compact summary to the webview
+            const checks = Array.isArray((obj as any).results) ? (obj as any).results : undefined
+            const suggestions = Array.isArray((obj as any).suggestions) ? (obj as any).suggestions : undefined
             postSummary({
               ok: obj.ok !== false,
               provider: obj.provider,
               phase: obj.phase,
               app: obj.app ?? obj.project,
-              message: obj.message ?? obj.error
+              url: (obj as any).url,
+              logsUrl: obj.logsUrl,
+              message: obj.message ?? obj.error,
+              action: (obj as any).action,
+              checks,
+              suggestions
             })
           } catch { /* ignore */ }
         }
@@ -90,6 +105,7 @@ function chooseBestLogUrl(urls: readonly string[]): string | undefined {
   const score = (u: string): number => {
     const s = u.toLowerCase()
     if (s.includes('vercel.com') && s.includes('/deployments')) return 100
+    if (s.includes('vercel.com') && s.includes('/inspections')) return 95
     if (s.includes('vercel.com')) return 90
     if (s.includes('cloudflare') && (s.includes('pages') || s.includes('workers'))) return 80
     if (s.includes('pages.dev')) return 70

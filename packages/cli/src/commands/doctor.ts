@@ -102,6 +102,37 @@ async function checkNextGithubPages(cwd: string): Promise<CheckResult[]> {
   return results
 }
 
+// ---- Cloudflare Pages — Next on Pages preflight checks (best-effort, non-fatal) ----
+async function checkCloudflareNextOnPages(cwd: string): Promise<CheckResult[]> {
+  const results: CheckResult[] = []
+  const push = (name: string, ok: boolean, message: string): void => { results.push({ name, ok, message }) }
+  try {
+    // Artifact directory presence (local build)
+    const artifact = join(cwd, '.vercel', 'output', 'static')
+    const hasArtifact = await fsx.exists(artifact)
+    push('Next on Pages: .vercel/output/static', hasArtifact, hasArtifact ? 'present' : 'missing (build to generate)')
+  } catch { push('Next on Pages: .vercel/output/static', false, 'error reading') }
+  try {
+    const wranglerPath = join(cwd, 'wrangler.toml')
+    const hasWrangler = await fsx.exists(wranglerPath)
+    push('wrangler.toml present', hasWrangler, hasWrangler ? 'present' : 'missing')
+    if (hasWrangler) {
+      try {
+        const raw = await readFileFs(wranglerPath, 'utf8')
+        const nameMatch = raw.match(/\bname\s*=\s*"([^"]+)"/)
+        push('wrangler.toml: name', Boolean(nameMatch?.[1]), nameMatch?.[1] ?? 'missing')
+        const outDirMatch = raw.match(/pages_build_output_dir\s*=\s*"([^"]+)"/)
+        const outDirVal = outDirMatch?.[1]
+        const okOutDir = outDirVal === '.vercel/output/static'
+        push('wrangler.toml: pages_build_output_dir', Boolean(outDirVal), okOutDir ? outDirVal : (outDirVal ? `${outDirVal} (expected .vercel/output/static)` : 'missing'))
+        const fnDirMatch = raw.match(/pages_functions_directory\s*=\s*"([^"]+)"/)
+        push('wrangler.toml: pages_functions_directory', Boolean(fnDirMatch?.[1]), fnDirMatch?.[1] ?? 'missing (ok if not using functions)')
+      } catch { push('wrangler.toml parse', false, 'error reading') }
+    }
+  } catch { push('wrangler.toml present', false, 'error reading') }
+  return results
+}
+
 interface DoctorOptions { readonly ci?: boolean; readonly json?: boolean; readonly verbose?: boolean; readonly fix?: boolean; readonly path?: string; readonly project?: string; readonly org?: string; readonly site?: string; readonly printCmd?: boolean; readonly strict?: boolean }
 
 interface CheckResult { readonly name: string; readonly ok: boolean; readonly message: string }
@@ -511,7 +542,7 @@ export function registerDoctorCommand(program: Command): void {
         } catch { /* ignore */ }
 
         if (jsonMode) {
-          logger.jsonPrint(annotate({ ok, action: 'doctor' as const, results, suggestions, final: true }))
+          logger.jsonPrint(annotate({ ok, action: 'doctor' as const, results, suggestions, hints: [] as string[], final: true }))
           process.exitCode = ok ? 0 : 1
           return
         }
@@ -571,7 +602,7 @@ export function registerDoctorCommand(program: Command): void {
       } catch (err) {
         const raw: string = err instanceof Error ? err.message : String(err)
         const info = mapProviderError('doctor', raw)
-        if (isJsonMode(opts.json)) { logger.jsonPrint(annotate({ ok: false, action: 'doctor' as const, code: info.code, message: info.message, remedy: info.remedy, error: raw, final: true })) }
+        if (isJsonMode(opts.json)) { logger.jsonPrint(annotate({ ok: false, action: 'doctor' as const, code: info.code, message: info.message, remedy: info.remedy, error: raw, hints: [] as string[], final: true })) }
         logger.error(`${info.message} (${info.code})`)
         if (info.remedy) logger.info(`Try: ${info.remedy}`)
         process.exitCode = 1

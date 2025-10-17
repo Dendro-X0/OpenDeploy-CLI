@@ -2,7 +2,7 @@ import { Command } from 'commander'
 import { registerDetectCommand } from './commands/detect'
 import { registerDoctorCommand } from './commands/doctor'
 import { registerGenerateCommand } from './commands/generate'
-import { registerDeployCommand } from './commands/deploy'
+import { registerDeployCommand, registerAliasCommand } from './commands/deploy'
 import { registerEnvCommand } from './commands/env'
 import { registerSeedCommand } from './commands/seed'
 import { logger } from './utils/logger'
@@ -168,6 +168,7 @@ function main(): void {
   registerUpCommand(program)
   registerStartCommand(program)
   registerCiLogsCommand(program)
+  registerAliasCommand(program)
   registerTestMatrixCommand(program)
   program.parseAsync(process.argv)
     .then(() => {})

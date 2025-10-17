@@ -14,6 +14,11 @@ Use these flags with any command to tailor output for CI or local use:
 
 For CI consumers, see also: [CI Helpers](../ci.md)
 
+## See also
+
+- [Output Contract](/docs/opendeploy/architecture/output-contract)
+- [NDJSON Consumption](/docs/opendeploy/architecture/ndjson-consumption)
+
 ## Result Codes & CI behavior
 
 - Detect

@@ -261,6 +261,85 @@ export function registerUpCommand(program: Command): void {
             logger.info(`[dry-run] up ${prov} (env=${envShort})`)
             return
           }
+          // Special-case Vercel: use streaming deploy path (consistent with CLI deploy)
+          if (prov === 'vercel') {
+            // Prefer linked app directory (target) if available; otherwise root if only root is linked
+            const targetLink: string = join(targetCwd, '.vercel', 'project.json')
+            const rootLink: string = join(rootCwd, '.vercel', 'project.json')
+            const targetIsLinked: boolean = await fsx.exists(targetLink)
+            const rootIsLinked: boolean = await fsx.exists(rootLink)
+            const runCwd: string = targetIsLinked ? targetCwd : (rootIsLinked && !targetIsLinked ? rootCwd : targetCwd)
+            if (runCwd !== targetCwd) logger.info(`Using linked directory for Vercel deploy: ${runCwd}`)
+            // Ensure link when IDs are provided and chosen cwd is not already linked
+            if ((opts.project || opts.org) && !(await fsx.exists(join(runCwd, '.vercel', 'project.json')))) {
+              const flags: string[] = ['--yes']
+              if (opts.project) flags.push(`--project ${opts.project}`)
+              if (opts.org) flags.push(`--org ${opts.org}`)
+              if (opts.printCmd) logger.info(`$ vercel link ${flags.join(' ')}`)
+              if (ndjsonOn) logger.json({ ok: true, action: 'up', stage: 'linking', provider: 'vercel', cwd: runCwd, flags })
+              await runWithRetry({ cmd: `vercel link ${flags.join(' ')}`, cwd: runCwd })
+            }
+            const sp = spinner(`Vercel: deploying (${envTargetUp === 'production' ? 'production' : 'preview'})`)
+            const stop: Stopper = startHeartbeat({ label: 'vercel deploy', hint: 'Tip: opendeploy open vercel', intervalMs: ndjsonOn ? 5000 : 10000 })
+            let capturedUrl: string | undefined
+            let capturedInspect: string | undefined
+            const urlRe = /https?:\/\/[^\s]+vercel\.app/g
+            if (ndjsonOn) logger.json({ ok: true, action: 'up', stage: 'deployStart', provider: 'vercel', target: envTargetUp })
+            const deployTimeout = Number.isFinite(Number(process.env.OPD_TIMEOUT_MS)) ? Number(process.env.OPD_TIMEOUT_MS) : 900_000
+            const controller = proc.spawnStream({
+              cmd: envTargetUp === 'production' ? 'vercel deploy --prod --yes' : 'vercel deploy --yes',
+              cwd: runCwd,
+              timeoutMs: deployTimeout,
+              onStdout: (chunk: string): void => {
+                const m = chunk.match(urlRe)
+                if (!capturedUrl && m && m.length > 0) {
+                  capturedUrl = m[0]
+                  if (ndjsonOn) logger.json({ ok: true, action: 'up', stage: 'url', provider: 'vercel', url: capturedUrl })
+                }
+                if (process.env.OPD_JSON !== '1' && process.env.OPD_NDJSON !== '1') {
+                  const t = chunk.replace(/\s+$/, '')
+                  if (t.length > 0) logger.info(t)
+                }
+              },
+              onStderr: (chunk: string): void => {
+                if (!capturedInspect) {
+                  const found = extractVercelInspectUrl(chunk)
+                  if (found) {
+                    capturedInspect = found
+                    if (ndjsonOn) logger.json({ ok: true, action: 'up', stage: 'logsUrl', provider: 'vercel', logsUrl: capturedInspect })
+                  }
+                }
+              }
+            })
+            const res = await controller.done
+            stop(); sp.stop()
+            if (!res.ok) throw new Error('Vercel deploy failed')
+            // Fallback: resolve Inspect URL after deploy when not captured from stream
+            if (!capturedInspect && capturedUrl) {
+              try {
+                const insp = await proc.run({ cmd: `vercel inspect ${capturedUrl}`, cwd: runCwd })
+                const text: string = (insp.stdout || '') + '\n' + (insp.stderr || '')
+                const found = extractVercelInspectUrl(text)
+                if (found) capturedInspect = found
+              } catch { /* ignore */ }
+              if (!capturedInspect) capturedInspect = `https://vercel.com/inspect?url=${encodeURIComponent(capturedUrl)}`
+            }
+            if (ndjsonOn) logger.json({ ok: true, action: 'up', stage: 'deployed', provider: 'vercel', target: envTargetUp, url: capturedUrl, logsUrl: capturedInspect })
+            // Optional alias
+            let aliasUrl: string | undefined
+            if (capturedUrl && opts.alias) {
+              const aliasCmd = `vercel alias set ${capturedUrl} ${opts.alias}`.trim()
+              if (opts.printCmd) logger.info(`$ ${aliasCmd}`)
+              const al = await runWithRetry({ cmd: aliasCmd, cwd: runCwd })
+              if (al.ok) aliasUrl = `https://${opts.alias}`
+              if (ndjsonOn && aliasUrl) logger.json({ ok: true, action: 'up', stage: 'aliasSet', provider: 'vercel', aliasUrl })
+            }
+            if (jsonMode) { logger.jsonPrint({ ok: true, action: 'up' as const, provider: 'vercel' as const, target: (envTargetUp === 'production' ? 'prod' : 'preview'), url: capturedUrl, logsUrl: capturedInspect, aliasUrl, final: true }); return }
+            if (capturedUrl) logger.success(`${envTargetUp === 'production' ? 'Production' : 'Preview'}: ${capturedUrl}`)
+            if (aliasUrl) logger.success(`Aliased: ${aliasUrl}`)
+            printDeploySummary({ provider: 'vercel', target: (envTargetUp === 'production' ? 'prod' : 'preview'), url: capturedUrl, logsUrl: capturedInspect })
+            return
+          }
           const p = await loadProvider(prov)
           if (process.env.OPD_SKIP_VALIDATE !== '1') {
             await p.validateAuth(targetCwd)

@@ -63,6 +63,28 @@ Notes:
 - Vercel: prints or tails the Inspect URL and runtime logs.
 - Cloudflare Pages: resolves the latest deployment URL and dashboard Inspect link; `--open` opens the dashboard.
 
+## alias (Vercel)
+Assign a custom domain (alias) to a Vercel deployment.
+
+```
+opd alias vercel --set <domain> --deployment <idOrUrl> [--project <id>] [--org <id>] [--path <dir>] [--json]
+```
+
+Examples:
+
+```bash
+# Alias a specific deployment URL
+opd alias vercel --set mysite.com --deployment https://my-app-abc123.vercel.app --json
+
+# Alias using a deployment id/slug
+opd alias vercel --set mysite.com --deployment my-app-abc123
+```
+
+Notes:
+- Monorepos: the CLI prefers a linked app directory (`apps/*/.vercel/project.json`), then falls back to repo root if linked there.
+- If `--project` or `--org` are provided, the CLI attempts a non-interactive `vercel link` before aliasing.
+- Emits a final JSON summary when `--json` or `--ndjson` is used.
+
 ## promote / rollback (Vercel)
 Promote a preview to production, or rollback production to a previous successful deployment.
 

@@ -75,16 +75,18 @@ export function registerPlanCommand(program: Command): void {
         } else {
           cmdPlan.push(`# unknown provider: ${provider}`)
         }
+        const canonicalProvider: string = provider === 'github' ? 'github-pages' : (provider === 'cloudflare' ? 'cloudflare-pages' : provider)
         const plan = {
           ok: true,
           action: 'plan' as const,
-          provider,
+          provider: canonicalProvider,
           capabilities: caps,
           target: envTarget,
           cwd: targetCwd,
           framework,
           publishDir,
           cmdPlan,
+          hints: [] as string[],
           final: true
         }
         logger.jsonPrint(plan)

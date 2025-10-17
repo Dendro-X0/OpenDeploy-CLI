@@ -13,8 +13,13 @@ export async function loadProvider(id: string): Promise<Provider> {
   }
   // Built-in providers
   if (normalized === 'vercel') {
-    const mod = await import('./providers/vercel')
-    return new mod.VercelProvider()
+    try {
+      const mod = await import('./providers/vercel-vnext-adapter')
+      return new mod.VercelVNextAdapter()
+    } catch {
+      const legacy = await import('./providers/vercel')
+      return new legacy.VercelProvider()
+    }
   }
   if (normalized === 'netlify') {
     // Netlify is no longer supported by OpenDeploy CLI.
@@ -24,12 +29,24 @@ export async function loadProvider(id: string): Promise<Provider> {
     throw new Error('Netlify is not supported by OpenDeploy. Please use the official Netlify CLI (https://github.com/netlify/cli).')
   }
   if (normalized === 'cloudflare' || normalized === 'cloudflare-pages') {
-    const mod = await import('./providers/cloudflare-pages')
-    return new mod.CloudflarePagesProvider()
+    try {
+      const mod = await import('./providers/cloudflare-pages-vnext-adapter')
+      return new mod.CloudflarePagesVNextAdapter()
+    } catch {
+      const legacy = await import('./providers/cloudflare-pages')
+      return new legacy.CloudflarePagesProvider()
+    }
   }
   if (normalized === 'github' || normalized === 'github-pages') {
-    const mod = await import('./providers/github-pages')
-    return new mod.GithubPagesProvider()
+    // Use the vNext adapter that wraps @opendeploy/provider-github-pages
+    try {
+      const mod = await import('./providers/github-pages-vnext-adapter')
+      return new mod.GithubPagesVNextAdapter()
+    } catch {
+      // Fallback to legacy internal provider
+      const legacy = await import('./providers/github-pages')
+      return new legacy.GithubPagesProvider()
+    }
   }
   // Future: dynamic import from @opendeploy/provider-<id>
   try {

@@ -74,7 +74,8 @@ export function registerDeployCommand(program: Command): void {
           // Dry-run summary (no external side effects)
           if (opts.dryRun === true) {
             if (jsonMode) {
-              const payload = { provider, target: (opts.env === 'prod' ? 'prod' : 'preview'), mode: 'dry-run', final: true }
+              const canonicalProvider: string = provider === 'github' ? 'github-pages' : (provider === 'cloudflare' ? 'cloudflare-pages' : provider)
+              const payload = { provider: canonicalProvider, target: (opts.env === 'prod' ? 'prod' : 'preview'), mode: 'dry-run', hints: [] as string[], final: true }
               logger.jsonPrint(payload)
               try { /* eslint-disable-next-line no-console */ console.log(JSON.stringify(payload)) } catch { /* ignore */ }
               return
@@ -118,13 +119,14 @@ export function registerDeployCommand(program: Command): void {
           const buildRes = await p.build({ cwd: targetCwd, framework: frameworkHint, envTarget, publishDirHint, noBuild: false })
           const deployRes = await p.deploy({ cwd: targetCwd, envTarget, project: linked, artifactDir: buildRes.artifactDir, alias: opts.alias })
           const durationMs: number = Date.now() - t0
+          const canonicalProvider: string = provider === 'github' ? 'github-pages' : (provider === 'cloudflare' ? 'cloudflare-pages' : provider)
           if (jsonMode && !deployRes.ok) {
             const message: string = deployRes.message || 'Deploy failed'
-            logger.jsonPrint({ ok: false, action: 'deploy' as const, provider, target: (opts.env === 'prod' ? 'prod' : 'preview'), url: deployRes.url, logsUrl: deployRes.logsUrl, projectId: linked.projectId ?? opts.project, durationMs, message, final: true })
+            logger.jsonPrint({ ok: false, action: 'deploy' as const, provider: canonicalProvider, target: (opts.env === 'prod' ? 'prod' : 'preview'), url: deployRes.url, logsUrl: deployRes.logsUrl, projectId: linked.projectId ?? opts.project, durationMs, hints: [] as string[], message, final: true })
             return
           }
           if (jsonMode) {
-            logger.jsonPrint({ ok: true, action: 'deploy' as const, provider, target: (opts.env === 'prod' ? 'prod' : 'preview'), url: deployRes.url, logsUrl: deployRes.logsUrl, projectId: linked.projectId ?? opts.project, durationMs, final: true })
+            logger.jsonPrint({ ok: true, action: 'deploy' as const, provider: canonicalProvider, target: (opts.env === 'prod' ? 'prod' : 'preview'), url: deployRes.url, logsUrl: deployRes.logsUrl, projectId: linked.projectId ?? opts.project, durationMs, hints: [] as string[], final: true })
             return
           }
           if (deployRes.ok) {
@@ -301,7 +303,8 @@ export function registerDeployCommand(program: Command): void {
         const info = mapProviderError(provider, raw)
         // Emit machine-readable error if JSON/NDJSON requested
         if (process.env.OPD_JSON === '1' || process.env.OPD_NDJSON === '1') {
-          logger.json({ ok: false, command: 'deploy', provider, target: opts.env ?? 'preview', path: opts.path, code: info.code, message: info.message, remedy: info.remedy, error: raw, final: true })
+          const canonicalProvider: string = provider === 'github' ? 'github-pages' : (provider === 'cloudflare' ? 'cloudflare-pages' : provider)
+          logger.json({ ok: false, command: 'deploy', provider: canonicalProvider, target: opts.env ?? 'preview', path: opts.path, code: info.code, message: info.message, remedy: info.remedy, error: raw, final: true })
         }
         logger.error(`${info.message} (${info.code})`)
         if (info.remedy) logger.info(`Try: ${info.remedy}`)
@@ -349,8 +352,11 @@ export function registerDeployCommand(program: Command): void {
           const stepTimeoutV = Number.isFinite(Number(process.env.OPD_TIMEOUT_MS)) ? Number(process.env.OPD_TIMEOUT_MS) : 120_000
           const wranglerPath = join(targetCwd, 'wrangler.toml')
           let projectName: string | undefined
+          const hints: string[] = []
+          let hadWranglerToml: boolean = false
           try {
             if (await fsx.exists(wranglerPath)) {
+              hadWranglerToml = true
               const raw = await (await import('node:fs/promises')).readFile(wranglerPath, 'utf8')
               const m = raw.match(/\bname\s*=\s*"([^"]+)"/)
               if (m && m[1]) projectName = m[1]
@@ -359,9 +365,11 @@ export function registerDeployCommand(program: Command): void {
           if (!projectName) {
             const base = targetCwd.replace(/\\/g,'/').split('/').filter(Boolean).pop() || 'site'
             projectName = base.toLowerCase().replace(/[^a-z0-9-]/g,'-').replace(/--+/g,'-').replace(/^-+|-+$/g,'')
+            if (!hadWranglerToml) hints.push('Add wrangler.toml with name="<project>" or pass --path to point to your Pages app')
           }
           let depUrlCf: string | undefined
           let inspectUrlCf: string | undefined
+          let accountId: string | undefined
           try {
             const ls = await runWithRetry({ cmd: `wrangler pages deployments list --project-name ${projectName} --json`, cwd: targetCwd }, { timeoutMs: stepTimeoutV })
             if (ls.ok) {
@@ -369,7 +377,6 @@ export function registerDeployCommand(program: Command): void {
                 const arr = JSON.parse(ls.stdout) as Array<{ url?: string; id?: string; is_current?: boolean }>
                 const chosen = Array.isArray(arr) && arr.length > 0 ? (arr.find(d => (d as any).is_current === true) || arr[0]) : undefined
                 if (chosen?.url && typeof chosen.url === 'string') depUrlCf = chosen.url
-                let accountId: string | undefined
                 try {
                   const who = await runWithRetry({ cmd: 'wrangler whoami', cwd: targetCwd }, { timeoutMs: 60_000 })
                   if (who.ok) {
@@ -384,13 +391,17 @@ export function registerDeployCommand(program: Command): void {
               } catch { /* ignore parse */ }
             }
           } catch { /* ignore */ }
+          if (!accountId) hints.push('Run: wrangler login')
           if (opts.json === true || isNd) {
-            logger.json({ ok: true, action: 'logs', provider: 'cloudflare', env: opts.env ?? 'prod', url: depUrlCf, inspectUrl: inspectUrlCf, project: projectName, final: true })
+            logger.json({ ok: Boolean(depUrlCf || inspectUrlCf), action: 'logs', provider: 'cloudflare', env: opts.env ?? 'prod', url: depUrlCf, inspectUrl: inspectUrlCf, project: projectName, hints, final: true })
             return
           }
           if (inspectUrlCf) logger.success(`Inspect: ${inspectUrlCf}`)
           if (depUrlCf) logger.success(`URL: ${depUrlCf}`)
-          if (!inspectUrlCf && !depUrlCf) logger.info('Could not resolve Cloudflare deployment info. Ensure wrangler and project are configured.')
+          if (!inspectUrlCf && !depUrlCf) {
+            logger.info('Could not resolve Cloudflare deployment info.')
+            for (const h of hints) logger.info(`Hint: ${h}`)
+          }
           if (opts.open === true && inspectUrlCf) {
             const opener: string = process.platform === 'win32' ? `start "" "${inspectUrlCf}"` : process.platform === 'darwin' ? `open "${inspectUrlCf}"` : `xdg-open "${inspectUrlCf}"`
             void proc.run({ cmd: opener, cwd: targetCwd })
@@ -454,18 +465,25 @@ export function registerDeployCommand(program: Command): void {
             const ctrl = proc.spawnStream({ cmd, cwd: runCwd })
             await ctrl.done
             if (spV) spV.succeed('Vercel: logs end')
-            if (isNdjsonV) logger.json({ event: 'logs:end', ok: true, final: true })
+            if (isNdjsonV) logger.json({ event: 'logs:end', ok: true })
+            if (opts.json === true || isNdjsonV) {
+              logger.json({ ok: true, action: 'logs', provider: 'vercel', env: opts.env ?? 'prod', url: depUrl, inspectUrl, follow: true, final: true })
+            }
             process.exitCode = 0
           } catch (e) {
             if (spV) spV.fail('Vercel: logs error')
-            if (isNdjsonV) logger.json({ event: 'logs:end', ok: false, error: String(e instanceof Error ? e.message : e), final: true })
+            const errMsg = String(e instanceof Error ? e.message : e)
+            if (isNdjsonV) logger.json({ event: 'logs:end', ok: false, error: errMsg })
+            if (opts.json === true || isNdjsonV) {
+              logger.json({ ok: false, action: 'logs', provider: 'vercel', env: opts.env ?? 'prod', url: depUrl, inspectUrl, follow: true, message: errMsg, final: true })
+            }
             process.exitCode = 1
           }
           return
         }
         // Non-follow: print or JSON/NDJSON emit
         if (opts.json === true || isNdjsonV) {
-          logger.json({ ok: true, command: 'logs', provider: 'vercel', env: opts.env ?? 'prod', url: depUrl, inspectUrl, project: opts.project, org: opts.org, final: true })
+          logger.json({ ok: true, action: 'logs', provider: 'vercel', env: opts.env ?? 'prod', url: depUrl, inspectUrl, project: opts.project, org: opts.org, final: true })
         } else {
           if (inspectUrl) logger.success(`Inspect: ${inspectUrl}`)
           else logger.info('Inspect information printed above.')
@@ -478,7 +496,7 @@ export function registerDeployCommand(program: Command): void {
         const raw: string = err instanceof Error ? err.message : String(err)
         const info = mapProviderError(provider, raw)
         if (process.env.OPD_JSON === '1' || process.env.OPD_NDJSON === '1') {
-          logger.json({ ok: false, command: 'logs', provider, code: info.code, message: info.message, remedy: info.remedy, error: raw, final: true })
+          logger.json({ ok: false, action: 'logs', provider, code: info.code, message: info.message, remedy: info.remedy, error: raw, final: true })
         }
         logger.error(`${info.message} (${info.code})`)
         if (info.remedy) logger.info(`Try: ${info.remedy}`)
@@ -494,7 +512,8 @@ export function registerDeployCommand(program: Command): void {
     .option('--project <id>', 'Provider project/site ID')
     .option('--org <id>', 'Provider org/team ID (vercel)')
     .option('--path <dir>', 'Path to app directory (for monorepos)')
-    .action(async (provider: string, opts: { project?: string; org?: string; path?: string }): Promise<void> => {
+    .option('--json', 'Emit JSON summary with the chosen URL')
+    .action(async (provider: string, opts: { project?: string; org?: string; path?: string; json?: boolean }): Promise<void> => {
       const rootCwd: string = process.cwd()
       const targetCwd: string = opts.path ? join(rootCwd, opts.path) : rootCwd
       try {
@@ -511,9 +530,16 @@ export function registerDeployCommand(program: Command): void {
             if (opts.org) linkFlags.push(`--org ${opts.org}`)
             await proc.run({ cmd: `vercel link ${linkFlags.join(' ')}`, cwd: runCwd })
           }
-          const plugin = await loadProvider('vercel')
-          await plugin.open({ projectId: opts.project, orgId: opts.org })
-          logger.success('Opened Vercel dashboard')
+          let url: string | undefined
+          try {
+            const plugin = await loadProvider('vercel')
+            url = await (plugin.open({ projectId: opts.project, orgId: opts.org }) as unknown as Promise<string | undefined>)
+          } catch { url = undefined }
+          // Fallback: generic dashboard
+          const targetUrl: string = url || 'https://vercel.com/dashboard'
+          if (opts.json) { logger.jsonPrint({ ok: true, action: 'open' as const, provider: 'vercel' as const, url: targetUrl, final: true }); return }
+          void (await import('../utils/platform-open')).platformOpen(targetUrl)
+          logger.success(`Opened Vercel dashboard: ${targetUrl}`)
           return
         }
         if (provider === 'cloudflare') {
@@ -543,8 +569,8 @@ export function registerDeployCommand(program: Command): void {
           } catch { /* ignore */ }
           if (!accountId) { logger.error('Could not determine Cloudflare account id (run: wrangler login)'); process.exitCode = 1; return }
           const dashUrl = `https://dash.cloudflare.com/${accountId}/pages/view/${projectName}`
-          const opener: string = process.platform === 'win32' ? `start "" "${dashUrl}"` : process.platform === 'darwin' ? `open "${dashUrl}"` : `xdg-open "${dashUrl}"`
-          void proc.run({ cmd: opener, cwd: targetCwd })
+          if (opts.json) { logger.jsonPrint({ ok: true, action: 'open' as const, provider: 'cloudflare' as const, url: dashUrl, final: true }); return }
+          void (await import('../utils/platform-open')).platformOpen(dashUrl)
           logger.success(`Opened Cloudflare Pages dashboard: ${dashUrl}`)
           return
         }
@@ -568,10 +594,10 @@ export function registerDeployCommand(program: Command): void {
             } catch { /* ignore */ }
           }
           if (!owner || !repo) { logger.error('Could not infer GitHub repository (set GITHUB_REPOSITORY or ensure origin remote).'); process.exitCode = 1; return }
-          const siteUrl: string = repo.toLowerCase() === `${owner.toLowerCase()}.github.io` ? `https://${owner}.github.io/` : `https://${owner}.github.io/${repo}/`
-          const opener: string = process.platform === 'win32' ? `start "" "${siteUrl}"` : process.platform === 'darwin' ? `open "${siteUrl}"` : `xdg-open "${siteUrl}"`
-          void proc.run({ cmd: opener, cwd: targetCwd })
-          logger.success(`Opened: ${siteUrl}`)
+          const url: string = `https://github.com/${owner}/${repo}/actions`
+          if (opts.json) { logger.jsonPrint({ ok: true, action: 'open' as const, provider: 'github' as const, url, final: true }); return }
+          void (await import('../utils/platform-open')).platformOpen(url)
+          logger.success(`Opened GitHub: ${url}`)
           return
         }
         // Unknown provider
@@ -579,14 +605,63 @@ export function registerDeployCommand(program: Command): void {
         process.exitCode = 1
       } catch (err) {
         const raw: string = err instanceof Error ? err.message : String(err)
-        const info = mapProviderError(provider, raw)
         if (process.env.OPD_JSON === '1' || process.env.OPD_NDJSON === '1') {
-          logger.json({ ok: false, command: 'logs', provider, code: info.code, message: info.message, remedy: info.remedy, error: raw, final: true })
+          logger.json({ ok: false, action: 'open', provider, message: raw, final: true })
         }
-        logger.error(`${info.message} (${info.code})`)
-        if (info.remedy) logger.info(`Try: ${info.remedy}`)
+        logger.error(raw)
         process.exitCode = 1
       }
     })
-    
+  
+}
+
+// Vercel alias management: set alias for a deployment
+export function registerAliasCommand(program: Command): void {
+  program
+    .command('alias')
+    .description('Manage provider aliases (currently: vercel)')
+    .argument('<provider>', 'Target provider: vercel')
+    .option('--set <domain>', 'Assign alias domain to the deployment (vercel)')
+    .option('--deployment <idOrUrl>', 'Deployment id or URL to alias (vercel)')
+    .option('--project <id>', 'Vercel project ID or name')
+    .option('--org <id>', 'Vercel org/team ID or slug')
+    .option('--path <dir>', 'Path to app directory (for monorepos)')
+    .option('--json', 'Output JSON result')
+    .action(async (provider: string, opts: { set?: string; deployment?: string; project?: string; org?: string; path?: string; json?: boolean }): Promise<void> => {
+      const rootCwd: string = process.cwd()
+      const targetCwd: string = opts.path ? join(rootCwd, opts.path) : rootCwd
+      try {
+        if (opts.json === true) logger.setJsonOnly(true)
+        const ndjsonOn: boolean = process.env.OPD_NDJSON === '1'
+        if (ndjsonOn) logger.setNdjson(true)
+        if (opts.json === true || ndjsonOn) process.env.OPD_FORCE_CI = '1'
+        if (provider !== 'vercel') { logger.error(`Unknown provider: ${provider}`); process.exitCode = 1; return }
+        const aliasDomain: string | undefined = opts.set
+        const idOrUrl: string | undefined = opts.deployment
+        if (!aliasDomain || !idOrUrl) { logger.error('Missing --set <domain> or --deployment <idOrUrl>'); process.exitCode = 1; return }
+        // Choose cwd similar to deploy for vercel
+        const targetLink: string = join(targetCwd, '.vercel', 'project.json')
+        const rootLink: string = join(rootCwd, '.vercel', 'project.json')
+        const targetIsLinked: boolean = await fsx.exists(targetLink)
+        const rootIsLinked: boolean = await fsx.exists(rootLink)
+        const runCwd: string = targetIsLinked ? targetCwd : (rootIsLinked && !targetIsLinked ? rootCwd : targetCwd)
+        if (runCwd === targetCwd && (opts.project || opts.org)) {
+          const linkFlags: string[] = ['--yes']
+          if (opts.project) linkFlags.push(`--project ${opts.project}`)
+          if (opts.org) linkFlags.push(`--org ${opts.org}`)
+          await proc.run({ cmd: `vercel link ${linkFlags.join(' ')}`, cwd: runCwd })
+        }
+        const cmd: string = `vercel alias set ${idOrUrl} ${aliasDomain}`
+        const res = await runWithRetry({ cmd, cwd: runCwd }, { timeoutMs: 120_000 })
+        if (!res.ok) throw new Error(res.stderr.trim() || res.stdout.trim() || 'Alias command failed')
+        if (opts.json === true || ndjsonOn) { logger.json({ ok: true, action: 'alias', provider: 'vercel', domain: aliasDomain, deployment: idOrUrl, final: true }); return }
+        logger.success(`Alias set: ${aliasDomain} → ${idOrUrl}`)
+      } catch (err) {
+        const raw: string = err instanceof Error ? err.message : String(err)
+        if (process.env.OPD_JSON === '1' || process.env.OPD_NDJSON === '1') { logger.json({ ok: false, action: 'alias', provider, message: raw, final: true }) }
+        logger.error(raw)
+        process.exitCode = 1
+      }
+    })
+
 }
