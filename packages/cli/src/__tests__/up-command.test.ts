@@ -30,8 +30,8 @@ vi.mock('../utils/process', async (orig) => {
   return {
     ...real,
     runWithRetry: vi.fn(async (args: { cmd: string }) => {
-      if (args.cmd.startsWith('netlify deploy')) {
-        return { ok: true, exitCode: 0, stdout: 'Website URL: https://example.netlify.app', stderr: '' }
+      if (args.cmd.startsWith('vercel deploy')) {
+        return { ok: true, exitCode: 0, stdout: 'Inspect: https://vercel.com/acme/project', stderr: '' }
       }
       return { ok: true, exitCode: 0, stdout: '', stderr: '' }
     }),
@@ -44,7 +44,7 @@ vi.mock('../utils/process', async (orig) => {
       spawnStream: vi.fn((args: { cmd: string; cwd?: string; onStdout?: (l: string) => void; onStderr?: (l: string) => void }) => {
         calls.push(args.cmd)
         // Simulate some minimal provider output
-        args.onStdout?.('Deploying to Netlify\n')
+        args.onStdout?.('Deploying to Vercel\n')
         return { done: Promise.resolve({ ok: true }) }
       })
     }
@@ -61,7 +61,7 @@ describe('up command', () => {
     const orig = process.env.OPD_SYNC_ENV
     try {
       delete process.env.OPD_SYNC_ENV
-      await program.parseAsync(['node','test','up','netlify','--env','prod','--project','site_123','--json','--dry-run'])
+      await program.parseAsync(['node','test','up','vercel','--env','prod','--project','proj_123','--json','--dry-run'])
       // OPD_SYNC_ENV should be set during delegation
       expect(process.env.OPD_SYNC_ENV).toBe('1')
     } finally {

@@ -53,7 +53,7 @@ describe('env diff --ci strict exit codes', () => {
       // local .env with a key not present remotely
       await writeFile(join(dir, '.env'), 'ONLY_LOCAL=1\n', 'utf8')
       try {
-        await envDiff({ provider: 'netlify', cwd: dir, file: '.env', env: 'preview', ci: true })
+        await envDiff({ provider: 'vercel', cwd: dir, file: '.env', env: 'preview', ci: true })
         expect(process.exitCode).toBe(1)
       } finally {
         process.exitCode = 0
@@ -65,7 +65,7 @@ describe('env diff --ci strict exit codes', () => {
     await withTemp(async (dir) => {
       await writeFile(join(dir, '.env'), 'A=1\n', 'utf8')
       try {
-        await envDiff({ provider: 'netlify', cwd: dir, file: '.env', env: 'preview', ci: true, failOnAdd: true })
+        await envDiff({ provider: 'vercel', cwd: dir, file: '.env', env: 'preview', ci: true, failOnAdd: true })
         expect(process.exitCode).toBe(1)
       } finally {
         process.exitCode = 0

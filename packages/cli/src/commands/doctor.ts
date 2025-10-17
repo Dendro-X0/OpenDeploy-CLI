@@ -169,17 +169,6 @@ async function checkVercelAuth(printCmd?: boolean): Promise<CheckResult> {
   return { name: 'vercel auth', ok: false, message: 'not logged in (run: vercel login)' }
 }
 
-async function checkNetlifyAuth(printCmd?: boolean): Promise<CheckResult> {
-  const candidates: readonly string[] = process.platform === 'win32' ? ['netlify', 'netlify.cmd'] : ['netlify']
-  for (const c of candidates) {
-    const cmd = `${c} status`
-    if (printCmd) logger.info(`$ ${cmd}`)
-    const out = await runWithRetry({ cmd })
-    if (out.ok && out.stdout.toLowerCase().includes('logged in')) return { name: 'netlify auth', ok: true, message: out.stdout.trim() }
-  }
-  return { name: 'netlify auth', ok: false, message: 'not logged in (run: netlify login)' }
-}
-
 async function checkWranglerAuth(printCmd?: boolean): Promise<CheckResult> {
   const candidates: readonly string[] = process.platform === 'win32' ? ['wrangler', 'wrangler.cmd'] : ['wrangler']
   for (const c of candidates) {
@@ -235,7 +224,6 @@ export function registerDoctorCommand(program: Command): void {
     .option('--path <dir>', 'Working directory to check/fix (monorepos)')
     .option('--project <id>', 'Vercel project ID (for linking)')
     .option('--org <id>', 'Vercel org/team ID (for linking)')
-    .option('--site <siteId>', 'Netlify site ID (for linking)')
     .option('--print-cmd', 'Print underlying provider commands that will be executed')
     .option('--strict', 'Exit non-zero when any checks fail')
     .action(async (opts: DoctorOptions): Promise<void> => {
@@ -258,9 +246,6 @@ export function registerDoctorCommand(program: Command): void {
         const vercelCandidates: readonly string[] = process.platform === 'win32' ? ['vercel', 'vercel.cmd'] : ['vercel']
         const vercelCli = await checkCmdAny(vercelCandidates, 'vercel', opts.printCmd)
         results.push(vercelCli)
-        const netlifyCandidates: readonly string[] = process.platform === 'win32' ? ['netlify', 'netlify.cmd'] : ['netlify']
-        const netlifyCli = await checkCmdAny(netlifyCandidates, 'netlify', opts.printCmd)
-        results.push(netlifyCli)
         // Cloudflare Pages CLI (wrangler)
         const wranglerCandidates: readonly string[] = process.platform === 'win32' ? ['wrangler', 'wrangler.cmd'] : ['wrangler']
         const wranglerCli = await checkCmdAny(wranglerCandidates, 'wrangler', opts.printCmd)
@@ -281,8 +266,6 @@ export function registerDoctorCommand(program: Command): void {
         results.push(psqlCli)
         const vercelAuth = await checkVercelAuth(opts.printCmd)
         results.push(vercelAuth)
-        const netlifyAuth = await checkNetlifyAuth(opts.printCmd)
-        results.push(netlifyAuth)
         const wranglerAuth = await checkWranglerAuth(opts.printCmd)
         results.push(wranglerAuth)
         // Monorepo and workspace sanity
@@ -319,15 +302,6 @@ export function registerDoctorCommand(program: Command): void {
               if (!res.ok) suggestions.push('vercel link --yes --project <id> [--org <id>]')
               else results.push({ name: 'vercel link (fix)', ok: true, message: 'linked' })
             }
-            // Netlify link fix
-            const netlifyLinked = await fsx.exists(join(cwd, '.netlify', 'state.json'))
-            if (!netlifyLinked && opts.site) {
-              const linkNetlify = `netlify link --id ${opts.site}`
-              if (opts.printCmd) logger.info(`$ ${linkNetlify}`)
-              const res = await runWithRetry({ cmd: linkNetlify, cwd })
-              if (!res.ok) suggestions.push('netlify link --id <siteId>')
-              else results.push({ name: 'netlify link (fix)', ok: true, message: 'linked' })
-            }
           } catch { /* ignore */ }
         }
           // Vercel link file (optional but recommended for CLI ops)
@@ -337,10 +311,7 @@ export function registerDoctorCommand(program: Command): void {
           // Root vercel.json is optional; helpful when deploying from monorepo root
           const hasRootVercel = await fsx.exists(join(cwd, 'vercel.json'))
           results.push({ name: 'root vercel.json (optional)', ok: true, message: hasRootVercel ? 'present' : 'absent (ok). Prefer Vercel Git + Root Directory; add if CLI root deploys are needed.' })
-          // Netlify link file (optional but recommended for CLI ops)
-          const netlifyState = join(cwd, '.netlify', 'state.json')
-          const netlifyLinked = await fsx.exists(netlifyState)
-          results.push({ name: 'netlify link (.netlify/state.json)', ok: netlifyLinked, message: netlifyLinked ? 'linked' : 'not linked (run: netlify link --id <siteId>)' })
+          // Netlify support removed
 
           // apps/* linked scan to prevent monorepo path issues
           const appsDir = join(cwd, 'apps')
@@ -356,8 +327,7 @@ export function registerDoctorCommand(program: Command): void {
               const reports: string[] = []
               for (const app of appDirs) {
                 const v = await fsx.exists(join(appsDir, app, '.vercel', 'project.json'))
-                const n = await fsx.exists(join(appsDir, app, '.netlify', 'state.json'))
-                if (v || n) reports.push(`${app}: ${v ? 'vercel' : ''}${v && n ? ',' : ''}${n ? 'netlify' : ''}`)
+                if (v) reports.push(`${app}: vercel`)
               }
               if (reports.length > 0) {
                 results.push({ name: 'linked apps (apps/*)', ok: true, message: reports.join('; ') })
@@ -372,10 +342,6 @@ export function registerDoctorCommand(program: Command): void {
                 const vercelRunCwd = targetVercelLinked ? target : (rootVercelLinked && !targetVercelLinked ? cwd : target)
                 const relVercel = vercelRunCwd.startsWith(cwd) ? vercelRunCwd.slice(cwd.length + 1) || '.' : vercelRunCwd
                 results.push({ name: 'vercel chosen cwd (path=apps/web)', ok: true, message: relVercel })
-                // Netlify deploy runs from target path; report that directly
-                const relNetlify = target.startsWith(cwd) ? target.slice(cwd.length + 1) : target
-                results.push({ name: 'netlify chosen cwd (path=apps/web)', ok: true, message: relNetlify })
-
                 // Suggest commands (deploy/prod) based on discovered links
                 // Vercel project id (if present)
                 let vercelProjId: string | undefined
@@ -385,14 +351,6 @@ export function registerDoctorCommand(program: Command): void {
                 } catch { /* ignore */ }
                 const vcCmd = `opendeploy deploy vercel --env prod --path ${relVercel}${vercelProjId ? ` --project ${vercelProjId}` : ''}`
                 suggestions.push(vcCmd)
-                // Netlify site id (if present)
-                let nlSiteId: string | undefined
-                try {
-                  const ns = await fsx.readJson<{ siteId?: string }>(join(target, '.netlify', 'state.json'))
-                  if (ns && typeof ns.siteId === 'string') nlSiteId = ns.siteId
-                } catch { /* ignore */ }
-                const nlCmd = `opendeploy deploy netlify --env prod --path ${relNetlify}${nlSiteId ? ` --project ${nlSiteId}` : ''}`
-                suggestions.push(nlCmd)
               }
             } catch { /* ignore */ }
           }

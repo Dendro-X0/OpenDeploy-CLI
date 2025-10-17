@@ -19,7 +19,7 @@ export interface EnvSummary {
 }
 
 export interface DeployPlan {
-  readonly provider: "vercel" | "netlify" | "cloudflare" | "github"
+  readonly provider: "vercel" | "cloudflare" | "github"
   readonly target: DeployTarget
   readonly cwd: string
   readonly steps: readonly DeployStep[]

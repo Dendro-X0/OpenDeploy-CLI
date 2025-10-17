@@ -31,7 +31,7 @@ export async function detectNextApp(args: { readonly cwd: string }): Promise<Det
     monorepo: await detectMonorepo({ cwd: args.cwd }),
     buildCommand: build,
     outputDir: '.next',
-    // Next on Netlify uses a runtime/plugin; publishDir is not strictly required for SSR/hybrid.
+    // SSR/hybrid frameworks may not require a dedicated publishDir value.
     publishDir: undefined,
     renderMode: 'hybrid',
     confidence: 0.95,
