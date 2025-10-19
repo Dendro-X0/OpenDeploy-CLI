@@ -1,6 +1,6 @@
 {
   "name": "opendeploy-cli-docs-site",
-  "version": "1.0.0-beta",
+  "version": "1.2.1",
   "private": true,
   "scripts": {
     "sync:cli-docs": "node scripts/sync-cli-docs.mjs",

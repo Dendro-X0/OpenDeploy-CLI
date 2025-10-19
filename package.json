@@ -4,6 +4,7 @@
   "packageManager": "pnpm@10.16.1",
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
+    "prepare": "husky",
     "dev": "turbo run dev --parallel",
     "build": "turbo run build",
     "test": "turbo run test",
@@ -31,6 +32,7 @@
     "ci:open-failure:cf": "node scripts/ci/open-latest-failure.mjs docs-cloudflare-pages.yml"
   },
   "devDependencies": {
-    "turbo": "^2.5.8"
+    "turbo": "^2.5.8",
+    "husky": "^9.1.6"
   }
 }

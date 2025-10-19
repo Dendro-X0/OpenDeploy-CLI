@@ -18,7 +18,7 @@ JSON summary:
 ```
 
 ## Global Output & CI Flags
-For CI consumers, see also: [Response Shapes (CI)](./response-shapes.md)
+For CI consumers, see also: [Output Contract](/docs/opendeploy/architecture/output-contract), [NDJSON Consumption](/docs/opendeploy/architecture/ndjson-consumption), and [CI Helpers](./ci.md)
 
 ### Schema Validation and Guardrail
 
@@ -110,7 +110,8 @@ opd start [--framework <next|astro|sveltekit|remix|expo>] \
   [--provider <vercel|cloudflare|github>] [--env <prod|preview>] \
   [--path <dir>] [--project <id>] [--org <id>] \
   [--sync-env] [--promote] [--dry-run] [--json] [--ci] [--no-save-defaults] \
-  [--deploy] [--no-build] [--alias <domain>] [--print-cmd]
+  [--deploy] [--alias <domain>] [--print-cmd] \
+  [--build-timeout-ms <ms>] [--build-dry-run]
 ```
 
 Behavior:
@@ -128,17 +129,17 @@ Behavior:
 - With `--json`, prints a final summary.
 - With `--dry-run`, prints `{ ok: true, mode: 'dry-run', cmd, final: true }` and exits before syncing/deploying.
 
-#### Sidecar & experimental flags
+Notes:
+- In NDJSON mode (`--ndjson` or `OPD_NDJSON=1`), the wizard suppresses human UI and emits only NDJSON events and a final summary. This ensures clean machine consumption in CI.
+- Strict plugin version mode: set `OPD_STRICT_PLUGIN_VERSION=1` to fail fast when a stack/provider plugin’s major API version does not match the CLI. An NDJSON `version-mismatch` event is emitted before exit.
 
-You can optionally enable the Go sidecar and experimental provider features:
+#### Sidecar flags
+
+You can optionally enable the Go sidecar:
 
 - `OPD_GO_FORCE=1` — prefer the Go sidecar when present (more reliable process control)
 - `OPD_GO_DISABLE=1` — disable the sidecar and use the Node runner
 - `OPD_PTY=1|0` — force PTY usage on/off; by default, PTY is used in interactive terminals but disabled in CI/JSON modes
-- `OPD_PACKAGE=zip` — pre-package Netlify `publishDir` as a `.zip` and emit an `artifact` event with a checksum
-- `OPD_NETLIFY_DIRECT=1` — attempt a direct Netlify deploy via API (no CLI). Requires `NETLIFY_AUTH_TOKEN` and a known `publishDir` + `--project`
-
-See also: `docs/development/opd-go-protocol.md` and `docs/providers/netlify.md`.
 
 ### Troubleshooting and Logs
 

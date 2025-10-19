@@ -1,6 +1,6 @@
 import { Command } from 'commander'
 import { join } from 'node:path'
-import { writeFile } from 'node:fs/promises'
+import { writeFile, readFile } from 'node:fs/promises'
 import { logger } from '../utils/logger'
 import { confirm } from '../utils/prompt'
 import { detectNextApp } from '../core/detectors/next'
@@ -44,6 +44,18 @@ export function registerInitCommand(program: Command): void {
         const path: string = join(cwd, 'opendeploy.config.json')
         await writeFile(path, JSON.stringify(cfg, null, 2), 'utf8')
         logger.success(`Wrote ${path}`)
+        // Ensure .gitignore contains .opendeploy/ to prevent state files from being committed
+        try {
+          const giPath: string = join(cwd, '.gitignore')
+          let content: string
+          try { content = await readFile(giPath, 'utf8') } catch { content = '' }
+          const needs: boolean = !new RegExp(`(^|\n)\.opendeploy\/\s*(\n|$)`).test(content)
+          if (needs) {
+            const updated: string = content.length > 0 && !content.endsWith('\n') ? `${content}\n.opendeploy/\n` : `${content}.opendeploy/\n`
+            await writeFile(giPath, updated, 'utf8')
+            logger.success('Updated .gitignore to exclude .opendeploy/')
+          }
+        } catch { /* ignore gitignore errors */ }
         logger.note('Tip: run "opendeploy deploy <provider> --sync-env --env prod" for single-command prod deploy')
       } catch (err) {
         const message: string = err instanceof Error ? err.message : String(err)

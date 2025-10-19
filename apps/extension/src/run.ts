@@ -3,6 +3,7 @@ import * as vscode from 'vscode'
 import { Settings } from './config'
 import { getOutput, printJsonSummary } from './output'
 import { postSummary } from './summary'
+import { postPanelState } from './panel'
 
 export interface RunArgs {
   readonly args: readonly string[]
@@ -64,6 +65,26 @@ export async function runOpenDeploy(opts: RunArgs): Promise<RunnerResult> {
               checks,
               suggestions
             })
+            // Mirror Security Health in panel if present
+            try {
+              const anyObj: any = obj
+              if (anyObj && anyObj.action === 'doctor' && anyObj.event === 'security-health') {
+                const hints: string[] = []
+                if (anyObj.cacheDisabled) hints.push('Cache: disabled')
+                if (anyObj.state === 'os') hints.push('State: OS config')
+                if (anyObj.gitignoreHasOpd !== true) hints.push('Add .opendeploy/ to .gitignore')
+                if (anyObj.cacheDirRisk === true) hints.push('OPD_CACHE_DIR inside project (risk)')
+                if (anyObj.legacyCachePresent === true) hints.push('Legacy .opendeploy/cache.json present')
+                if (hints.length) {
+                  postSummary({ ok: anyObj.ok !== false, provider: undefined, phase: 'doctor', app: undefined, url: undefined, logsUrl: undefined, message: 'Security Health', action: 'doctor', checks: undefined, suggestions: hints })
+                  postPanelState({ kind: 'hints', hints })
+                }
+              }
+              if (anyObj && anyObj.action === 'doctor' && anyObj.event === 'security-guide' && Array.isArray(anyObj.steps)) {
+                const text = String(anyObj.steps.join(' | '))
+                getOutput().appendLine('[security-guide] ' + text)
+              }
+            } catch { /* ignore */ }
           } catch { /* ignore */ }
         }
         // Detect login hints

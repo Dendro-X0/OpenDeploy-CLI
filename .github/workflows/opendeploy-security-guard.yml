@@ -1,0 +1,77 @@
+name: OpenDeploy Security Guard
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ '**' ]
+
+concurrency:
+  group: security-guard-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    name: Doctor + Scan (strict)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Enable Corepack and pin pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9 --activate
+
+      - name: Resolve pnpm store path
+        id: pnpm-cache
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path)" >> $GITHUB_OUTPUT
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: pnpm store status
+        run: pnpm store path && pnpm -v
+
+      - name: Cache CLI dist
+        id: cli-dist
+        uses: actions/cache@v4
+        with:
+          path: packages/cli/dist
+          key: ${{ runner.os }}-cli-dist-${{ hashFiles('packages/cli/src/**', 'packages/cli/tsconfig.json', 'packages/cli/tsup.config.ts', 'packages/cli/package.json') }}
+
+      - name: Build CLI
+        if: steps.cli-dist.outputs.cache-hit != 'true'
+        run: pnpm -C packages/cli build
+
+      - name: Doctor (strict)
+        env:
+          OPD_FORCE_CI: '1'
+        run: node packages/cli/dist/index.js doctor --json --ci --strict
+
+      - name: Scan (strict)
+        env:
+          OPD_FORCE_CI: '1'
+        run: node packages/cli/dist/index.js scan --json --strict

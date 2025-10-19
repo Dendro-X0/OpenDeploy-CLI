@@ -6,10 +6,8 @@ const logs: string[] = []
 const origLog = console.log
 
 let failDeploy = false
-let failNetlifyLink = false
 let failVercelWhoami = false
 let failVercelLogin = false
-let failNetlifyLogin = false
 
 vi.mock('../utils/process', async (orig) => {
   const real = await orig<any>()
@@ -21,11 +19,6 @@ vi.mock('../utils/process', async (orig) => {
         // Simulate provider auth and login commands
         if (args.cmd.startsWith('vercel whoami')) return failVercelWhoami ? { ok: false, exitCode: 1, stdout: '', stderr: 'not logged in' } : { ok: true, exitCode: 0, stdout: 'you@vercel', stderr: '' }
         if (args.cmd.startsWith('vercel login')) return failVercelLogin ? { ok: false, exitCode: 1, stdout: '', stderr: 'login failed' } : { ok: true, exitCode: 0, stdout: 'ok', stderr: '' }
-        if (args.cmd.startsWith('netlify api getSite')) return { ok: true, exitCode: 0, stdout: '{"name":"mysite","admin_url":"https://app.netlify.com/sites/mysite"}', stderr: '' }
-        if (args.cmd.startsWith('netlify --version')) return { ok: true, exitCode: 0, stdout: 'netlify-cli/0.0.0', stderr: '' }
-        if (args.cmd.startsWith('netlify status')) return { ok: false, exitCode: 1, stdout: 'Not logged in', stderr: '' }
-        if (args.cmd.startsWith('netlify login')) return failNetlifyLogin ? { ok: false, exitCode: 1, stdout: '', stderr: 'login failed' } : { ok: true, exitCode: 0, stdout: 'ok', stderr: '' }
-        if (args.cmd.startsWith('netlify link')) return failNetlifyLink ? { ok: false, exitCode: 1, stdout: '', stderr: 'link failed' } : { ok: true, exitCode: 0, stdout: 'linked', stderr: '' }
         return { ok: true, exitCode: 0, stdout: '', stderr: '' }
       }),
       spawnStream: vi.fn((args: any) => {
@@ -60,7 +53,7 @@ vi.mock('@clack/prompts', () => ({
   note: () => {}
 }))
 
-// Mock fsx.exists to force Netlify link path by pretending `.netlify/state.json` is absent
+// Mock fsx.exists to avoid touching real filesystem
 vi.mock('../utils/fs', async (orig) => {
   const real = await orig<any>()
   return {
@@ -68,7 +61,6 @@ vi.mock('../utils/fs', async (orig) => {
     fsx: {
       ...(real.fsx ?? {}),
       exists: vi.fn(async (p: string) => {
-        try { if (String(p).endsWith('.netlify/state.json')) return false } catch {}
         return false
       }),
       readJson: vi.fn(async () => { throw new Error('not found') })
@@ -95,9 +87,8 @@ vi.mock('../core/detectors/next', () => ({
 }))
 
 // Hoisted flags to control provider auth behavior
-const { mockFailVercelAuth, mockFailNetlifyAuth } = vi.hoisted(() => ({
-  mockFailVercelAuth: { value: false },
-  mockFailNetlifyAuth: { value: false }
+const { mockFailVercelAuth } = vi.hoisted(() => ({
+  mockFailVercelAuth: { value: false }
 }))
 
 // Mock provider loader to inject auth failures deterministically
@@ -106,7 +97,7 @@ vi.mock('../core/provider-system/provider', () => ({
     return {
       id: name,
       getCapabilities: () => ({
-        name: name === 'vercel' ? 'Vercel' : 'Netlify',
+        name: 'Vercel',
         supportsLocalBuild: true,
         supportsRemoteBuild: true,
         supportsStaticDeploy: true,
@@ -122,7 +113,6 @@ vi.mock('../core/provider-system/provider', () => ({
       async detect() { return {} },
       async validateAuth() {
         if (name === 'vercel' && mockFailVercelAuth.value) throw new Error('not logged in')
-        if (name === 'netlify' && mockFailNetlifyAuth.value) throw new Error('not logged in')
         return
       },
       async link(_cwd: string, proj: any) { return proj },
@@ -140,7 +130,7 @@ vi.mock('../core/provider-system/provider', () => ({
 import { runStartWizard } from '../commands/start'
 import { registerUpCommand } from '../commands/up'
 
-beforeEach(() => { logs.length = 0; mockFailVercelAuth.value = false; mockFailNetlifyAuth.value = false; vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => { logs.push(String(args[0] ?? '')); return undefined as any }) })
+beforeEach(() => { logs.length = 0; mockFailVercelAuth.value = false; vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => { logs.push(String(args[0] ?? '')); return undefined as any }) })
 afterEach(() => { (console.log as any) = origLog })
 
 function getLastStartJson(): any {
@@ -165,8 +155,6 @@ describe('start wizard', () => {
     expect(obj).toMatchObject({ ok: true, provider: 'vercel', target: 'preview', mode: 'dry-run', final: true })
   })
 
-  it.skip('performs one-click login when provider not logged in (netlify)', async () => {})
-
   it('emits ok:false JSON summary when deploy fails (vercel)', async () => {
     failDeploy = true
     try {
@@ -189,10 +177,6 @@ describe('start wizard', () => {
     expect(obj).toMatchObject({ ok: false, final: true })
   })
 
-  it.skip('emits ok:false JSON summary when netlify login fails', async () => {})
-
-  it.skip('netlify JSON summary includes ciChecklist and recommend (prepare-only)', async () => {})
-
   it('vercel JSON summary includes ciChecklist (deploy mode)', async () => {
     await runStartWizard({ framework: 'next', provider: 'vercel', env: 'preview', json: true, ci: true, syncEnv: false })
     const obj = getLastStartJson()
@@ -201,10 +185,6 @@ describe('start wizard', () => {
     expect(obj).toHaveProperty('ciChecklist')
     expect(obj.ciChecklist).toHaveProperty('buildCommand')
   })
-
-  it.skip('netlify deploy JSON includes logsUrl (deploy mode)', async () => {})
-
-  it.skip('emits NDJSON logs event for Netlify (prepare-only)', async () => {})
 
   it('emits NDJSON logs event for Vercel (deploy)', async () => {
     const prev = process.env.OPD_NDJSON
@@ -232,6 +212,4 @@ describe('up auto-wizard', () => {
     const obj = getLastStartJson()
     expect(obj).toHaveProperty('final', true)
   })
-
-  it.skip('emits ok:false JSON summary when link fails (netlify)', async () => {})
 })

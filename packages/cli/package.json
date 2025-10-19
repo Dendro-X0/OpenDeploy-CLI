@@ -1,6 +1,6 @@
 {
   "name": "opendeploy",
-  "version": "1.2.0-rc.13",
+  "version": "1.2.1",
   "private": false,
   "type": "module",
   "bin": { "opd": "dist/index.js" },

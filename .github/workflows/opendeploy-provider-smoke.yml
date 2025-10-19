@@ -1,0 +1,107 @@
+name: OpenDeploy Provider Smoke
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ '**' ]
+
+jobs:
+  provider-smoke:
+    name: Provider Smoke — detect + doctor
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        provider: [ vercel, cloudflare, github ]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Enable Corepack and pin pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9 --activate
+
+      - name: Resolve pnpm store path
+        id: pnpm-cache
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path)" >> $GITHUB_OUTPUT
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build CLI
+        run: pnpm -C packages/cli build
+
+      - name: Create tiny example app
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=$(pwd)
+          case "${{ matrix.provider }}" in
+            vercel)
+              APP="$ROOT/example-vercel"
+              mkdir -p "$APP"
+              cat > "$APP/next.config.js" <<'EOF'
+              /** Minimal Next config to trigger detect */
+              module.exports = {
+                reactStrictMode: true,
+              }
+              EOF
+              ;;
+            cloudflare)
+              APP="$ROOT/example-cloudflare"
+              mkdir -p "$APP"
+              cat > "$APP/next.config.js" <<'EOF'
+              /** Minimal Next config to trigger Cloudflare checks */
+              module.exports = {
+                reactStrictMode: true,
+              }
+              EOF
+              cat > "$APP/wrangler.toml" <<'EOF'
+              name = "example-next-on-pages"
+              compatibility_date = "2024-01-01"
+              EOF
+              ;;
+            github)
+              APP="$ROOT/example-github"
+              mkdir -p "$APP"
+              cat > "$APP/next.config.js" <<'EOF'
+              /** Simulate static export for GH Pages */
+              module.exports = {
+                output: 'export',
+              }
+              EOF
+              mkdir -p "$APP/public"
+              echo "hello" > "$APP/public/.nojekyll"
+              ;;
+          esac
+          echo "APP_DIR=$APP" >> $GITHUB_ENV
+
+      - name: Detect (JSON)
+        run: node packages/cli/dist/index.js detect --json --path "$APP_DIR"
+
+      - name: Doctor (JSON, non-strict)
+        env:
+          OPD_FORCE_CI: '1'
+        run: node packages/cli/dist/index.js doctor --json --path "$APP_DIR"

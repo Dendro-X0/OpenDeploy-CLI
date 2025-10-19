@@ -43,6 +43,14 @@ Tips:
 - Use `opd env sync vercel --file .env.local --env preview` to push env vars.
 - In CI, prefer `--json --summary-only --timestamps` or `--gha`.
 
+## GitHub Actions quickstart
+
+Use the ready-to-run workflow in your repo:
+
+- `.github/workflows/quickstart-vercel.yml`
+
+Trigger it from GitHub Actions → Workflows → "Quickstart (Vercel)".
+
 ## Screenshots (placeholders)
 
 <div style={{ display: 'grid', gap: 12 }}>

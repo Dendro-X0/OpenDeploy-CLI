@@ -1,0 +1,51 @@
+name: OpenDeploy Smoke
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ '**' ]
+
+jobs:
+  smoke:
+    name: Smoke (doctor + start dry-run)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, windows-latest, macos-latest ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Enable Corepack and pin pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9 --activate
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build CLI
+        run: pnpm -C packages/cli build
+
+      - name: Doctor (non-strict)
+        env:
+          OPD_FORCE_CI: '1'
+        run: node packages/cli/dist/index.js doctor --json
+
+      - name: Start (minimal dry-run)
+        env:
+          OPD_FORCE_CI: '1'
+        run: node packages/cli/dist/index.js start --minimal --dry-run --json --skip-auth-check --assume-logged-in

@@ -1,0 +1,66 @@
+name: opendeploy-stack-smokes
+
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+
+jobs:
+  stack-detect-smokes:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        fw: [ next, astro, sveltekit, nuxt, remix ]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Enable corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@latest --activate
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install deps
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build CLI
+        run: pnpm -C packages/cli build
+
+      - name: Create fixture for ${{ matrix.fw }}
+        run: |
+          mkdir -p fw-fixture
+          if [ "${{ matrix.fw }}" = "next" ]; then
+            cat > fw-fixture/package.json << 'JSON'
+            { "name": "next-fixture", "private": true, "version": "0.0.0", "dependencies": { "next": "0.0.0" }, "scripts": { "build": "next build" } }
+            JSON
+          elif [ "${{ matrix.fw }}" = "astro" ]; then
+            cat > fw-fixture/package.json << 'JSON'
+            { "name": "astro-fixture", "private": true, "version": "0.0.0", "dependencies": { "astro": "0.0.0" }, "scripts": { "build": "astro build" } }
+            JSON
+          elif [ "${{ matrix.fw }}" = "sveltekit" ]; then
+            cat > fw-fixture/package.json << 'JSON'
+            { "name": "sveltekit-fixture", "private": true, "version": "0.0.0", "devDependencies": { "@sveltejs/kit": "0.0.0" }, "scripts": { "build": "vite build" } }
+            JSON
+          elif [ "${{ matrix.fw }}" = "nuxt" ]; then
+            cat > fw-fixture/package.json << 'JSON'
+            { "name": "nuxt-fixture", "private": true, "version": "0.0.0", "dependencies": { "nuxt": "0.0.0" }, "scripts": { "build": "nuxt build" } }
+            JSON
+          else
+            cat > fw-fixture/package.json << 'JSON'
+            { "name": "remix-fixture", "private": true, "version": "0.0.0", "dependencies": { "remix": "0.0.0" }, "scripts": { "build": "remix build" } }
+            JSON
+          fi
+
+      - name: Detect should match ${{ matrix.fw }}
+        working-directory: fw-fixture
+        run: |
+          node ../packages/cli/dist/index.js detect --json | node -e "let b='';process.stdin.on('data',d=>b+=d);process.stdin.on('end',()=>{const ls=b.trim().split(/\\r?\\n/);const last=ls[ls.length-1];const j=JSON.parse(last);const exp=process.env.EXPECTED; if(j?.detection?.framework!==exp){console.error('Expected',exp,'got',j?.detection?.framework);process.exit(1)} else {console.log('ok',exp)}})"
+        env:
+          EXPECTED: ${{ matrix.fw }}

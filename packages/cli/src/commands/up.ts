@@ -14,6 +14,7 @@ import { runStartWizard } from './start'
 import { detectApp } from '../core/detectors/auto'
 import type { Framework } from '../types/framework'
 import { loadProvider } from '../core/provider-system/provider'
+import { loadStackPluginByFramework } from '../core/plugins/registry'
 import Ajv from 'ajv'
 import { upSummarySchema } from '../schemas/up-summary.schema'
 import { providerBuildResultSchema } from '../schemas/provider-build-result.schema'
@@ -35,6 +36,8 @@ interface UpOptions {
   readonly baseDelayMs?: string
   readonly ndjson?: boolean
   readonly noBuild?: boolean
+  readonly buildTimeoutMs?: string
+  readonly buildDryRun?: boolean
   readonly preflightOnly?: boolean
   readonly strictPreflight?: boolean
   readonly preflightArtifactsOnly?: boolean
@@ -88,6 +91,8 @@ export function registerUpCommand(program: Command): void {
     .option('--base-delay-ms <ms>', 'Base delay for exponential backoff with jitter (default 300)')
     .option('--ndjson', 'Output NDJSON events for progress')
     .option('--no-build', 'Skip local build; deploy existing publish directory (when supported)')
+    .option('--build-timeout-ms <ms>', 'Timeout for stack plugin builds in milliseconds')
+    .option('--build-dry-run', 'Skip executing local build but continue flow (treated as no-build)')
     .option('--preflight-only', 'Run preflight checks and exit without building/publishing (GitHub Pages)')
     .option('--strict-preflight', 'Treat preflight warnings as errors (GitHub/Cloudflare)')
     .option('--preflight-artifacts-only', 'Run provider build and asset sanity, then exit without deploying (Cloudflare/GitHub)')
@@ -138,7 +143,7 @@ export function registerUpCommand(program: Command): void {
         }
         const jsonMode: boolean = isJsonMode(opts.json)
         const ndjsonOn: boolean = opts.ndjson === true || process.env.OPD_NDJSON === '1'
-        if (ndjsonOn) logger.setNdjson(true)
+        if (ndjsonOn) { logger.setNdjson(true); logger.setJsonOnly(true) }
         // Structured preflight capture for JSON consumers
         const preflight: Array<{ readonly name: string; readonly ok: boolean; readonly level: 'warn' | 'note'; readonly message?: string }> = []
         if (jsonMode) logger.setJsonOnly(true)
@@ -210,7 +215,7 @@ export function registerUpCommand(program: Command): void {
           // Early dry-run (no provider CLI needed)
           if (opts.dryRun === true) {
             const envShort: 'prod' | 'preview' = (opts.env === 'prod' ? 'prod' : 'preview')
-            if (jsonMode) {
+            if (jsonMode || ndjsonOn) {
               const cmdPlan: string[] = []
               if (prov === 'vercel') {
                 if (opts.project || opts.org) cmdPlan.push(`vercel link --yes${opts.project ? ` --project ${opts.project}` : ''}${opts.org ? ` --org ${opts.org}` : ''}`.trim())
@@ -335,8 +340,10 @@ export function registerUpCommand(program: Command): void {
               if (ndjsonOn && aliasUrl) logger.json({ ok: true, action: 'up', stage: 'aliasSet', provider: 'vercel', aliasUrl })
             }
             if (jsonMode) { logger.jsonPrint({ ok: true, action: 'up' as const, provider: 'vercel' as const, target: (envTargetUp === 'production' ? 'prod' : 'preview'), url: capturedUrl, logsUrl: capturedInspect, aliasUrl, final: true }); return }
-            if (capturedUrl) logger.success(`${envTargetUp === 'production' ? 'Production' : 'Preview'}: ${capturedUrl}`)
-            if (aliasUrl) logger.success(`Aliased: ${aliasUrl}`)
+            if (!ndjsonOn) {
+              if (capturedUrl) logger.success(`${envTargetUp === 'production' ? 'Production' : 'Preview'}: ${capturedUrl}`)
+              if (aliasUrl) logger.success(`Aliased: ${aliasUrl}`)
+            }
             printDeploySummary({ provider: 'vercel', target: (envTargetUp === 'production' ? 'prod' : 'preview'), url: capturedUrl, logsUrl: capturedInspect })
             return
           }
@@ -351,12 +358,14 @@ export function registerUpCommand(program: Command): void {
             let chosenFile: string | undefined
             for (const f of candidates) { if (await fsx.exists(join(targetCwd, f))) { chosenFile = f; break } }
             if (chosenFile) {
-              logger.section('Environment')
-              logger.note(`Syncing ${chosenFile} → ${prov}`)
+              if (!ndjsonOn) {
+                logger.section('Environment')
+                logger.note(`Syncing ${chosenFile} → ${prov}`)
+              }
               try {
                 try { const patterns = await computeRedactors({ cwd: targetCwd, envFiles: [chosenFile], includeProcessEnv: true }); if (patterns.length > 0) logger.setRedactors(patterns) } catch { /* ignore */ }
                 await envSync({ provider: prov, cwd: targetCwd, file: chosenFile, env: (opts.env === 'prod' ? 'prod' : 'preview'), yes: true, ci: Boolean(opts.ci), json: false, projectId: opts.project, orgId: opts.org, ignore: [], only: [], optimizeWrites: true })
-                logger.success('Environment sync complete')
+                if (!ndjsonOn) logger.success('Environment sync complete')
               } catch (e) { logger.warn(`Env sync skipped: ${(e as Error).message}`) }
             }
           }
@@ -488,7 +497,21 @@ export function registerUpCommand(program: Command): void {
             } catch { /* ignore preflight errors */ }
           }
           const t0 = Date.now()
-          const buildRes = await p.build({ cwd: targetCwd, framework: frameworkHint, envTarget: envTargetUp, publishDirHint, noBuild: Boolean(opts.noBuild) })
+          // Prefer stack plugin build when available, else provider build
+          let artifactDirFromStack: string | undefined
+          try {
+            if (!opts.noBuild && !opts.buildDryRun && frameworkHint) {
+              const stackMod = await loadStackPluginByFramework({ cwd: targetCwd, framework: frameworkHint })
+              if (stackMod && stackMod.plugin && typeof stackMod.plugin.build === 'function') {
+                const timeoutMs = (opts.buildTimeoutMs && Number.isFinite(Number(opts.buildTimeoutMs))) ? Number(opts.buildTimeoutMs) : undefined
+                const build = await stackMod.plugin.build({ cwd: targetCwd, env: process.env as Record<string, string>, json: !!opts.json, ndjson: !!opts.ndjson || process.env.OPD_NDJSON === '1', ci: !!opts.ci, timeoutMs })
+                if (build && build.ok && build.outputDir) { artifactDirFromStack = build.outputDir }
+              }
+            }
+          } catch { /* ignore plugin errors and fallback */ }
+          const buildRes = artifactDirFromStack
+            ? { ok: true, artifactDir: artifactDirFromStack, message: undefined }
+            : await p.build({ cwd: targetCwd, framework: frameworkHint, envTarget: envTargetUp, publishDirHint, noBuild: Boolean(opts.noBuild || opts.buildDryRun) })
           const buildSchemaOk: boolean = validateBuild(buildRes as unknown as Record<string, unknown>) as boolean
           const buildSchemaErrors: string[] = Array.isArray(validateBuild.errors) ? validateBuild.errors.map(e => `${e.instancePath || '/'} ${e.message ?? ''}`.trim()) : []
           // Failure propagation: abort on provider build failure
@@ -549,11 +572,13 @@ export function registerUpCommand(program: Command): void {
           }
           if (jsonMode) { logger.jsonPrint(annotate({ ok: true, action: 'up' as const, provider: prov, target: targetShort, url: deployRes.url, logsUrl: deployRes.logsUrl, durationMs, preflight, buildSchemaOk, buildSchemaErrors, deploySchemaOk, deploySchemaErrors, final: true })); return }
           if (deployRes.ok) {
-            if (deployRes.url) logger.success(`${opts.env === 'prod' ? 'Production' : 'Preview'}: ${deployRes.url}`)
-            else logger.success(`${opts.env === 'prod' ? 'Production' : 'Preview'} deploy complete`)
+            if (!ndjsonOn) {
+              if (deployRes.url) logger.success(`${opts.env === 'prod' ? 'Production' : 'Preview'}: ${deployRes.url}`)
+              else logger.success(`${opts.env === 'prod' ? 'Production' : 'Preview'} deploy complete`)
+            }
           } else {
             const message: string = deployRes.message || 'Deploy failed'
-            if (deployRes.logsUrl) logger.info(`Logs: ${deployRes.logsUrl}`)
+            if (!ndjsonOn && deployRes.logsUrl) logger.info(`Logs: ${deployRes.logsUrl}`)
             throw new Error(message)
           }
           return
@@ -563,7 +588,7 @@ export function registerUpCommand(program: Command): void {
         const envTarget: 'prod' | 'preview' = opts.env === 'prod' ? 'prod' : 'preview'
         // Early dry-run summary
         if (opts.dryRun === true) {
-          if (jsonMode) {
+          if (jsonMode || ndjsonOn) {
             const prov: 'vercel' = 'vercel'
             const cmdPlan: string[] = []
             if (opts.project || opts.org) cmdPlan.push(`vercel link --yes${opts.project ? ` --project ${opts.project}` : ''}${opts.org ? ` --org ${opts.org}` : ''}`.trim())

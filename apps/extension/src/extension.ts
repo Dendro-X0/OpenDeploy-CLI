@@ -33,6 +33,68 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     })
 
+  // Scan Repo (strict): exits non-zero if any findings are detected
+  register('opendeploy.scanStrict', async () => {
+    const cfg: Settings = getSettings()
+    const cwd: string = await pickTargetPath(cfg)
+    const args: string[] = ['scan', '--json', '--strict']
+    const output = getOutput(); output.show(true)
+    updateJsonToggle(true)
+    output.appendLine('[OpenDeploy] Running scan (strict, JSON mode)')
+    output.appendLine(`> Running: ${cfg.runner} ${args.join(' ')} in ${cwd}`)
+    setRunning(true)
+    let findings = 0
+    const res = await runOpenDeploy({ args, settings: { ...cfg, preferJson: true }, cwd, onJson: (obj: any) => {
+      if (obj && obj.action === 'scan') {
+        findings = Number(obj.totalFindings || 0)
+        if (Array.isArray(obj.files)) {
+          const list = obj.files.slice(0, 20).map((f: any) => `- ${f.path} (${f.count})`).join('\n')
+          if (findings > 0) output.appendLine('[scan] Potential matches:\n' + list + (obj.files.length > 20 ? `\n... and ${obj.files.length - 20} more files` : ''))
+        }
+        postPanelState({ kind: 'scan', total: findings, at: new Date().toISOString() })
+      }
+    } })
+    setRunning(false)
+    output.appendLine(`[result] ${res.ok ? 'success' : 'failed'}`)
+    postPanelState({ kind: 'scan', total: findings, at: new Date().toISOString() })
+    if (findings > 0 || !res.ok) {
+      void vscode.window.showErrorMessage(`OpenDeploy: Strict scan found ${findings} potential match(es). See Output for details.`)
+    } else {
+      void vscode.window.showInformationMessage('OpenDeploy: Strict scan found no potential secrets')
+    }
+  })
+
+  // Scan Repo for secrets/tokens (CLI-native scanner)
+  register('opendeploy.scan', async () => {
+    const cfg: Settings = getSettings()
+    const cwd: string = await pickTargetPath(cfg)
+    const args: string[] = ['scan', '--json']
+    const output = getOutput(); output.show(true)
+    updateJsonToggle(true)
+    output.appendLine('[OpenDeploy] Running scan (JSON mode)')
+    output.appendLine(`> Running: ${cfg.runner} ${args.join(' ')} in ${cwd}`)
+    setRunning(true)
+    let findings = 0
+    const res = await runOpenDeploy({ args, settings: { ...cfg, preferJson: true }, cwd, onJson: (obj: any) => {
+      if (obj && obj.action === 'scan') {
+        findings = Number(obj.totalFindings || 0)
+        if (Array.isArray(obj.files)) {
+          const list = obj.files.slice(0, 20).map((f: any) => `- ${f.path} (${f.count})`).join('\n')
+          if (findings > 0) output.appendLine('[scan] Potential matches:\n' + list + (obj.files.length > 20 ? `\n... and ${obj.files.length - 20} more files` : ''))
+        }
+        postPanelState({ kind: 'scan', total: findings, at: new Date().toISOString() })
+      }
+    } })
+    setRunning(false)
+    output.appendLine(`[result] ${res.ok ? 'success' : 'failed'}`)
+    postPanelState({ kind: 'scan', total: findings, at: new Date().toISOString() })
+    if (findings > 0) {
+      void vscode.window.showWarningMessage(`OpenDeploy: Scan found ${findings} potential match(es). See Output for details.`)
+    } else {
+      void vscode.window.showInformationMessage('OpenDeploy: Scan found no potential secrets')
+    }
+  })
+
   // Onboarding Wizard (in-panel webview)
   register('opendeploy.onboarding', async () => {
     const dispose = await openOnboarding(async (msg: OnboardingMessage) => {
@@ -228,6 +290,8 @@ export function activate(context: vscode.ExtensionContext): void {
       if (msg.type === 'auth') { if (msg.provider === 'vercel') await checkVercelAuth(); else await checkCloudflareAuth(); return }
       if (msg.type === 'select-app') { await setWs('opendeploy.lastApp', msg.cwd); return }
       if (msg.type === 'open-summary') { await openSummaryPanel(); return }
+      if ((msg as any).type === 'scan-strict') { await vscode.commands.executeCommand('opendeploy.scanStrict'); return }
+      if ((msg as any).type === 'scan') { await vscode.commands.executeCommand('opendeploy.scan'); return }
       if (msg.type === 'generate-gh') {
         await generateGhPagesWorkflow({ appPathFs: msg.cwd, template: msg.template ?? 'reusable' });
         void vscode.window.showInformationMessage('OpenDeploy: Generated GitHub Pages workflow (deploy-gh-pages.yml)');

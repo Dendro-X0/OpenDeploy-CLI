@@ -2,6 +2,50 @@
 
 OpenDeploy provides CI-friendly commands to view and follow GitHub Actions runs right from your terminal. These commands print direct URLs, auto-detect repo and branch reliably, and emit GitHub Annotations on failures to improve PR feedback.
 
+## Security Guard
+
+Block risky configurations and potential secret leaks automatically on PRs and pushes.
+
+- Validates Security Health via `opendeploy doctor --json --ci --strict`.
+- Scans the repository via `opendeploy scan --json --strict`.
+
+Example workflow (created at `.github/workflows/opendeploy-security-guard.yml`):
+
+```yaml
+name: OpenDeploy Security Guard
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ '**' ]
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -C packages/cli build
+      - name: Doctor (strict)
+        env: { OPD_FORCE_CI: '1' }
+        run: node packages/cli/dist/index.js doctor --json --ci --strict
+      - name: Scan (strict)
+        env: { OPD_FORCE_CI: '1' }
+        run: node packages/cli/dist/index.js scan --json --strict
+```
+
+Notes:
+- In CI, redaction is enforced and project-local cache paths are disabled automatically.
+- Customize excludes and test inclusion via `opendeploy.scan.json`.
+
 ## Commands
 
 ### `ci logs`

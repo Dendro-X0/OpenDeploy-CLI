@@ -1,5 +1,7 @@
 # Deployment Commands
 
+Supported providers: Vercel, Cloudflare Pages, GitHub Pages.
+
 ## deploy (Vercel)
 Deploy the detected app to Vercel.
 
@@ -28,7 +30,9 @@ Dry‑run example (Vercel):
 Single‑command deploy: sync env, then deploy.
 
 ```bash
-opd up vercel [--env <prod|preview>] [--project <id>] [--org <id>] [--path <dir>] [--dry-run] [--json] [--ci]
+opd up vercel \
+  [--env <prod|preview>] [--project <id>] [--org <id>] [--path <dir>] \
+  [--dry-run] [--json] [--ci] [--build-timeout-ms <ms>] [--build-dry-run]
 ```
 
 Behavior:
@@ -41,6 +45,57 @@ Notes:
 - Respects `--path`, `--project/--org`, `--env` (`prod` | `preview`).
 - Use `--ndjson --timestamps` to stream logs and emit final summary with `{ final: true }`.
 - When the provider is omitted, the CLI opens the interactive wizard (`opd start`) automatically.
+
+## deploy (Cloudflare Pages)
+Deploy the detected app to Cloudflare Pages.
+
+Usage:
+```bash
+opd deploy cloudflare \
+  [--env <prod|preview>] [--path <dir>] [--dry-run] [--json] [--ci]
+```
+
+Notes:
+- The CLI generates/uses `wrangler.toml` as needed. For Next on Pages SSR/hybrid, the wizard can patch `next.config.*` automatically in CI/JSON modes.
+- `--dry-run` emits a deterministic JSON summary and performs no provider actions.
+
+## up (Cloudflare Pages)
+Single‑command deploy: optional env sync and deploy.
+
+```bash
+opd up cloudflare \
+  [--env <prod|preview>] [--path <dir>] \
+  [--dry-run] [--json] [--ci] [--build-timeout-ms <ms>] [--build-dry-run]
+```
+
+Notes:
+- Use `--ndjson` in CI to stream compact events and a final summary.
+- `--build-dry-run` skips local build while continuing the flow (treated as no‑build when falling back to provider build).
+
+## deploy (GitHub Pages)
+Deploy a static site to GitHub Pages.
+
+Usage:
+```bash
+opd deploy github \
+  [--env <prod|preview>] [--path <dir>] [--dry-run] [--json] [--ci]
+```
+
+Notes:
+- The CLI writes `.nojekyll` and can patch static Next.js configs (output: 'export', images.unoptimized) when applicable.
+- For monorepos or project pages, ensure `basePath`/`assetPrefix` are configured; the start wizard provides hints and auto‑fixes in CI modes.
+
+## up (GitHub Pages)
+Single‑command prepare/deploy for GitHub Pages.
+
+```bash
+opd up github \
+  [--env <prod|preview>] [--path <dir>] \
+  [--dry-run] [--json] [--ci] [--build-timeout-ms <ms>] [--build-dry-run]
+```
+
+Notes:
+- `--preflight-only` and `--strict-preflight` are supported (see `opd up --help`). These run checks and artifact sanity without publishing.
 
 ## open (dashboards)
 Open the project dashboard or site.
@@ -100,3 +155,9 @@ opd rollback vercel --alias <prod-domain> [--to <url|sha>] [--path <dir>] [--pro
 
 Notes:
 - `--dry-run` emits a deterministic JSON summary (no changes), suitable for CI validation.
+
+---
+
+Tips for CI:
+- Prefer `--json --summary-only --timestamps` (or `OPD_NDJSON=1`) to ensure clean machine consumption.
+- Set `OPD_STRICT_PLUGIN_VERSION=1` to hard‑fail on stack/provider plugin API version mismatches. A `version-mismatch` NDJSON event is emitted before exit.

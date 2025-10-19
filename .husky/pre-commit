@@ -1,0 +1,15 @@
+#!/usr/bin/env sh
+. "$(dirname "$0")/_/husky.sh"
+
+# OpenDeploy: run a secrets scan before commit if gitleaks is available
+if command -v gitleaks >/dev/null 2>&1; then
+  echo "[opendeploy] Running gitleaks secret scan (staged)"
+  gitleaks protect --staged --redact
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    echo "[opendeploy] gitleaks found potential secrets. Commit blocked. Review findings and rotate/revoke if necessary."
+    exit $status
+  fi
+else
+  echo "[opendeploy] gitleaks not installed; skipping secret scan. Install: https://github.com/gitleaks/gitleaks"
+fi

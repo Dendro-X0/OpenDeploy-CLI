@@ -1,0 +1,73 @@
+name: Release (on tag)
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install dependencies (monorepo)
+        run: pnpm install -r --frozen-lockfile
+
+      - name: Build CLI binaries (pkg)
+        run: pnpm --filter "./packages/cli" build:bin
+
+      - name: Compute checksums
+        working-directory: packages/cli/artifacts/bin
+        run: |
+          ls -la
+          sha256sum opd-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Set release flags
+        id: flags
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if [[ "$TAG" == *"rc"* || "$TAG" == *"canary"* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Prepare release notes path
+        id: notes
+        run: |
+          echo "notes_path=packages/cli/Release-notes.md" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: OpenDeploy CLI ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          body_path: ${{ steps.notes.outputs.notes_path }}
+          prerelease: ${{ steps.flags.outputs.prerelease }}
+          files: |
+            packages/cli/artifacts/bin/opd-win-x64.exe
+            packages/cli/artifacts/bin/opd-macos-arm64
+            packages/cli/artifacts/bin/opd-linux-x64
+            packages/cli/artifacts/bin/opd-linux-arm64
+            packages/cli/artifacts/bin/SHA256SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

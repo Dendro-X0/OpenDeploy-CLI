@@ -27,7 +27,7 @@ async function checkOpdGo(cwd: string, printCmd?: boolean): Promise<CheckResult>
 import { Command } from 'commander'
 import { logger, isJsonMode } from '../utils/logger'
 import { proc, runWithRetry } from '../utils/process'
-import { join, dirname } from 'node:path'
+import { join, dirname, resolve } from 'node:path'
 import { readdir, stat as fsStat, mkdir } from 'node:fs/promises'
 import { fsx } from '../utils/fs'
 import { detectMonorepo } from '../core/detectors/monorepo'
@@ -39,6 +39,7 @@ import Ajv from 'ajv'
 import { doctorSummarySchema } from '../schemas/doctor-summary.schema'
 import { readFile as readFileFs } from 'node:fs/promises'
 import { resolveAppPath } from '../core/detectors/apps'
+import { readFile as readFileNode, writeFile as writeFileNode } from 'node:fs/promises'
 
 // ---- GitHub Pages + Next static export checks (best-effort, non-fatal) ----
 async function checkNextGithubPages(cwd: string): Promise<CheckResult[]> {
@@ -226,6 +227,7 @@ export function registerDoctorCommand(program: Command): void {
     .option('--org <id>', 'Vercel org/team ID (for linking)')
     .option('--print-cmd', 'Print underlying provider commands that will be executed')
     .option('--strict', 'Exit non-zero when any checks fail')
+    .option('--security-guide', 'Print a short security guide with recommended steps')
     .action(async (opts: DoctorOptions): Promise<void> => {
       try {
         const jsonMode: boolean = isJsonMode(opts.json)
@@ -280,6 +282,37 @@ export function registerDoctorCommand(program: Command): void {
           if (isJsonMode(opts.json)) logger.json({ event: 'app-path', path: cwd, candidates: resolved.candidates })
           else if (cwd !== cwdRoot) logger.note(`Detected app path: ${cwd}`)
         }
+        // Security: legacy cache/state folder in project (.opendeploy)
+        try {
+          const leakDir = join(cwd, '.opendeploy')
+          const cacheFile = join(leakDir, 'cache.json')
+          const stateFile = join(leakDir, 'state.json')
+          const hasCache = await fsx.exists(cacheFile)
+          const hasState = await fsx.exists(stateFile)
+          if (hasCache) {
+            results.push({ name: 'security: .opendeploy/cache.json (in project)', ok: false, message: 'present (remove and add to .gitignore)' })
+            suggestions.push('rm -f .opendeploy/cache.json && echo "\n.opendeploy/" >> .gitignore')
+            if (opts.fix === true) {
+              try { await writeFileNode(cacheFile, '', 'utf8') } catch { /* ignore */ }
+              try {
+                const gi = join(cwd, '.gitignore')
+                let buf = ''
+                try { buf = await readFileNode(gi, 'utf8') } catch { buf = '' }
+                if (!/(^|\n)\.opendeploy\/(\s|$)/.test(buf)) {
+                  const updated = buf.length > 0 && !buf.endsWith('\n') ? `${buf}\n.opendeploy/\n` : `${buf}.opendeploy/\n`
+                  await writeFileNode(gi, updated, 'utf8')
+                }
+                results.push({ name: 'security fix: .gitignore .opendeploy/', ok: true, message: 'updated' })
+              } catch { results.push({ name: 'security fix: .gitignore .opendeploy/', ok: false, message: 'failed to update .gitignore' }) }
+            }
+          } else {
+            results.push({ name: 'security: .opendeploy/cache.json (in project)', ok: true, message: 'absent' })
+          }
+          if (hasState) {
+            results.push({ name: 'state: .opendeploy/state.json (in project)', ok: true, message: 'present (benign: project ids only). Ensure .gitignore excludes .opendeploy/' })
+          }
+        } catch { /* ignore */ }
+
         const mono = await detectMonorepo({ cwd })
         results.push({ name: 'monorepo', ok: mono !== 'none', message: mono })
         if (mono !== 'none') {
@@ -367,6 +400,40 @@ export function registerDoctorCommand(program: Command): void {
             results.push({ name: 'GitHub Pages .nojekyll (fix)', ok: true, message: wrote ? 'written' : 'present' })
           } catch { results.push({ name: 'GitHub Pages .nojekyll (fix)', ok: false, message: 'failed to write' }) }
         }
+        // Security Health section (human + JSON)
+        try {
+          const cacheDisabled: boolean = process.env.OPD_DISABLE_CACHE === '1' || process.env.OPD_SAFE_MODE === '1' || process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true'
+          const redactionEnabled: boolean = process.env.OPD_NO_REDACT !== '1'
+          const stateInOs: boolean = process.env.OPD_STATE_IN_PROJECT !== '1'
+          const cacheDirEnv: string | undefined = process.env.OPD_CACHE_DIR
+          let cacheDirRisk: boolean = false
+          try { if (cacheDirEnv) { const c = resolve(cacheDirEnv).replace(/\\/g,'/'); const p = resolve(cwd).replace(/\\/g,'/'); cacheDirRisk = c.startsWith(p.endsWith('/') ? p : p + '/') } } catch { /* ignore */ }
+          let gitignoreHasOpd: boolean = false
+          try { const gi = join(cwd, '.gitignore'); const buf = await readFileNode(gi, 'utf8'); gitignoreHasOpd = /(\n|^)\.opendeploy\/(\s|$)/.test(buf) } catch { gitignoreHasOpd = false }
+          const hasLegacyCache = await fsx.exists(join(cwd, '.opendeploy', 'cache.json'))
+          const lines: string[] = []
+          lines.push('Security Health')
+          lines.push(`  • Cache: ${cacheDisabled ? 'disabled' : 'enabled'}${cacheDirEnv ? (cacheDirRisk ? ' (custom path inside project: RISK)' : ' (custom path)') : ''}`)
+          lines.push(`  • Redaction: ${redactionEnabled ? 'enabled' : 'DISABLED (risk)'}`)
+          lines.push(`  • State store: ${stateInOs ? 'OS config dir' : 'project-local (consider default)'}`)
+          lines.push(`  • .gitignore: ${gitignoreHasOpd ? 'has .opendeploy/' : 'MISSING .opendeploy/ (add it)'}`)
+          lines.push(`  • Legacy cache file: ${hasLegacyCache ? 'present (run: opendeploy doctor --fix)' : 'absent'}`)
+          if (!isJsonMode(opts.json)) logger.note(lines.join('\n'), 'Security')
+          else logger.json({ action: 'doctor', event: 'security-health', cacheDisabled, redactionEnabled, state: stateInOs ? 'os' : 'project', gitignoreHasOpd, cacheDirRisk, legacyCachePresent: hasLegacyCache })
+          if ((opts as any).securityGuide === true) {
+            const guide: string[] = []
+            guide.push('Security Guide')
+            guide.push('  1) Ensure .gitignore has .opendeploy/ at repo roots')
+            guide.push('  2) Avoid project-local cache locations; do not set OPD_CACHE_DIR inside your project')
+            guide.push('  3) Keep redaction enabled (do not set OPD_NO_REDACT=1)')
+            guide.push('  4) Use OS config dir for state (do not set OPD_STATE_IN_PROJECT=1)')
+            guide.push('  5) In CI or sensitive runs, set OPD_SAFE_MODE=1 or OPD_DISABLE_CACHE=1')
+            guide.push('  6) Use gitleaks in CI and pre-commit to scan for secrets')
+            if (!isJsonMode(opts.json)) logger.note(guide.join('\n'), 'Security')
+            else logger.json({ action: 'doctor', event: 'security-guide', steps: guide })
+          }
+        } catch { /* ignore security health printing errors */ }
+
         const ok: boolean = results.every(r => r.ok)
         // GitHub Pages readiness (best-effort)
         try {

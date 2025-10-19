@@ -1,0 +1,46 @@
+---
+title: What's New in vNext
+description: Highlights for the remastered OpenDeploy CLI and VSCode extension
+---
+
+# What's New in vNext
+
+This page summarizes major changes and how to adopt them.
+
+## Highlights
+
+- Plugin‑first architecture for stacks and providers
+- Built‑in stack adapters (Next, Astro, SvelteKit, Remix, Nuxt, Vite)
+- Redaction‑enforced logging and NDJSON event streams for providers and stacks
+- Better framework detection (including Vite) and CI smokes
+- Authoring guide for plugin developers
+
+## Plugin Compatibility
+
+OpenDeploy exposes a versioned plugin API. As a rule:
+
+- Major version must match
+- Minor/patch may differ
+
+| Component | API version | Policy |
+| --- | --- | --- |
+| CLI (core) | `1.0.0` | Requires plugin major `1` |
+| Stack plugin | `1.x` | Compatible with CLI 1.x |
+| Provider plugin | `1.x` | Compatible with CLI 1.x |
+
+When a plugin’s major version does not match the CLI’s `PLUGIN_API_VERSION`, the CLI emits a `version-mismatch` NDJSON warning and will attempt to continue with built‑ins or fallbacks where possible.
+
+See the full contracts at `packages/cli/src/core/plugins/contracts.ts`.
+
+## Migration Notes
+
+- Existing flows continue to work; plugins are used opportunistically when installed.
+- Prefer `stackPlugin.build()` output when available; otherwise the provider’s build path is used.
+- NDJSON now includes lifecycle events for plugin load/detect/build and provider deploy.
+
+## Related Docs
+
+- [Plugin Authoring](/docs/opendeploy/architecture/plugins/authoring)
+- [Providers vNext](/docs/opendeploy/architecture/providers-vnext)
+- [NDJSON Consumption](/docs/opendeploy/architecture/ndjson-consumption)
+- [Output Contract](/docs/opendeploy/architecture/output-contract)
