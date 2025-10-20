@@ -1,0 +1,65 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: '0 8 * * *'  # 08:00 UTC daily
+  workflow_dispatch:
+
+jobs:
+  nightly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build CLI
+        run: pnpm -C packages/cli build
+
+      - name: Build and Test
+        env:
+          OPD_FORCE_CI: '1'
+          CI: '1'
+          FORCE_COLOR: '0'
+          TERM: 'dumb'
+        run: node packages/cli/dist/index.js ci-run build-and-test --json
+
+      - name: Security Scan (strict)
+        env:
+          OPD_FORCE_CI: '1'
+          CI: '1'
+          FORCE_COLOR: '0'
+          TERM: 'dumb'
+        run: node packages/cli/dist/index.js ci-run security-scan --json
+
+      - name: Provider Smoke (real)
+        env:
+          OPD_FORCE_CI: '1'
+          OPD_PROVIDER_MODE: 'real'
+          CI: '1'
+          FORCE_COLOR: '0'
+          TERM: 'dumb'
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node packages/cli/dist/index.js ci-run provider-smoke --providers vercel,cloudflare,github --mode real --json
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-artifacts
+          path: ./.artifacts/**

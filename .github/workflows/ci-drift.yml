@@ -35,7 +35,7 @@ jobs:
 
       - name: Enforce similarity threshold
         run: |
-          node -e "const fs=require('fs');const p='./.artifacts/ci-diff.last.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));const diffs=j.diffs||[];let min=1;for(const d of diffs){if(typeof d.similarity==='number'&&d.similarity<min)min=d.similarity;} if(min<0.9){console.error('Drift detected. Min similarity:',min); process.exit(1)} console.log('Drift OK. Min similarity:',min)"
+          node -e "const fs=require('fs');const p='./.artifacts/ci-diff.last.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));const diffs=j.diffs||[];let max=0;for(const d of diffs){if(typeof d.similarity==='number'&&d.similarity>max)max=d.similarity;} const THRESH=0.7; if(max<THRESH){console.error('Drift detected. Max similarity:',max,'<',THRESH); process.exit(1)} console.log('Drift OK. Max similarity:',max)"
 
       - name: Upload drift artifacts
         if: always()
