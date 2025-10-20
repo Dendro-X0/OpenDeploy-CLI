@@ -43,3 +43,4 @@ OpenDeploy/
 # IDE
 .vscode/
 .idea/
+# OpenDeploy cache/state
