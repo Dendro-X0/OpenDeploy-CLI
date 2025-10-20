@@ -34,4 +34,12 @@ Thumbs.db
 .turbo
 .vercel
 .next
-coverage
+coverage# OpenDeploy cache/state
+OpenDeploy/
+# Provider caches
+.netlify/
+.vercel/
+# Build artifacts
+# IDE
+.vscode/
+.idea/
