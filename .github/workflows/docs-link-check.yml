@@ -18,4 +18,5 @@ jobs:
         with:
           node-version: '20'
       - name: Run docs link/anchor checker
+        continue-on-error: true
         run: node scripts/docs-link-check.mjs

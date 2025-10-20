@@ -10,6 +10,10 @@ jobs:
   provider-smoke:
     name: Provider Smoke — detect + doctor
     runs-on: ubuntu-latest
+    env:
+      OPD_FORCE_CI: '1'
+      OPD_PROVIDER_MODE: 'virtual'
+      OPD_NDJSON: '1'
     strategy:
       fail-fast: false
       matrix:
@@ -97,11 +101,18 @@ jobs:
               ;;
           esac
           echo "APP_DIR=$APP" >> $GITHUB_ENV
+          mkdir -p ./.artifacts
 
       - name: Detect (JSON)
-        run: node packages/cli/dist/index.js detect --json --path "$APP_DIR"
+        run: node packages/cli/dist/index.js detect --json --path "$APP_DIR" | tee ./.artifacts/detect-${{ matrix.provider }}.json
 
       - name: Doctor (JSON, non-strict)
-        env:
-          OPD_FORCE_CI: '1'
-        run: node packages/cli/dist/index.js doctor --json --path "$APP_DIR"
+        run: node packages/cli/dist/index.js doctor --json --path "$APP_DIR" | tee ./.artifacts/doctor-${{ matrix.provider }}.json
+
+      - name: Upload provider smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: provider-smoke-${{ matrix.provider }}
+          path: ./.artifacts/**/*.json
+          if-no-files-found: ignore

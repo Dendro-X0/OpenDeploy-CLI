@@ -11,6 +11,8 @@ permissions:
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -57,9 +59,8 @@ jobs:
           echo "notes_path=packages/cli/Release-notes.md" >> $GITHUB_OUTPUT
 
       - name: Publish to npm (packages/cli)
+        if: ${{ env.NPM_TOKEN != '' }}
         working-directory: packages/cli
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           npm config set //registry.npmjs.org/:_authToken=${NPM_TOKEN}
           npm publish --provenance --access public

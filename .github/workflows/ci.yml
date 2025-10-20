@@ -41,7 +41,13 @@ jobs:
       - name: Build
         run: pnpm build
       - name: Test (CLI)
-        run: OPD_TEST_NO_SPAWN=1 OPD_TEST_FORCE_SAFE_FIXES=1 pnpm -C packages/cli test -- --reporter=dot --exclude src/__tests__/start-safe-fixes.test.ts --exclude src/__tests__/start-next-config-fixes.test.ts
+        run: |
+          mkdir -p ./.artifacts
+          OPD_TEST_NO_SPAWN=1 OPD_TEST_FORCE_SAFE_FIXES=1 pnpm -C packages/cli test -- \
+            --reporter=dot \
+            --reporter=json --outputFile ../../.artifacts/vitest.json \
+            --exclude src/__tests__/start-safe-fixes.test.ts \
+            --exclude src/__tests__/start-next-config-fixes.test.ts
       - name: Capture CI environment snapshot
         run: node packages/cli/dist/index.js doctor env-snapshot --out ./.artifacts/ci.snapshot.json
       - name: Upload artifacts (JSON/NDJSON)
@@ -52,6 +58,13 @@ jobs:
           path: |
             ./.artifacts/**/*.json
             ./.artifacts/**/*.ndjson
+          if-no-files-found: ignore
+      - name: Upload Vitest JSON report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vitest-report-ci
+          path: ./.artifacts/vitest.json
           if-no-files-found: ignore
       # Docs link check disabled until monorepo script is ported
       # - name: Docs link check

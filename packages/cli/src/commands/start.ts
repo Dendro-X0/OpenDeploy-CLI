@@ -792,8 +792,10 @@ async function runDeploy(args: { readonly provider: Provider; readonly env: 'pro
         }
       } catch { /* ignore */ }
     }
-    if (process.env.OPD_NDJSON === '1' && capturedInspect && !emittedLogsEvent) {
-      logger.json({ action: 'start', provider: 'vercel', target: envTarget, event: 'logs', logsUrl: capturedInspect })
+    if (process.env.OPD_NDJSON === '1' && !emittedLogsEvent) {
+      emittedLogsEvent = true
+      const lu = capturedInspect ?? 'https://vercel.com'
+      logger.json({ action: 'start', provider: 'vercel', target: envTarget, event: 'logs', logsUrl: lu })
     }
     if (process.env.OPD_NDJSON === '1') {
       logger.json({ action: 'start', provider: 'vercel', target: envTarget, event: 'done', ok: true, url: capturedUrl, logsUrl: capturedInspect })

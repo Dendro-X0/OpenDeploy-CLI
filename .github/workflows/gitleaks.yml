@@ -16,4 +16,11 @@ jobs:
       - name: Run Gitleaks
         uses: gitleaks/gitleaks-action@v2
         with:
-          args: --redact
+          args: --redact --config-path .gitleaks.toml --report-path ./.artifacts/gitleaks.sarif --report-format sarif
+      - name: Upload Gitleaks report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-report
+          path: ./.artifacts/gitleaks.sarif
+          if-no-files-found: ignore

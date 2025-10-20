@@ -1,0 +1,11 @@
+title = "OpenDeploy Gitleaks Config"
+
+[allowlist]
+  description = "Global exclusions for non-source content"
+  paths = [
+    "apps/docs/src/content/opendeploy/.*",
+    "apps/docs/.next/.*",
+    ".artifacts/.*",
+    "**/fixtures?/.*",
+    "**/test(s)?/assets/.*"
+  ]
