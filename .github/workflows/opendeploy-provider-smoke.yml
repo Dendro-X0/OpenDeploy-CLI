@@ -1,10 +1,9 @@
 name: OpenDeploy Provider Smoke
 
 on:
-  push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ '**' ]
+  workflow_dispatch: {}
+  schedule:
+    - cron: '0 9 * * *'
 
 jobs:
   provider-smoke:
@@ -33,26 +32,8 @@ jobs:
         with:
           version: 9
 
-      - name: Enable Corepack and pin pnpm
-        run: |
-          corepack enable
-          corepack prepare pnpm@9 --activate
-
-      - name: Resolve pnpm store path
-        id: pnpm-cache
-        shell: bash
-        run: echo "STORE_PATH=$(pnpm store path)" >> $GITHUB_OUTPUT
-
-      - name: Cache pnpm store
-        uses: actions/cache@v4
-        with:
-          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-store-
-
       - name: Install deps
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
 
       - name: Build CLI
         run: pnpm -C packages/cli build

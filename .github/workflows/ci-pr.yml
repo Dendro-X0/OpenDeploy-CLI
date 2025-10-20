@@ -1,0 +1,49 @@
+name: PR CI
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+jobs:
+  pr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Show pnpm version
+        run: pnpm -v
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build CLI
+        run: pnpm -C packages/cli build
+
+      - name: Run CI simulator (pr)
+        env:
+          OPD_FORCE_CI: '1'
+          OPD_PROVIDER_MODE: 'virtual'
+          OPD_TEST_NO_SPAWN: '1'
+          CI: '1'
+          FORCE_COLOR: '0'
+          TERM: 'dumb'
+        run: node packages/cli/dist/index.js ci-run pr --json
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-artifacts
+          path: ./.artifacts/**

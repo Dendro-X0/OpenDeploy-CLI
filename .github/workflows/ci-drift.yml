@@ -1,0 +1,45 @@
+name: Workflow Drift Guard
+
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build CLI
+        run: pnpm -C packages/cli build
+
+      - name: Generate PR workflow YAML
+        run: node packages/cli/dist/index.js ci-generate --profile pr --out ./.artifacts/ci-pr.generated.yml
+
+      - name: Compute drift vs repo workflows
+        run: node packages/cli/dist/index.js ci-diff --profile pr --json
+
+      - name: Enforce similarity threshold
+        run: |
+          node -e "const fs=require('fs');const p='./.artifacts/ci-diff.last.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));const diffs=j.diffs||[];let min=1;for(const d of diffs){if(typeof d.similarity==='number'&&d.similarity<min)min=d.similarity;} if(min<0.9){console.error('Drift detected. Min similarity:',min); process.exit(1)} console.log('Drift OK. Min similarity:',min)"
+
+      - name: Upload drift artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: drift-artifacts
+          path: ./.artifacts/**

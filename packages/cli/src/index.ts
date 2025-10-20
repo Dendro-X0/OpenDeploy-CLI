@@ -24,6 +24,11 @@ import { join, resolve } from 'node:path'
 import { readFile } from 'node:fs/promises'
 import { registerCiLogsCommand } from './commands/ci-logs'
 import { registerScanCommand } from './commands/scan'
+import { registerCiDoctorCommand } from './commands/ci-doctor'
+import { registerCiRunCommand } from './commands/ci-run'
+import { registerNdjsonValidateCommand } from './commands/ndjson-validate'
+import { registerCiGenerateCommand } from './commands/ci-generate'
+import { registerCiDiffCommand } from './commands/ci-diff'
 
 const VERSION: string = '1.2.0-rc.2'
 
@@ -227,6 +232,11 @@ function main(): void {
   registerScanCommand(program)
   registerAliasCommand(program)
   registerTestMatrixCommand(program)
+  registerCiDoctorCommand(program)
+  registerCiRunCommand(program)
+  registerNdjsonValidateCommand(program)
+  registerCiGenerateCommand(program)
+  registerCiDiffCommand(program)
   program.parseAsync(process.argv)
     .then(() => {})
     .catch((err: unknown) => {

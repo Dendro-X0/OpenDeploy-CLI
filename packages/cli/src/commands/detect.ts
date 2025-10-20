@@ -26,8 +26,10 @@ export function registerDetectCommand(program: Command): void {
     .description('Detect your app (Next, Astro, SvelteKit, Remix, Nuxt, Vite; Expo when OPD_EXPERIMENTAL=1)')
     .option('--json', 'Output JSON')
     .option('--scan', 'Scan common monorepo folders and workspace globs to list candidate apps')
-    .action(async (opts: { json?: boolean; scan?: boolean }): Promise<void> => {
-      const cwd: string = process.cwd()
+    .option('--path <dir>', 'Directory to detect (defaults to CWD)')
+    .action(async (opts: { json?: boolean; scan?: boolean; path?: string }): Promise<void> => {
+      const baseCwd: string = process.cwd()
+      const cwd: string = (typeof opts.path === 'string' && opts.path.length > 0) ? join(baseCwd, opts.path) : baseCwd
       try {
         if (opts.json === true || process.env.OPD_JSON === '1') logger.setJsonOnly(true)
         if (opts.scan) {
@@ -47,7 +49,7 @@ export function registerDetectCommand(program: Command): void {
         const result: DetectionResult = await detectApp({ cwd })
         if (opts.json === true || process.env.OPD_JSON === '1') {
           const summary = { ok: true, action: 'detect' as const, detection: result, final: true }
-          logger.jsonPrint(annotate(summary as unknown as Record<string, unknown>))
+          logger.json(annotate(summary as unknown as Record<string, unknown>))
           return
         }
         // Human output
@@ -73,7 +75,7 @@ export function registerDetectCommand(program: Command): void {
       } catch (err) {
         const message: string = err instanceof Error ? err.message : String(err)
         if (opts.json === true || process.env.OPD_JSON === '1') {
-          logger.jsonPrint(annotate({ ok: false, action: 'detect' as const, message, final: true }))
+          logger.json(annotate({ ok: false, action: 'detect' as const, message, final: true }))
         } else {
           logger.error(message)
         }

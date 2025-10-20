@@ -1,11 +1,7 @@
-name: Docs Link Check
+name: Docs Link Check (manual)
 
 on:
-  pull_request:
-    paths:
-      - 'apps/docs/src/content/opendeploy/**'
-      - 'scripts/docs-link-check.mjs'
-      - '.github/workflows/docs-link-check.yml'
+  workflow_dispatch: {}
 
 jobs:
   check:

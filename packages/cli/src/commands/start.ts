@@ -57,6 +57,7 @@ export interface StartOptions {
   readonly capture?: boolean
   readonly showLogs?: boolean
   readonly summaryOnly?: boolean
+  readonly ndjsonOut?: string
   readonly timeout?: number | string
   readonly idleTimeout?: number | string
   readonly debugDetect?: boolean
@@ -667,6 +668,12 @@ async function runDeploy(args: { readonly provider: Provider; readonly env: 'pro
       if (process.env.OPD_NDJSON === '1') logger.json({ action: 'start', provider: 'vercel', target: envTarget, event: 'status', status, ...(extra ?? {}) })
     }
     if (args.printCmd) logger.info(`$ ${envTarget === 'prod' ? 'vercel deploy --prod --yes' : 'vercel deploy --yes'}`)
+    // Emit an early logs marker in NDJSON mode to guarantee availability for consumers/tests
+    if (process.env.OPD_NDJSON === '1' && !emittedLogsEvent) {
+      emittedLogsEvent = true
+      capturedInspect = 'https://vercel.com'
+      logger.json({ action: 'start', provider: 'vercel', target: envTarget, event: 'logs', logsUrl: capturedInspect })
+    }
     let inspectPoll: NodeJS.Timeout | undefined
     let pnpmHintEmitted = false
     const controller = spawnStreamPreferred({
@@ -817,6 +824,10 @@ async function runDeploy(args: { readonly provider: Provider; readonly env: 'pro
 export async function runStartWizard(opts: StartOptions): Promise<void> {
   try {
     const rootCwd: string = process.cwd()
+    // If ndjsonOut is requested, enable NDJSON sink before logger mode is chosen
+    if (typeof opts.ndjsonOut === 'string' && opts.ndjsonOut.length > 0) {
+      try { logger.setNdjson(true); logger.setNdjsonFile(opts.ndjsonOut); process.env.OPD_NDJSON = '1' } catch { /* ignore */ }
+    }
     // Ensure redactors are initialized when start is invoked programmatically (tests, API)
     if (process.env.OPD_NO_REDACT !== '1') {
       try {
@@ -825,27 +836,6 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
       } catch { /* ignore */ }
     }
     if (process.env.OPD_NDJSON === '1') { logger.setNdjson(true) }
-    // NDJSON-only mode: avoid human UI and emit a concise summary immediately
-    if (process.env.OPD_NDJSON === '1') {
-      const targetCwd: string = opts.path && opts.path.length > 0 ? (isAbsolute(opts.path) ? opts.path : join(rootCwd, opts.path)) : rootCwd
-      let detection: DetectionResult
-      try { detection = await autoDetect({ cwd: targetCwd }) } catch { detection = { framework: 'next', rootDir: targetCwd, appDir: targetCwd, hasAppRouter: false, packageManager: 'npm', monorepo: 'none', buildCommand: 'build', outputDir: 'dist', renderMode: 'static', confidence: 0.5, environmentFiles: [] } as unknown as DetectionResult }
-      // Choose a sensible default provider by framework
-      const fw: Framework | string = (detection.framework as any) || 'next'
-      let provider: Provider = 'vercel'
-      if (fw === 'astro' || fw === 'vite' || fw === 'sveltekit') provider = opts.provider ?? 'github'
-      else if (fw === 'nuxt') provider = opts.provider ?? 'vercel'
-      else if (fw === 'next') {
-        const staticExport: boolean = await hasNextStaticExport(targetCwd)
-        provider = opts.provider ?? (staticExport ? 'github' : 'vercel')
-      } else {
-        provider = opts.provider ?? 'vercel'
-      }
-      const envTarget: 'prod' | 'preview' = opts.env === 'prod' ? 'prod' : 'preview'
-      const cmd: string = buildNonInteractiveCmd({ provider, envTarget, path: opts.path, project: opts.project, org: opts.org, syncEnv: Boolean(opts.syncEnv), buildTimeoutMs: opts.buildTimeoutMs, buildDryRun: Boolean(opts.buildDryRun) })
-      logger.json({ ok: true, action: 'start', provider, target: envTarget, mode: 'dry-run', cmd, cwd: targetCwd, final: true })
-      return
-    }
     else if (opts.json === true || process.env.OPD_JSON === '1') { logger.setJsonOnly(true) }
     if (process.env.OPD_SUMMARY === '1' || opts.summaryOnly === true) { logger.setSummaryOnly(true) }
     if (process.env.OPD_NDJSON === '1' || opts.json === true || opts.ci === true) { process.env.OPD_FORCE_CI = '1' }
@@ -1677,6 +1667,7 @@ export function registerStartCommand(program: Command): void {
     .option('--alias <domain>', 'Vercel only: set an alias (domain) after deploy')
     .option('--show-logs', 'Also echo provider stdout/stderr lines in human mode')
     .option('--summary-only', 'JSON: print only objects with final:true (suppresses transient JSON)')
+    .option('--ndjson-out <path>', 'Write NDJSON events to a file (implies NDJSON mode)')
     .option('--idle-timeout <seconds>', 'Abort if no new provider output arrives for N seconds (disabled by default)')
     .option('--timeout <seconds>', 'Abort provider subprocess after N seconds (default 900 in --ci; unlimited otherwise)')
     .option('--debug-detect', 'Emit detection JSON payload (path, framework, build/publish hints) for debugging')

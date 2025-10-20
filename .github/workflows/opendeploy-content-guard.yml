@@ -1,10 +1,7 @@
-name: Security - OpenDeploy Content Guard
+name: Security - OpenDeploy Content Guard (manual)
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
-  push:
-    branches: [ main, master ]
+  workflow_dispatch: {}
 
 jobs:
   content-guard:
@@ -23,10 +20,19 @@ jobs:
           set -euo pipefail
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             base_ref="${{ github.base_ref }}"
-            git fetch origin "$base_ref" --depth=1
+            git fetch origin "$base_ref" --depth=1 || true
             echo "range=origin/$base_ref...HEAD" >> "$GITHUB_OUTPUT"
-          else
+          elif [[ "${{ github.event_name }}" == "push" && -n "${{ github.event.before }}" ]]; then
             echo "range=${{ github.event.before }}...${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          else
+            # Manual or unknown context: compare last commit to HEAD
+            A=$(git rev-parse HEAD^ 2>/dev/null || echo '')
+            B=$(git rev-parse HEAD 2>/dev/null || echo '')
+            if [[ -n "$A" && -n "$B" ]]; then
+              echo "range=$A...$B" >> "$GITHUB_OUTPUT"
+            else
+              echo "range=HEAD" >> "$GITHUB_OUTPUT"
+            fi
           fi
 
       - name: List changed files

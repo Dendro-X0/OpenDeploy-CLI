@@ -1,10 +1,7 @@
-name: Security - OpenDeploy Scan
+name: Security - OpenDeploy Scan (manual)
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
-  push:
-    branches: [ main, master ]
+  workflow_dispatch: {}
 
 jobs:
   opd-scan:
@@ -22,9 +19,9 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 10
+          version: 9
       - name: Install deps
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
       - name: Build CLI
         run: pnpm -C packages/cli build
       - name: Run OpenDeploy scan

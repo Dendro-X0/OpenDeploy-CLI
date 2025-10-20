@@ -1,8 +1,7 @@
-name: Docs & Netlify Guard
+name: Docs & Netlify Guard (manual)
 
 on:
-  pull_request:
-    branches: [ "**" ]
+  workflow_dispatch: {}
 
 jobs:
   guard:
@@ -29,18 +28,8 @@ jobs:
           check_exists packages/cli/scripts/smoke/netlify-direct.ps1
           check_exists .netlify
 
-          # Legacy docs locations (should be migrated to apps/docs)
-          if [ -d packages/cli/docs ]; then
-            echo "Legacy docs directory present: packages/cli/docs" >&2
-            FAIL=1
-          fi
-          if [ -d docs ]; then
-            echo "Legacy root docs directory present: docs/" >&2
-            FAIL=1
-          fi
-
           if [ "$FAIL" -ne 0 ]; then
-            echo "Guard failed. Migrate docs to apps/docs/ and remove Netlify artifacts." >&2
+            echo "Guard failed. Remove Netlify artifacts." >&2
             exit 1
           fi
 

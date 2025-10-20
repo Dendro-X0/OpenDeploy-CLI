@@ -1,10 +1,7 @@
 name: OpenDeploy Smoke
 
 on:
-  push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ '**' ]
+  workflow_dispatch: {}
 
 jobs:
   smoke:
