@@ -29,6 +29,7 @@ import { registerCiRunCommand } from './commands/ci-run'
 import { registerNdjsonValidateCommand } from './commands/ndjson-validate'
 import { registerCiGenerateCommand } from './commands/ci-generate'
 import { registerCiDiffCommand } from './commands/ci-diff'
+import { registerCiLocalCommand } from './commands/ci-local'
 
 const VERSION: string = '1.2.0-rc.2'
 
@@ -237,6 +238,7 @@ function main(): void {
   registerNdjsonValidateCommand(program)
   registerCiGenerateCommand(program)
   registerCiDiffCommand(program)
+  registerCiLocalCommand(program)
   program.parseAsync(process.argv)
     .then(() => {})
     .catch((err: unknown) => {
