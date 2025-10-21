@@ -144,7 +144,7 @@ export function registerCiRunCommand(program: Command): void {
     .command('ci-run')
     .description('Run local CI profiles (build-and-test | security-scan | provider-smoke | pr)')
     .argument('[profile]', 'Profile to run', 'build-and-test')
-    .option('--providers <list>', 'Comma-separated providers for provider-smoke (e.g., vercel,cloudflare,github)', 'vercel')
+    .option('--providers <list>', 'Comma-separated providers for provider-smoke (e.g., vercel,cloudflare,github)', 'vercel,cloudflare,github')
     .option('--provider <name>', 'Single provider alias for provider-smoke (vercel|cloudflare|github)')
     .option('--mode <mode>', 'Provider mode: virtual|real', 'virtual')
     .option('--open-artifacts', 'Open artifacts folder after run')
