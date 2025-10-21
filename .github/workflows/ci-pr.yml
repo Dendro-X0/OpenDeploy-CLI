@@ -20,6 +20,11 @@ jobs:
           node-version: '20'
           cache: 'pnpm'
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
       - name: Enable Corepack & setup pnpm
         run: |
           set -e
