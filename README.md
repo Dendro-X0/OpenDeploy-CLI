@@ -10,6 +10,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Version](https://img.shields.io/github/v/tag/Dendro-X0/OpenDeploy-CLI?label=version)](https://github.com/Dendro-X0/OpenDeploy-CLI/releases)
 
+
 ## Introduction
 
 OpenDeploy is a cross‑provider deployment CLI for modern web apps. It detects your stack, validates environment, and deploys with human‑readable logs and CI‑friendly JSON/NDJSON. The short command is `opd`.
