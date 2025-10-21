@@ -44,3 +44,4 @@ OpenDeploy/
 .vscode/
 .idea/
 # OpenDeploy cache/state
+apps/docs/out/
