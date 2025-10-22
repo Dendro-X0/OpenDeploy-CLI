@@ -26,14 +26,11 @@ jobs:
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
-        with:
-          version: 10.13.1
 
-      - name: Enable Corepack & setup pnpm
+      - name: Verify Node/pnpm
         run: |
           set -e
-          corepack enable
-          corepack prepare pnpm@10.13.1 --activate
+          corepack enable || true
           node -v
           pnpm -v
 
