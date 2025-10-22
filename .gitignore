@@ -45,3 +45,4 @@ OpenDeploy/
 .idea/
 # OpenDeploy cache/state
 apps/docs/out/
+.opd-ci/
