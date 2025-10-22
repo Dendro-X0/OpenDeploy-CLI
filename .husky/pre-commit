@@ -1,5 +1,3 @@
-#!/usr/bin/env sh
-. "$(dirname "$0")/_/husky.sh"
 
 # OpenDeploy: run a secrets scan before commit if gitleaks is available
 if command -v gitleaks >/dev/null 2>&1; then

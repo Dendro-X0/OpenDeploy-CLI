@@ -34,7 +34,7 @@ Thumbs.db
 .turbo
 .vercel
 .next
-coverage# OpenDeploy cache/state
+coverage/
 OpenDeploy/
 # Provider caches
 .netlify/
