@@ -1,119 +1,97 @@
-name: Release (manual or tags)
+name: Release
 
 on:
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Tag to release (e.g., v1.2.0-rc.1)'
-        required: false
-        type: string
   push:
     tags:
       - 'v*'
-
-permissions:
-  contents: write
-  packages: write
+  workflow_dispatch:
 
 jobs:
-  build-binaries:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Setup Node
+
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          # Do not use cache here; pnpm is installed via pnpm/action-setup
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
+
+      - name: Verify Node/pnpm
+        run: |
+          set -e
+          corepack enable || true
+          node -v
+          pnpm -v
+
+      - name: Get pnpm store path
+        run: echo "PNPM_STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
         with:
-          version: 10.16.1
-      - name: Enable pnpm via Corepack
-        run: |
-          corepack enable
-          corepack prepare pnpm@10.16.1 --activate
-      - name: Install deps (monorepo)
+          path: ${{ env.PNPM_STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
-      - name: Build CJS dist for pkg
-        run: pnpm -C packages/cli build:cjs
-      - name: Build OS binary
-        shell: bash
-        run: |
-          set -euxo pipefail
-          case "${{ matrix.os }}" in
-            ubuntu-*)  pnpm -C packages/cli build:bin:linux ;;
-            macos-*)   pnpm -C packages/cli build:bin:mac ;;
-            windows-*) pnpm -C packages/cli build:bin:win ;;
-          esac
-      - name: Upload binary artifact
+
+      - name: Build workspace (providers/core)
+        run: pnpm -r --workspace-concurrency=1 build
+
+      - name: Build CLI
+        run: pnpm -C packages/cli build
+
+      - name: Build and Test
+        env:
+          OPD_FORCE_CI: '1'
+          CI: '1'
+          FORCE_COLOR: '0'
+          TERM: 'dumb'
+        run: node packages/cli/dist/index.js ci-run build-and-test --json
+
+      - name: Security Scan (strict)
+        env:
+          OPD_FORCE_CI: '1'
+          CI: '1'
+          FORCE_COLOR: '0'
+          TERM: 'dumb'
+        run: node packages/cli/dist/index.js ci-run security-scan --json
+
+      - name: Provider Smoke (real)
+        env:
+          OPD_FORCE_CI: '1'
+          OPD_PROVIDER_MODE: 'real'
+          CI: '1'
+          FORCE_COLOR: '0'
+          TERM: 'dumb'
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node packages/cli/dist/index.js ci-run provider-smoke --providers vercel,cloudflare,github --mode real --json
+
+      - name: Upload artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: opd-${{ matrix.os }}
-          path: packages/cli/artifacts/bin/*
-          if-no-files-found: error
+          name: release-artifacts
+          path: ./.artifacts/**
 
-  create-release:
-    needs: build-binaries
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.16.1
-      - name: Enable pnpm via Corepack
-        run: |
-          corepack enable
-          corepack prepare pnpm@10.16.1 --activate
-      - name: Install deps (CLI)
-        run: pnpm install --no-frozen-lockfile
-      - name: Build JS dist
-        run: pnpm -C packages/cli build
-      - name: Download all binaries
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts/bin
-      - name: Prepare artifacts
-        run: |
-          set -euo pipefail
-          mkdir -p artifacts
-          # Optional JS dist for reference
-          cp packages/cli/dist/index.js artifacts/opd.js || true
-          # Downloaded artifacts are under artifacts/bin/<artifact-name>/*
-          # Flatten only files (not directories) into artifacts/
-          shopt -s nullglob
-          for f in artifacts/bin/*/*; do
-            base=$(basename "$f")
-            cp "$f" "artifacts/$base"
-          done
-          # Remove downloaded artifact directories to avoid uploading directories as assets
-          rm -rf artifacts/bin
-          # Checksums (files only at top-level)
-          if command -v sha256sum >/dev/null 2>&1; then
-            find artifacts -maxdepth 1 -type f -exec sha256sum {} + > artifacts/checksums.txt
-          else
-            find artifacts -maxdepth 1 -type f -print0 | xargs -0 shasum -a 256 > artifacts/checksums.txt
-          fi
       - name: Create GitHub Release
-        uses: ncipollo/release-action@v1
+        uses: softprops/action-gh-release@v2
         with:
-          tag: ${{ github.event.inputs.tag || github.ref_name }}
-          name: ${{ github.event.inputs.tag || github.ref_name }}
-          artifacts: "artifacts/*"
-          allowUpdates: true
-          artifactErrorsFailBuild: true
-          token: ${{ secrets.GITHUB_TOKEN }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
