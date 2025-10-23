@@ -51,6 +51,15 @@ Three steps to deploy, per provider:
 - GitHub Pages: https://dendro-x0.github.io/opendeploy-cli-docs-site/docs/opendeploy/quickstart-github-pages
 - Cloudflare Pages: https://dendro-x0.github.io/opendeploy-cli-docs-site/docs/opendeploy/quickstart-cloudflare
 
+Local docs (repository):
+
+- [Overview](docs/overview.md)
+- [Getting Started](docs/getting-started.md)
+- [Configuration](docs/configuration.md)
+- [Deployment](docs/deployment.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Acknowledgments](docs/acknowledgments.md)
+
 ## License
 
 MIT © OpenDeploy Contributors
