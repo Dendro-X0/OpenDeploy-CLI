@@ -30,6 +30,14 @@ opd start --provider cloudflare --env preview --json
 
 Tip (Windows): Next on Pages is most reliable on Linux/CI or WSL; prefer the generated GitHub Actions workflow for repeatable builds.
 
+## GitHub Actions quickstart
+
+Use the ready-to-run workflow in your repo:
+
+- `.github/workflows/quickstart-cloudflare.yml`
+
+Trigger it from GitHub Actions → Workflows → "Quickstart (Cloudflare Pages)".
+
 ## 3) Production
 
 Deploy production builds by setting `--env prod` or via your workflow triggers:

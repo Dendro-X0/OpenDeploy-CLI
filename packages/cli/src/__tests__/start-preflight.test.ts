@@ -2,7 +2,7 @@
 vi.mock('@clack/prompts', () => ({
   intro: () => {},
   outro: () => {},
-  select: async () => ({ value: 'netlify' }),
+  select: async () => ({ value: 'vercel' }),
   confirm: async () => true,
   isCancel: () => false,
   cancel: () => {},
@@ -74,9 +74,9 @@ vi.mock('../utils/process', async (orig) => {
 beforeEach(() => { logs.length = 0; vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => { logs.push(String(args[0] ?? '')); return undefined as any }) })
 afterEach(() => { (console.log as any) = origLog; vi.clearAllMocks() })
 
-describe('start preflight (netlify)', () => {
+describe('start preflight (vercel)', () => {
   it('runs build preflight and validates publishDir output', async () => {
-    await runStartWizard({ framework: 'astro', provider: 'netlify', env: 'preview', json: false, ci: false, syncEnv: false })
+    await runStartWizard({ framework: 'astro', provider: 'vercel', env: 'preview', json: false, ci: false, syncEnv: false })
     const found = logs.find((l) => l.includes('Build validated'))
     expect(found).toBeTruthy()
   })
@@ -85,6 +85,6 @@ describe('start preflight (netlify)', () => {
     await runStartWizard({ env: 'preview', dryRun: true, json: true, ci: true })
     const line = logs.find((l) => l.includes('"final": true')) ?? '{}'
     const obj = JSON.parse(line)
-    expect(['netlify','vercel']).toContain(obj.provider)
+    expect(['vercel']).toContain(obj.provider)
   })
 })

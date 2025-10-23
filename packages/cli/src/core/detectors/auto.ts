@@ -11,6 +11,8 @@ import { detectRemixApp } from './remix'
 import { detectReactRouterApp } from './react-router'
 import { detectNuxtApp } from './nuxt'
 import { detectExpoApp } from './expo'
+import { detectViteApp } from './vite'
+import { detectStacksFromPlugins } from '../plugins/registry'
 
 /** Try a detector and return undefined on non-match */
 async function tryDetect(fn: (args: { readonly cwd: string }) => Promise<DetectionResult>, cwd: string): Promise<DetectionResult | undefined> {
@@ -31,6 +33,12 @@ export async function detectApp(args: { readonly cwd: string }): Promise<Detecti
   const rr = await tryDetect(detectReactRouterApp, cwd); if (rr) candidates.push(rr)
   const remix = await tryDetect(detectRemixApp, cwd); if (remix) candidates.push(remix)
   const nuxt = await tryDetect(detectNuxtApp, cwd); if (nuxt) candidates.push(nuxt)
+  const vite = await tryDetect(detectViteApp, cwd); if (vite) candidates.push(vite)
+  // Plugin-provided stacks (external)
+  try {
+    const pluginDetections = await detectStacksFromPlugins({ cwd })
+    for (const d of pluginDetections) candidates.push(d)
+  } catch { /* ignore plugin errors */ }
   if (process.env.OPD_EXPERIMENTAL === '1') {
     const expo = await tryDetect(detectExpoApp, cwd); if (expo) candidates.push(expo)
   }
@@ -52,6 +60,14 @@ export async function detectCandidates(args: { readonly cwd: string }): Promise<
   if (await tryDetect(detectReactRouterApp, cwd)) set.add('remix')
   else if (await tryDetect(detectRemixApp, cwd)) set.add('remix')
   if (await tryDetect(detectNuxtApp, cwd)) set.add('nuxt')
+  if (await tryDetect(detectViteApp, cwd)) set.add('vite')
+  try {
+    const pluginDetections = await detectStacksFromPlugins({ cwd })
+    for (const d of pluginDetections) {
+      const fw = d.framework as Framework
+      if (fw) set.add(fw)
+    }
+  } catch { /* ignore */ }
   if (process.env.OPD_EXPERIMENTAL === '1' && await tryDetect(detectExpoApp, cwd)) set.add('expo')
   return set
 }

@@ -6,7 +6,7 @@ function scriptFor(shell: Shell): string {
   const cmds = [
     'detect','doctor','generate','deploy','logs','open','env','seed','run','init','up','completion'
   ]
-  const providers = ['vercel','netlify']
+  const providers = ['vercel','cloudflare','github']
   const envSub = ['sync','pull','diff','validate']
   if (shell === 'bash') {
     return `# bash completion for opendeploy

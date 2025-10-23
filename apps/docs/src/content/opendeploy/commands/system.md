@@ -11,10 +11,11 @@ Guided wizard for selecting framework, provider, environment, optional env sync,
 
 Usage:
 ```bash
-opd start [--framework <next|astro|sveltekit>] \
+opd start [--framework <next|astro|sveltekit|remix|expo>] \
   [--provider <vercel|cloudflare|github>] [--env <prod|preview>] \
   [--path <dir>] [--project <id>] [--org <id>] \
-  [--sync-env] [--dry-run] [--json] [--ci] [--no-save-defaults] [--minimal]
+  [--sync-env] [--dry-run] [--json] [--ci] [--no-save-defaults] [--minimal] \
+  [--build-timeout-ms <ms>] [--build-dry-run]
 ```
 
 Behavior:
@@ -31,6 +32,7 @@ Notes:
 - The deploy step reuses the same logic as `up` for parity.
 - Non‑interactive usage is supported with flags.
 - Defaults: When confirmed, the wizard stores your selections under `startDefaults` in the root `opendeploy.config.json`. To clear, delete the file or remove the `startDefaults` property. Use `--no-save-defaults` to suppress the save prompt.
+ - NDJSON mode (`--ndjson` or `OPD_NDJSON=1`) suppresses human UI and emits only NDJSON events and a final JSON summary. Set `OPD_STRICT_PLUGIN_VERSION=1` to hard‑fail on plugin API version mismatches.
 
 ### Sidecar & experimental flags
 
@@ -110,11 +112,11 @@ If `--deploy` is used, `mode` becomes `deploy` and `url` is included when availa
 ```
 
 ## detect
-Detect a Next.js app and its configuration.
+Detect your app and its configuration (Next, Astro, SvelteKit, Remix, Expo).
 
 Usage:
 ```bash
-opd detect [--json]
+opd detect [--scan] [--json]
 ```
 Output fields:
 - framework, rootDir, appDir, hasAppRouter
@@ -123,6 +125,7 @@ Output fields:
 - buildCommand, outputDir, environmentFiles
 
 Notes:
+- `--scan` lists monorepo candidate app directories and their frameworks (sourced from common folders and workspace globs). In `--json`, prints `{ candidates: [{ path, framework }] }`.
 - With `--json`, only JSON is printed.
 
 ## doctor

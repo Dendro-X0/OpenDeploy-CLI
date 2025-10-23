@@ -1,1 +1,1 @@
-export type Framework = 'next' | 'astro' | 'sveltekit' | 'remix' | 'expo' | 'nuxt'
+export type Framework = 'next' | 'astro' | 'sveltekit' | 'remix' | 'expo' | 'nuxt' | 'vite'

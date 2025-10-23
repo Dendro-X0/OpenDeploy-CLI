@@ -123,10 +123,12 @@ export const logger: Logger = {
   jsonPrint: (val: unknown): void => {
     // First, go through logger.json to honor sinks, redaction, and flags
     logger.json(val)
-    // Then, emit a raw compact JSON line to stdout for robustness
+    // Then, emit a compact JSON line to stdout with redaction applied (do NOT leak raw values)
     try {
+      const raw: string = JSON.stringify(val)
+      const safe: string = applyRedaction(raw)
       // eslint-disable-next-line no-console
-      console.log(JSON.stringify(val))
+      console.log(safe)
     } catch { /* ignore */ }
   },
   setLevel: (lvl: LogLevel): void => { level = lvl },

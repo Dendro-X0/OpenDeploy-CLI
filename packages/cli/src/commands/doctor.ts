@@ -27,7 +27,7 @@ async function checkOpdGo(cwd: string, printCmd?: boolean): Promise<CheckResult>
 import { Command } from 'commander'
 import { logger, isJsonMode } from '../utils/logger'
 import { proc, runWithRetry } from '../utils/process'
-import { join, dirname } from 'node:path'
+import { join, dirname, resolve } from 'node:path'
 import { readdir, stat as fsStat, mkdir } from 'node:fs/promises'
 import { fsx } from '../utils/fs'
 import { detectMonorepo } from '../core/detectors/monorepo'
@@ -39,6 +39,7 @@ import Ajv from 'ajv'
 import { doctorSummarySchema } from '../schemas/doctor-summary.schema'
 import { readFile as readFileFs } from 'node:fs/promises'
 import { resolveAppPath } from '../core/detectors/apps'
+import { readFile as readFileNode, writeFile as writeFileNode } from 'node:fs/promises'
 
 // ---- GitHub Pages + Next static export checks (best-effort, non-fatal) ----
 async function checkNextGithubPages(cwd: string): Promise<CheckResult[]> {
@@ -102,6 +103,37 @@ async function checkNextGithubPages(cwd: string): Promise<CheckResult[]> {
   return results
 }
 
+// ---- Cloudflare Pages — Next on Pages preflight checks (best-effort, non-fatal) ----
+async function checkCloudflareNextOnPages(cwd: string): Promise<CheckResult[]> {
+  const results: CheckResult[] = []
+  const push = (name: string, ok: boolean, message: string): void => { results.push({ name, ok, message }) }
+  try {
+    // Artifact directory presence (local build)
+    const artifact = join(cwd, '.vercel', 'output', 'static')
+    const hasArtifact = await fsx.exists(artifact)
+    push('Next on Pages: .vercel/output/static', hasArtifact, hasArtifact ? 'present' : 'missing (build to generate)')
+  } catch { push('Next on Pages: .vercel/output/static', false, 'error reading') }
+  try {
+    const wranglerPath = join(cwd, 'wrangler.toml')
+    const hasWrangler = await fsx.exists(wranglerPath)
+    push('wrangler.toml present', hasWrangler, hasWrangler ? 'present' : 'missing')
+    if (hasWrangler) {
+      try {
+        const raw = await readFileFs(wranglerPath, 'utf8')
+        const nameMatch = raw.match(/\bname\s*=\s*"([^"]+)"/)
+        push('wrangler.toml: name', Boolean(nameMatch?.[1]), nameMatch?.[1] ?? 'missing')
+        const outDirMatch = raw.match(/pages_build_output_dir\s*=\s*"([^"]+)"/)
+        const outDirVal = outDirMatch?.[1]
+        const okOutDir = outDirVal === '.vercel/output/static'
+        push('wrangler.toml: pages_build_output_dir', Boolean(outDirVal), okOutDir ? outDirVal : (outDirVal ? `${outDirVal} (expected .vercel/output/static)` : 'missing'))
+        const fnDirMatch = raw.match(/pages_functions_directory\s*=\s*"([^"]+)"/)
+        push('wrangler.toml: pages_functions_directory', Boolean(fnDirMatch?.[1]), fnDirMatch?.[1] ?? 'missing (ok if not using functions)')
+      } catch { push('wrangler.toml parse', false, 'error reading') }
+    }
+  } catch { push('wrangler.toml present', false, 'error reading') }
+  return results
+}
+
 interface DoctorOptions { readonly ci?: boolean; readonly json?: boolean; readonly verbose?: boolean; readonly fix?: boolean; readonly path?: string; readonly project?: string; readonly org?: string; readonly site?: string; readonly printCmd?: boolean; readonly strict?: boolean }
 
 interface CheckResult { readonly name: string; readonly ok: boolean; readonly message: string }
@@ -136,17 +168,6 @@ async function checkVercelAuth(printCmd?: boolean): Promise<CheckResult> {
     if (out.ok && out.stdout.trim().length > 0) return { name: 'vercel auth', ok: true, message: out.stdout.trim() }
   }
   return { name: 'vercel auth', ok: false, message: 'not logged in (run: vercel login)' }
-}
-
-async function checkNetlifyAuth(printCmd?: boolean): Promise<CheckResult> {
-  const candidates: readonly string[] = process.platform === 'win32' ? ['netlify', 'netlify.cmd'] : ['netlify']
-  for (const c of candidates) {
-    const cmd = `${c} status`
-    if (printCmd) logger.info(`$ ${cmd}`)
-    const out = await runWithRetry({ cmd })
-    if (out.ok && out.stdout.toLowerCase().includes('logged in')) return { name: 'netlify auth', ok: true, message: out.stdout.trim() }
-  }
-  return { name: 'netlify auth', ok: false, message: 'not logged in (run: netlify login)' }
 }
 
 async function checkWranglerAuth(printCmd?: boolean): Promise<CheckResult> {
@@ -204,9 +225,9 @@ export function registerDoctorCommand(program: Command): void {
     .option('--path <dir>', 'Working directory to check/fix (monorepos)')
     .option('--project <id>', 'Vercel project ID (for linking)')
     .option('--org <id>', 'Vercel org/team ID (for linking)')
-    .option('--site <siteId>', 'Netlify site ID (for linking)')
     .option('--print-cmd', 'Print underlying provider commands that will be executed')
     .option('--strict', 'Exit non-zero when any checks fail')
+    .option('--security-guide', 'Print a short security guide with recommended steps')
     .action(async (opts: DoctorOptions): Promise<void> => {
       try {
         const jsonMode: boolean = isJsonMode(opts.json)
@@ -227,9 +248,6 @@ export function registerDoctorCommand(program: Command): void {
         const vercelCandidates: readonly string[] = process.platform === 'win32' ? ['vercel', 'vercel.cmd'] : ['vercel']
         const vercelCli = await checkCmdAny(vercelCandidates, 'vercel', opts.printCmd)
         results.push(vercelCli)
-        const netlifyCandidates: readonly string[] = process.platform === 'win32' ? ['netlify', 'netlify.cmd'] : ['netlify']
-        const netlifyCli = await checkCmdAny(netlifyCandidates, 'netlify', opts.printCmd)
-        results.push(netlifyCli)
         // Cloudflare Pages CLI (wrangler)
         const wranglerCandidates: readonly string[] = process.platform === 'win32' ? ['wrangler', 'wrangler.cmd'] : ['wrangler']
         const wranglerCli = await checkCmdAny(wranglerCandidates, 'wrangler', opts.printCmd)
@@ -250,8 +268,6 @@ export function registerDoctorCommand(program: Command): void {
         results.push(psqlCli)
         const vercelAuth = await checkVercelAuth(opts.printCmd)
         results.push(vercelAuth)
-        const netlifyAuth = await checkNetlifyAuth(opts.printCmd)
-        results.push(netlifyAuth)
         const wranglerAuth = await checkWranglerAuth(opts.printCmd)
         results.push(wranglerAuth)
         // Monorepo and workspace sanity
@@ -266,6 +282,37 @@ export function registerDoctorCommand(program: Command): void {
           if (isJsonMode(opts.json)) logger.json({ event: 'app-path', path: cwd, candidates: resolved.candidates })
           else if (cwd !== cwdRoot) logger.note(`Detected app path: ${cwd}`)
         }
+        // Security: legacy cache/state folder in project (.opendeploy)
+        try {
+          const leakDir = join(cwd, '.opendeploy')
+          const cacheFile = join(leakDir, 'cache.json')
+          const stateFile = join(leakDir, 'state.json')
+          const hasCache = await fsx.exists(cacheFile)
+          const hasState = await fsx.exists(stateFile)
+          if (hasCache) {
+            results.push({ name: 'security: .opendeploy/cache.json (in project)', ok: false, message: 'present (remove and add to .gitignore)' })
+            suggestions.push('rm -f .opendeploy/cache.json && echo "\n.opendeploy/" >> .gitignore')
+            if (opts.fix === true) {
+              try { await writeFileNode(cacheFile, '', 'utf8') } catch { /* ignore */ }
+              try {
+                const gi = join(cwd, '.gitignore')
+                let buf = ''
+                try { buf = await readFileNode(gi, 'utf8') } catch { buf = '' }
+                if (!/(^|\n)\.opendeploy\/(\s|$)/.test(buf)) {
+                  const updated = buf.length > 0 && !buf.endsWith('\n') ? `${buf}\n.opendeploy/\n` : `${buf}.opendeploy/\n`
+                  await writeFileNode(gi, updated, 'utf8')
+                }
+                results.push({ name: 'security fix: .gitignore .opendeploy/', ok: true, message: 'updated' })
+              } catch { results.push({ name: 'security fix: .gitignore .opendeploy/', ok: false, message: 'failed to update .gitignore' }) }
+            }
+          } else {
+            results.push({ name: 'security: .opendeploy/cache.json (in project)', ok: true, message: 'absent' })
+          }
+          if (hasState) {
+            results.push({ name: 'state: .opendeploy/state.json (in project)', ok: true, message: 'present (benign: project ids only). Ensure .gitignore excludes .opendeploy/' })
+          }
+        } catch { /* ignore */ }
+
         const mono = await detectMonorepo({ cwd })
         results.push({ name: 'monorepo', ok: mono !== 'none', message: mono })
         if (mono !== 'none') {
@@ -288,15 +335,6 @@ export function registerDoctorCommand(program: Command): void {
               if (!res.ok) suggestions.push('vercel link --yes --project <id> [--org <id>]')
               else results.push({ name: 'vercel link (fix)', ok: true, message: 'linked' })
             }
-            // Netlify link fix
-            const netlifyLinked = await fsx.exists(join(cwd, '.netlify', 'state.json'))
-            if (!netlifyLinked && opts.site) {
-              const linkNetlify = `netlify link --id ${opts.site}`
-              if (opts.printCmd) logger.info(`$ ${linkNetlify}`)
-              const res = await runWithRetry({ cmd: linkNetlify, cwd })
-              if (!res.ok) suggestions.push('netlify link --id <siteId>')
-              else results.push({ name: 'netlify link (fix)', ok: true, message: 'linked' })
-            }
           } catch { /* ignore */ }
         }
           // Vercel link file (optional but recommended for CLI ops)
@@ -306,10 +344,7 @@ export function registerDoctorCommand(program: Command): void {
           // Root vercel.json is optional; helpful when deploying from monorepo root
           const hasRootVercel = await fsx.exists(join(cwd, 'vercel.json'))
           results.push({ name: 'root vercel.json (optional)', ok: true, message: hasRootVercel ? 'present' : 'absent (ok). Prefer Vercel Git + Root Directory; add if CLI root deploys are needed.' })
-          // Netlify link file (optional but recommended for CLI ops)
-          const netlifyState = join(cwd, '.netlify', 'state.json')
-          const netlifyLinked = await fsx.exists(netlifyState)
-          results.push({ name: 'netlify link (.netlify/state.json)', ok: netlifyLinked, message: netlifyLinked ? 'linked' : 'not linked (run: netlify link --id <siteId>)' })
+          // Netlify support removed
 
           // apps/* linked scan to prevent monorepo path issues
           const appsDir = join(cwd, 'apps')
@@ -325,8 +360,7 @@ export function registerDoctorCommand(program: Command): void {
               const reports: string[] = []
               for (const app of appDirs) {
                 const v = await fsx.exists(join(appsDir, app, '.vercel', 'project.json'))
-                const n = await fsx.exists(join(appsDir, app, '.netlify', 'state.json'))
-                if (v || n) reports.push(`${app}: ${v ? 'vercel' : ''}${v && n ? ',' : ''}${n ? 'netlify' : ''}`)
+                if (v) reports.push(`${app}: vercel`)
               }
               if (reports.length > 0) {
                 results.push({ name: 'linked apps (apps/*)', ok: true, message: reports.join('; ') })
@@ -341,10 +375,6 @@ export function registerDoctorCommand(program: Command): void {
                 const vercelRunCwd = targetVercelLinked ? target : (rootVercelLinked && !targetVercelLinked ? cwd : target)
                 const relVercel = vercelRunCwd.startsWith(cwd) ? vercelRunCwd.slice(cwd.length + 1) || '.' : vercelRunCwd
                 results.push({ name: 'vercel chosen cwd (path=apps/web)', ok: true, message: relVercel })
-                // Netlify deploy runs from target path; report that directly
-                const relNetlify = target.startsWith(cwd) ? target.slice(cwd.length + 1) : target
-                results.push({ name: 'netlify chosen cwd (path=apps/web)', ok: true, message: relNetlify })
-
                 // Suggest commands (deploy/prod) based on discovered links
                 // Vercel project id (if present)
                 let vercelProjId: string | undefined
@@ -354,14 +384,6 @@ export function registerDoctorCommand(program: Command): void {
                 } catch { /* ignore */ }
                 const vcCmd = `opendeploy deploy vercel --env prod --path ${relVercel}${vercelProjId ? ` --project ${vercelProjId}` : ''}`
                 suggestions.push(vcCmd)
-                // Netlify site id (if present)
-                let nlSiteId: string | undefined
-                try {
-                  const ns = await fsx.readJson<{ siteId?: string }>(join(target, '.netlify', 'state.json'))
-                  if (ns && typeof ns.siteId === 'string') nlSiteId = ns.siteId
-                } catch { /* ignore */ }
-                const nlCmd = `opendeploy deploy netlify --env prod --path ${relNetlify}${nlSiteId ? ` --project ${nlSiteId}` : ''}`
-                suggestions.push(nlCmd)
               }
             } catch { /* ignore */ }
           }
@@ -378,6 +400,40 @@ export function registerDoctorCommand(program: Command): void {
             results.push({ name: 'GitHub Pages .nojekyll (fix)', ok: true, message: wrote ? 'written' : 'present' })
           } catch { results.push({ name: 'GitHub Pages .nojekyll (fix)', ok: false, message: 'failed to write' }) }
         }
+        // Security Health section (human + JSON)
+        try {
+          const cacheDisabled: boolean = process.env.OPD_DISABLE_CACHE === '1' || process.env.OPD_SAFE_MODE === '1' || process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true'
+          const redactionEnabled: boolean = process.env.OPD_NO_REDACT !== '1'
+          const stateInOs: boolean = process.env.OPD_STATE_IN_PROJECT !== '1'
+          const cacheDirEnv: string | undefined = process.env.OPD_CACHE_DIR
+          let cacheDirRisk: boolean = false
+          try { if (cacheDirEnv) { const c = resolve(cacheDirEnv).replace(/\\/g,'/'); const p = resolve(cwd).replace(/\\/g,'/'); cacheDirRisk = c.startsWith(p.endsWith('/') ? p : p + '/') } } catch { /* ignore */ }
+          let gitignoreHasOpd: boolean = false
+          try { const gi = join(cwd, '.gitignore'); const buf = await readFileNode(gi, 'utf8'); gitignoreHasOpd = /(\n|^)\.opendeploy\/(\s|$)/.test(buf) } catch { gitignoreHasOpd = false }
+          const hasLegacyCache = await fsx.exists(join(cwd, '.opendeploy', 'cache.json'))
+          const lines: string[] = []
+          lines.push('Security Health')
+          lines.push(`  • Cache: ${cacheDisabled ? 'disabled' : 'enabled'}${cacheDirEnv ? (cacheDirRisk ? ' (custom path inside project: RISK)' : ' (custom path)') : ''}`)
+          lines.push(`  • Redaction: ${redactionEnabled ? 'enabled' : 'DISABLED (risk)'}`)
+          lines.push(`  • State store: ${stateInOs ? 'OS config dir' : 'project-local (consider default)'}`)
+          lines.push(`  • .gitignore: ${gitignoreHasOpd ? 'has .opendeploy/' : 'MISSING .opendeploy/ (add it)'}`)
+          lines.push(`  • Legacy cache file: ${hasLegacyCache ? 'present (run: opendeploy doctor --fix)' : 'absent'}`)
+          if (!isJsonMode(opts.json)) logger.note(lines.join('\n'), 'Security')
+          else logger.json({ action: 'doctor', event: 'security-health', cacheDisabled, redactionEnabled, state: stateInOs ? 'os' : 'project', gitignoreHasOpd, cacheDirRisk, legacyCachePresent: hasLegacyCache })
+          if ((opts as any).securityGuide === true) {
+            const guide: string[] = []
+            guide.push('Security Guide')
+            guide.push('  1) Ensure .gitignore has .opendeploy/ at repo roots')
+            guide.push('  2) Avoid project-local cache locations; do not set OPD_CACHE_DIR inside your project')
+            guide.push('  3) Keep redaction enabled (do not set OPD_NO_REDACT=1)')
+            guide.push('  4) Use OS config dir for state (do not set OPD_STATE_IN_PROJECT=1)')
+            guide.push('  5) In CI or sensitive runs, set OPD_SAFE_MODE=1 or OPD_DISABLE_CACHE=1')
+            guide.push('  6) Use gitleaks in CI and pre-commit to scan for secrets')
+            if (!isJsonMode(opts.json)) logger.note(guide.join('\n'), 'Security')
+            else logger.json({ action: 'doctor', event: 'security-guide', steps: guide })
+          }
+        } catch { /* ignore security health printing errors */ }
+
         const ok: boolean = results.every(r => r.ok)
         // GitHub Pages readiness (best-effort)
         try {
@@ -511,7 +567,7 @@ export function registerDoctorCommand(program: Command): void {
         } catch { /* ignore */ }
 
         if (jsonMode) {
-          logger.jsonPrint(annotate({ ok, action: 'doctor' as const, results, suggestions, final: true }))
+          logger.jsonPrint(annotate({ ok, action: 'doctor' as const, results, suggestions, hints: [] as string[], final: true }))
           process.exitCode = ok ? 0 : 1
           return
         }
@@ -571,7 +627,7 @@ export function registerDoctorCommand(program: Command): void {
       } catch (err) {
         const raw: string = err instanceof Error ? err.message : String(err)
         const info = mapProviderError('doctor', raw)
-        if (isJsonMode(opts.json)) { logger.jsonPrint(annotate({ ok: false, action: 'doctor' as const, code: info.code, message: info.message, remedy: info.remedy, error: raw, final: true })) }
+        if (isJsonMode(opts.json)) { logger.jsonPrint(annotate({ ok: false, action: 'doctor' as const, code: info.code, message: info.message, remedy: info.remedy, error: raw, hints: [] as string[], final: true })) }
         logger.error(`${info.message} (${info.code})`)
         if (info.remedy) logger.info(`Try: ${info.remedy}`)
         process.exitCode = 1

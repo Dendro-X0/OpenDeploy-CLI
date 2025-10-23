@@ -130,8 +130,8 @@ opd -v
 ```
 
 Troubleshooting downloads:
-- If `Invoke-WebRequest` shows an HTML page or fails with a web exception, the URL may be wrong (no release/tag yet) or headers are missing. Use the API‑based scripts above, ensure a tag like `v1.1.1` exists, and that assets are attached (e.g., `opd-windows-x64.exe`).
- - If using the direct `latest/download` URLs above, verify that a release is published with the corresponding asset name for your OS/arch (e.g., `opd-windows-x64.exe`).
+- If `Invoke-WebRequest` shows an HTML page or fails with a web exception, the URL may be wrong (no release/tag yet) or headers are missing. Use the API‑based scripts above, ensure a tag like `v1.1.1` exists, and that assets are attached (e.g., `opd-win-x64.exe`).
+ - If using the direct `latest/download` URLs above, verify that a release is published with the corresponding asset name for your OS/arch (e.g., `opd-win-x64.exe`).
 
 ## Docker/OCI (no Node required)
 

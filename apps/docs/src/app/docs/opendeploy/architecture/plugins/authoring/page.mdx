@@ -1,0 +1,134 @@
+---
+title: Plugin Authoring
+description: Authoring stack and provider plugins for OpenDeploy CLI
+---
+
+# Plugin Authoring
+
+This guide shows how to create Stack and Provider plugins compatible with the OpenDeploy CLI. Plugins let you add new frameworks (stacks) and deployment targets (providers) without changing the CLI core.
+
+- API version: `1.0.0`
+- Contracts path in CLI: `packages/cli/src/core/plugins/contracts.ts`
+
+## Stack Plugins
+
+A Stack plugin detects a project and optionally builds it to produce static or server artifacts.
+
+```ts
+import type {
+  StackPlugin,
+  StackPluginModule,
+  StackDetectResult,
+  StackBuildOptions,
+  StackBuildResult,
+} from '@opendeploy/cli/core/plugins/contracts'
+
+const plugin: StackPlugin = {
+  async detect({ cwd }): Promise<StackDetectResult | undefined> {
+    // Inspect package.json, config files, etc.
+    // Return undefined when not a match.
+    return {
+      matchScore: 90, // 0..100
+      rootDir: cwd,
+      framework: 'vite',
+      isMonorepo: false,
+      packageManager: 'pnpm',
+      configFiles: ['vite.config.ts'],
+      environmentFiles: ['.env'],
+      buildCommand: ['pnpm', 'build'],
+      outputDir: 'dist',
+      staticExport: true,
+      notes: ['Detected via vite.config.ts'],
+    }
+  },
+  async build({ cwd, env, json, ndjson, ci }: StackBuildOptions): Promise<StackBuildResult> {
+    // Execute your preferred build; return the output directory
+    // Use env/json/ndjson/ci flags to adapt behavior if needed.
+    return { ok: true, outputDir: 'dist', staticExport: true, final: true }
+  },
+  async verify({ cwd, outputDir }): Promise<string[]> {
+    // Return a list of warnings; empty when OK
+    return []
+  },
+  envHints(): ReadonlyArray<string> { return [] },
+}
+
+const mod: StackPluginModule = { plugin, version: '1.0.0' }
+export default mod
+```
+
+Install under one of these names to be auto‑discovered:
+
+- `@opendeploy/stack-<framework>`
+- `opendeploy-stack-<framework>`
+
+The CLI will prefer external plugins; otherwise it will fallback to built-in adapters for known stacks.
+
+## Provider Plugins
+
+A Provider plugin deploys built artifacts and can offer auth, logs, link, and rollback capabilities. The CLI provides a safe logging context with redaction and NDJSON.
+
+```ts
+import type {
+  ProviderPlugin,
+  ProviderPluginModule,
+  ProviderCapabilities,
+  ProviderDeployArgs,
+  ProviderDeployResult,
+  ProviderContext,
+} from '@opendeploy/cli/core/plugins/contracts'
+
+let ctx: ProviderContext | undefined
+
+const plugin: ProviderPlugin = {
+  setContext(c) { ctx = c },
+  getCapabilities(): ProviderCapabilities {
+    return {
+      name: 'Acme Hosting',
+      supportsLocalBuild: false,
+      supportsRemoteBuild: false,
+      supportsStaticDeploy: true,
+      supportsServerless: false,
+      supportsLogsFollow: false,
+      supportsAliasDomains: false,
+      supportsRollback: false,
+    }
+  },
+  async validateAuth({ json, ndjson, ci }): Promise<void> {
+    // Throw if not authenticated. Use ctx?.log/info/warn for messages.
+  },
+  async deployStatic({ cwd, outputDir, target, env, json, ndjson, ci }: ProviderDeployArgs): Promise<ProviderDeployResult> {
+    ctx?.nd({ event: 'deploy:start', target })
+    // Perform upload/deploy of outputDir
+    const url = 'https://example.com'
+    const logsUrl = 'https://example.com/logs/123'
+    ctx?.nd({ event: 'deploy:end', ok: true, url, logsUrl })
+    return { ok: true, url, logsUrl, final: true }
+  },
+}
+
+const mod: ProviderPluginModule = { id: 'acme', plugin, version: '1.0.0' }
+export default mod
+```
+
+Install under one of these names to be auto‑discovered:
+
+- `@opendeploy/provider-<id>`
+- `opendeploy-provider-<id>`
+
+The CLI will prefer external provider plugins when available; otherwise it falls back to built‑in providers.
+
+## Logging and Redaction
+
+Provider plugins receive a context with redaction‑enforced `log` helpers and an `nd(event)` emitter that honors JSON/NDJSON modes. Secrets from `.env` and process environment are redacted by default.
+
+## Testing and CI
+
+- Keep plugin functions small and deterministic.
+- For CI, test `detect` and a dry‑run `deployStatic`.
+- Use semantic versioning and follow the CLI `PLUGIN_API_VERSION` for compatibility.
+
+## Publishing
+
+- Name your package using the conventions above to enable auto‑discovery.
+- Provide a README with Introduction, Features, Quick Start, Documentation, and License, and link back to this guide.

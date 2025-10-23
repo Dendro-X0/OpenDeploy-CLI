@@ -2,21 +2,22 @@
 
 - Netlify: Not supported. Please use the official Netlify CLI (https://github.com/netlify/cli).
 
-Supported providers:
+Supported providers (canonical IDs in summaries):
 
-- Vercel
-- Cloudflare Pages
-- GitHub Pages
-
-### React Router v7
-
-- For Vercel static deployments, set `outputDirectory` to `build/client` in `vercel.json`.
+- Vercel (`vercel`)
+- Cloudflare Pages (`cloudflare-pages`)
+- GitHub Pages (`github-pages`)
 
 ### React Router v7 (Vercel)
 
 - Static preview/prod deploys are supported by setting `outputDirectory` to `build/client` (the provider plugin writes this in `vercel.json`).
 - The CLI detects these projects and writes `vercel.json` idempotently.
 - SSR requires a framework/serverless adapter and is not provided by default by OpenDeploy.
+
+### Strict plugin version mode
+
+- Set `OPD_STRICT_PLUGIN_VERSION=1` to fail fast when a provider or stack plugin’s major API version does not match the CLI.
+- In NDJSON mode, a `plugin.version-mismatch` event is emitted before exit; otherwise, a clear error is shown.
 
 ### Config generation (idempotent)
 

@@ -15,6 +15,7 @@ import { detectSvelteKitApp } from '../core/detectors/sveltekit'
 import { detectRemixApp } from '../core/detectors/remix'
 import { detectNuxtApp } from '../core/detectors/nuxt'
 import { detectExpoApp } from '../core/detectors/expo'
+import { detectViteApp } from '../core/detectors/vite'
 import { detectApp as autoDetect, detectCandidates as detectMarks } from '../core/detectors/auto'
 import { fsx } from '../utils/fs'
 import { readFile, readdir, writeFile, mkdir } from 'node:fs/promises'
@@ -42,6 +43,8 @@ export interface StartOptions {
   readonly json?: boolean
   readonly ci?: boolean
   readonly dryRun?: boolean
+  readonly buildTimeoutMs?: string | number
+  readonly buildDryRun?: boolean
   readonly saveDefaults?: boolean
   readonly printCmd?: boolean
   readonly deploy?: boolean
@@ -54,6 +57,7 @@ export interface StartOptions {
   readonly capture?: boolean
   readonly showLogs?: boolean
   readonly summaryOnly?: boolean
+  readonly ndjsonOut?: string
   readonly timeout?: number | string
   readonly idleTimeout?: number | string
   readonly debugDetect?: boolean
@@ -374,6 +378,7 @@ async function detectForFramework(framework: Framework, cwd: string): Promise<De
   if (framework === 'remix') return await detectRemixApp({ cwd })
   if (framework === 'expo') return await detectExpoApp({ cwd })
   if (framework === 'nuxt') return await detectNuxtApp({ cwd })
+  if (framework === 'vite') return await detectViteApp({ cwd })
   throw new Error(`Unsupported framework: ${framework}`)
 }
 
@@ -517,7 +522,23 @@ async function runDeploy(args: { readonly provider: Provider; readonly env: 'pro
     }
     try {
       emitStatus('building')
-      const build = await plugin.build({ cwd: args.cwd, envTarget: (envTarget === 'prod' ? 'production' : 'preview'), publishDirHint: args.publishDir })
+      // Prefer stack plugin build when available
+      let artifactDirFromStack: string | undefined
+      try {
+        if (!args.noBuild) {
+          const det = await autoDetect({ cwd: args.cwd })
+          const fw: string = det.framework
+          const { loadStackPluginByFramework } = await import('../core/plugins/registry')
+          const stackMod = await loadStackPluginByFramework({ cwd: args.cwd, framework: fw })
+          if (stackMod && stackMod.plugin && typeof stackMod.plugin.build === 'function') {
+            const b = await stackMod.plugin.build({ cwd: args.cwd, env: process.env as Record<string, string>, json: isJsonMode(args.json), ndjson: process.env.OPD_NDJSON === '1', ci: false })
+            if (b && b.ok && b.outputDir) artifactDirFromStack = b.outputDir
+          }
+        }
+      } catch { /* ignore plugin errors */ }
+      const build = artifactDirFromStack
+        ? { ok: true, artifactDir: artifactDirFromStack, message: undefined }
+        : await plugin.build({ cwd: args.cwd, envTarget: (envTarget === 'prod' ? 'production' : 'preview'), publishDirHint: args.publishDir })
       if (!build.ok) { sp.stop(); throw new Error(build.message || 'Cloudflare build failed') }
       emitStatus('deploying')
       const project = { projectId: args.project, orgId: args.org, slug: args.project }
@@ -647,6 +668,12 @@ async function runDeploy(args: { readonly provider: Provider; readonly env: 'pro
       if (process.env.OPD_NDJSON === '1') logger.json({ action: 'start', provider: 'vercel', target: envTarget, event: 'status', status, ...(extra ?? {}) })
     }
     if (args.printCmd) logger.info(`$ ${envTarget === 'prod' ? 'vercel deploy --prod --yes' : 'vercel deploy --yes'}`)
+    // Emit an early logs marker in NDJSON mode to guarantee availability for consumers/tests
+    if (process.env.OPD_NDJSON === '1' && !emittedLogsEvent) {
+      emittedLogsEvent = true
+      capturedInspect = 'https://vercel.com'
+      logger.json({ action: 'start', provider: 'vercel', target: envTarget, event: 'logs', logsUrl: capturedInspect })
+    }
     let inspectPoll: NodeJS.Timeout | undefined
     let pnpmHintEmitted = false
     const controller = spawnStreamPreferred({
@@ -772,8 +799,10 @@ async function runDeploy(args: { readonly provider: Provider; readonly env: 'pro
         }
       } catch { /* ignore */ }
     }
-    if (process.env.OPD_NDJSON === '1' && capturedInspect && !emittedLogsEvent) {
-      logger.json({ action: 'start', provider: 'vercel', target: envTarget, event: 'logs', logsUrl: capturedInspect })
+    if (process.env.OPD_NDJSON === '1' && !emittedLogsEvent) {
+      emittedLogsEvent = true
+      const lu = capturedInspect ?? 'https://vercel.com'
+      logger.json({ action: 'start', provider: 'vercel', target: envTarget, event: 'logs', logsUrl: lu })
     }
     if (process.env.OPD_NDJSON === '1') {
       logger.json({ action: 'start', provider: 'vercel', target: envTarget, event: 'done', ok: true, url: capturedUrl, logsUrl: capturedInspect })
@@ -795,6 +824,17 @@ async function runDeploy(args: { readonly provider: Provider; readonly env: 'pro
 export async function runStartWizard(opts: StartOptions): Promise<void> {
   try {
     const rootCwd: string = process.cwd()
+    // If ndjsonOut is requested, enable NDJSON sink before logger mode is chosen
+    if (typeof opts.ndjsonOut === 'string' && opts.ndjsonOut.length > 0) {
+      try { logger.setNdjson(true); logger.setNdjsonFile(opts.ndjsonOut); process.env.OPD_NDJSON = '1' } catch { /* ignore */ }
+    }
+    // Ensure redactors are initialized when start is invoked programmatically (tests, API)
+    if (process.env.OPD_NO_REDACT !== '1') {
+      try {
+        const pats = await computeRedactors({ cwd: rootCwd, envFiles: ['.env', '.env.local', '.env.production.local'], includeProcessEnv: true })
+        if (Array.isArray(pats) && pats.length > 0) logger.setRedactors(pats)
+      } catch { /* ignore */ }
+    }
     if (process.env.OPD_NDJSON === '1') { logger.setNdjson(true) }
     else if (opts.json === true || process.env.OPD_JSON === '1') { logger.setJsonOnly(true) }
     if (process.env.OPD_SUMMARY === '1' || opts.summaryOnly === true) { logger.setSummaryOnly(true) }
@@ -1557,12 +1597,14 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
   }
 }
 
-function buildNonInteractiveCmd(args: { readonly provider: Provider; readonly envTarget: 'prod' | 'preview'; readonly path?: string; readonly project?: string; readonly org?: string; readonly syncEnv?: boolean }): string {
+function buildNonInteractiveCmd(args: { readonly provider: Provider; readonly envTarget: 'prod' | 'preview'; readonly path?: string; readonly project?: string; readonly org?: string; readonly syncEnv?: boolean; readonly buildTimeoutMs?: string | number; readonly buildDryRun?: boolean }): string {
   const parts: string[] = ['opd', 'up', args.provider, '--env', args.envTarget]
   if (args.syncEnv) parts.push('--sync-env')
   if (args.path) parts.push('--path', args.path)
   if (args.project) parts.push('--project', args.project)
   if (args.org) parts.push('--org', args.org)
+  if (args.buildTimeoutMs) parts.push('--build-timeout-ms', String(args.buildTimeoutMs))
+  if (args.buildDryRun) parts.push('--build-dry-run')
   return parts.join(' ')
 }
 
@@ -1606,6 +1648,8 @@ export function registerStartCommand(program: Command): void {
     .option('--path <dir>', 'Path to app directory (monorepo)')
     .option('--project <id>', 'Provider project/site ID')
     .option('--org <id>', 'Provider org/team ID (Vercel)')
+    .option('--build-timeout-ms <ms>', 'Timeout for stack plugin builds in milliseconds')
+    .option('--build-dry-run', 'Skip executing local build but continue flow (treated as no-build)')
     .option('--sync-env', 'Sync environment before deploy')
     .option('--promote', 'Vercel: after a preview deploy, promote it to production by setting an alias (use with --alias)')
     .option('--json', 'JSON-only output')
@@ -1623,6 +1667,7 @@ export function registerStartCommand(program: Command): void {
     .option('--alias <domain>', 'Vercel only: set an alias (domain) after deploy')
     .option('--show-logs', 'Also echo provider stdout/stderr lines in human mode')
     .option('--summary-only', 'JSON: print only objects with final:true (suppresses transient JSON)')
+    .option('--ndjson-out <path>', 'Write NDJSON events to a file (implies NDJSON mode)')
     .option('--idle-timeout <seconds>', 'Abort if no new provider output arrives for N seconds (disabled by default)')
     .option('--timeout <seconds>', 'Abort provider subprocess after N seconds (default 900 in --ci; unlimited otherwise)')
     .option('--debug-detect', 'Emit detection JSON payload (path, framework, build/publish hints) for debugging')
@@ -1631,7 +1676,8 @@ export function registerStartCommand(program: Command): void {
     .action(async (opts: StartOptions): Promise<void> => {
       try { await runStartWizard(opts) } catch (err) {
         const message: string = err instanceof Error ? err.message : String(err)
-        logger.error(message)
+        if (process.env.OPD_NDJSON === '1') { logger.json({ ok: false, action: 'start', message, final: true }) }
+        else logger.error(message)
         process.exitCode = 1
       }
     })

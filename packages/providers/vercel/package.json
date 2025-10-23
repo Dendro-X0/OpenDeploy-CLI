@@ -1,0 +1,23 @@
+{
+  "name": "@opendeploy/provider-vercel",
+  "version": "0.0.0",
+  "private": false,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist/**"],
+  "scripts": {
+    "build": "tsc -p .",
+    "clean": "rimraf dist",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@opendeploy/core": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "rimraf": "^6.0.1",
+    "@types/node": "^20.11.30",
+    "vitest": "^2.0.5"
+  }
+}

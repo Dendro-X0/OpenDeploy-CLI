@@ -44,6 +44,14 @@ git push origin HEAD
 
 Optionally, set the repo’s Pages settings to deploy from “GitHub Actions”.
 
+## GitHub Actions quickstart
+
+Use the ready-to-run workflow in your repo:
+
+- `.github/workflows/quickstart-github-pages.yml`
+
+Trigger it from GitHub Actions → Workflows → "Quickstart (GitHub Pages)".
+
 ## 3) Verify Deployment
 
 - Open your site at `https://<owner>.github.io/<repo>`

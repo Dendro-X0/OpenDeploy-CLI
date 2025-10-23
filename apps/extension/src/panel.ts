@@ -3,7 +3,7 @@ import { getSettings } from './config'
 import { listProjectCandidates, ProjectCandidate } from './detect'
 import { getWs } from './storage'
 
-export type RunAction = 'plan' | 'deploy' | 'doctor' | 'detect'
+export type RunAction = 'plan' | 'deploy' | 'doctor' | 'detect' | 'logs'
 
 export type PanelMessage =
   | { type: 'toggle-json' }
@@ -13,12 +13,15 @@ export type PanelMessage =
   | { type: 'select-app', cwd: string }
   | { type: 'open-summary' }
   | { type: 'open-url', url: string }
+  | { type: 'scan-strict' }
+  | { type: 'scan' }
 
 export type PanelState =
   | { kind: 'init', preferJson: boolean, apps: ReadonlyArray<ProjectCandidate>, lastApp?: string }
   | { kind: 'result', ok: boolean, logsUrl?: string }
   | { kind: 'hints', hints: ReadonlyArray<string> }
   | { kind: 'toast', level: 'info' | 'warn' | 'error', message: string, provider?: 'vercel' | 'cloudflare' }
+  | { kind: 'scan', total: number, at?: string }
 
 let panel: vscode.WebviewPanel | undefined
 let onMessageCb: ((msg: PanelMessage) => void | Promise<void>) | undefined
@@ -65,6 +68,9 @@ function getHtml(): string {
       header { padding: 12px 16px; border-bottom: 1px solid var(--vscode-panel-border); display: flex; align-items: center; justify-content: space-between; }
       .title { font-weight: 600; }
       .pill { padding: 2px 10px; border-radius: 999px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); cursor: default; }
+      .pill.ok { background: rgba(16, 185, 129, 0.2); color: var(--vscode-foreground); }
+      .pill.warn { background: rgba(245, 158, 11, 0.2); color: var(--vscode-foreground); }
+      #scanPill { cursor: pointer; }
       main { padding: 12px 16px; display: grid; gap: 12px; }
       .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
       select, button { background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); border-radius: 6px; padding: 6px 10px; }
@@ -80,7 +86,10 @@ function getHtml(): string {
   <body>
     <header>
       <div class="title">OpenDeploy</div>
-      <div id="jsonPill" class="pill">JSON: On</div>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <div id="scanPill" class="pill">Scan: -</div>
+        <div id="jsonPill" class="pill">JSON: On</div>
+      </div>
     </header>
     <main>
       <div class="row">
@@ -90,6 +99,7 @@ function getHtml(): string {
         <button id="btnPlan" class="primary">Plan</button>
         <button id="btnDeploy" class="primary">Deploy</button>
         <button id="btnDoctor" class="ghost">Doctor</button>
+        <button id="btnLogs" class="ghost">Follow Logs</button>
         <button id="btnDetect" class="ghost">Detect</button>
       </div>
       <div class="row">
@@ -101,6 +111,8 @@ function getHtml(): string {
         <span class="spacer"></span>
         <button id="btnVercel" class="ghost">Vercel Auth</button>
         <button id="btnCf" class="ghost">Cloudflare Auth</button>
+        <button id="btnScan" class="ghost" title="Run scan (non-strict)">Run Scan</button>
+        <button id="btnScanStrict" class="ghost" title="Run scan --strict (fail on findings)">Strict Scan</button>
         <button id="btnJson" class="ghost">Toggle JSON</button>
         <button id="btnSummary" class="ghost">Open Summary</button>
       </div>
@@ -112,9 +124,12 @@ function getHtml(): string {
       const vscode = acquireVsCodeApi();
       const appSel = document.getElementById('appSel');
       const jsonPill = document.getElementById('jsonPill');
+      const scanPill = document.getElementById('scanPill');
       const result = document.getElementById('result');
       const hints = document.getElementById('hints');
       const toast = document.getElementById('toast');
+      const btnScanStrict = document.getElementById('btnScanStrict');
+      const btnScan = document.getElementById('btnScan');
       function cwd(){ const opt = appSel.options[appSel.selectedIndex]; return (opt && opt.value) || '' }
       function post(msg){ vscode.postMessage(msg) }
       function renderInit(s){
@@ -126,6 +141,15 @@ function getHtml(): string {
         if (s.lastApp) {
           for (let i=0;i<appSel.options.length;i++){ if (appSel.options[i].value===s.lastApp){ appSel.selectedIndex = i; break } }
         }
+        if (s.kind === 'scan') {
+          const n = Number(s.total||0)
+          if (scanPill) {
+            scanPill.textContent = n === 0 ? 'Scan: OK' : ('Scan: ' + n)
+            scanPill.classList.remove('ok','warn')
+            scanPill.classList.add(n === 0 ? 'ok' : 'warn')
+            if (s.at) { try { scanPill.title = 'Last scan at ' + new Date(s.at).toLocaleString() } catch {} }
+          }
+        }
       }
       window.addEventListener('message', ev => {
         const { type, payload } = ev.data || {}
@@ -135,6 +159,13 @@ function getHtml(): string {
         if (s.kind === 'hints') {
           hints.textContent = ''
           (s.hints||[]).forEach(t => { const div = document.createElement('div'); div.textContent = '• ' + t; hints.appendChild(div) })
+        }
+        if (s.kind === 'scan') {
+          const n = Number(s.total||0)
+          if (scanPill) {
+            scanPill.textContent = n === 0 ? 'Scan: OK' : ('Scan: ' + n)
+            if (s.at) { try { scanPill.title = 'Last scan at ' + new Date(s.at).toLocaleString() } catch {} }
+          }
         }
         if (s.kind === 'toast') {
           toast.innerHTML = ''
@@ -161,10 +192,14 @@ function getHtml(): string {
       document.getElementById('btnPlan').onclick = ()=> post({ type: 'run', action: 'plan', cwd: cwd() })
       document.getElementById('btnDeploy').onclick = ()=> post({ type: 'run', action: 'deploy', cwd: cwd() })
       document.getElementById('btnDoctor').onclick = ()=> post({ type: 'run', action: 'doctor', cwd: cwd() })
+      document.getElementById('btnLogs').onclick = ()=> post({ type: 'run', action: 'logs', cwd: cwd() })
       document.getElementById('btnDetect').onclick = ()=> post({ type: 'run', action: 'detect', cwd: cwd() })
       document.getElementById('btnGenGH').onclick = ()=> { const tpl = document.getElementById('tplSel').value; post({ type: 'generate-gh', cwd: cwd(), template: tpl }) }
       document.getElementById('btnVercel').onclick = ()=> post({ type: 'auth', provider: 'vercel' })
       document.getElementById('btnCf').onclick = ()=> post({ type: 'auth', provider: 'cloudflare' })
+      if (btnScanStrict) btnScanStrict.addEventListener('click', () => { post({ type: 'scan-strict' }) })
+      if (btnScan) btnScan.addEventListener('click', () => { post({ type: 'scan' }) })
+      if (scanPill) scanPill.addEventListener('click', () => { post({ type: 'scan' }) })
       document.getElementById('btnJson').onclick = ()=> { post({ type: 'toggle-json' }); jsonPill.textContent = (jsonPill.textContent==='JSON: On') ? 'JSON: Off' : 'JSON: On' }
       document.getElementById('btnSummary').onclick = ()=> post({ type: 'open-summary' })
     </script>

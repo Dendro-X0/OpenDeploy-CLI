@@ -2,7 +2,7 @@
   "name": "opendeploy-vscode",
   "displayName": "OpenDeploy",
   "description": "Plan and deploy web apps from VSCode using OpenDeploy.",
-  "version": "0.1.0",
+  "version": "1.2.1",
   "publisher": "opendeploy",
   "license": "MIT",
   "repository": {
@@ -31,7 +31,16 @@
       { "command": "opendeploy.checkVercelAuth", "title": "OpenDeploy: Check Vercel Auth" },
       { "command": "opendeploy.checkCloudflareAuth", "title": "OpenDeploy: Check Cloudflare Auth" },
       { "command": "opendeploy.generateGhPagesWorkflow", "title": "OpenDeploy: Generate GH Pages Workflow" },
-      { "command": "opendeploy.doctor", "title": "OpenDeploy: Doctor" }
+      { "command": "opendeploy.doctor", "title": "OpenDeploy: Doctor" },
+      { "command": "opendeploy.openVercel", "title": "OpenDeploy: Open Vercel Dashboard" },
+      { "command": "opendeploy.openCloudflare", "title": "OpenDeploy: Open Cloudflare Dashboard" },
+      { "command": "opendeploy.openGithub", "title": "OpenDeploy: Open GitHub Actions" }
+      ,{ "command": "opendeploy.followLogs", "title": "OpenDeploy: Follow Logs" }
+      ,{ "command": "opendeploy.scan", "title": "OpenDeploy: Scan Repo" }
+      ,{ "command": "opendeploy.scanStrict", "title": "OpenDeploy: Scan Repo (Strict)" }
+      ,{ "command": "opendeploy.vercelSetAlias", "title": "OpenDeploy: Vercel — Set Alias" }
+      ,{ "command": "opendeploy.vercelRollback", "title": "OpenDeploy: Vercel — Rollback" }
+      ,{ "command": "opendeploy.onboarding", "title": "OpenDeploy: Onboarding" }
     ],
     "keybindings": [
       {
@@ -56,6 +65,60 @@
         "command": "opendeploy.plan",
         "key": "ctrl+alt+p",
         "mac": "cmd+alt+p",
+        "when": "workbenchState != 'empty'"
+      }
+      ,{
+        "command": "opendeploy.openVercel",
+        "key": "ctrl+alt+v",
+        "mac": "cmd+alt+v",
+        "when": "workbenchState != 'empty'"
+      }
+      ,{
+        "command": "opendeploy.openCloudflare",
+        "key": "ctrl+alt+c",
+        "mac": "cmd+alt+c",
+        "when": "workbenchState != 'empty'"
+      }
+      ,{
+        "command": "opendeploy.openGithub",
+        "key": "ctrl+alt+g",
+        "mac": "cmd+alt+g",
+        "when": "workbenchState != 'empty'"
+      }
+      ,{
+        "command": "opendeploy.followLogs",
+        "key": "ctrl+alt+l",
+        "mac": "cmd+alt+l",
+        "when": "workbenchState != 'empty'"
+      }
+      ,{
+        "command": "opendeploy.vercelSetAlias",
+        "key": "ctrl+alt+a",
+        "mac": "cmd+alt+a",
+        "when": "workbenchState != 'empty'"
+      }
+      ,{
+        "command": "opendeploy.vercelRollback",
+        "key": "ctrl+alt+r",
+        "mac": "cmd+alt+r",
+        "when": "workbenchState != 'empty'"
+      }
+      ,{
+        "command": "opendeploy.onboarding",
+        "key": "ctrl+alt+w",
+        "mac": "cmd+alt+w",
+        "when": "workbenchState != 'empty'"
+      }
+      ,{
+        "command": "opendeploy.scanStrict",
+        "key": "ctrl+alt+shift+s",
+        "mac": "cmd+alt+shift+s",
+        "when": "workbenchState != 'empty'"
+      }
+      ,{
+        "command": "opendeploy.scan",
+        "key": "ctrl+alt+s",
+        "mac": "cmd+alt+s",
         "when": "workbenchState != 'empty'"
       }
     ],

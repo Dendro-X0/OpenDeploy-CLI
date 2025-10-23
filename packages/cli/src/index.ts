@@ -2,7 +2,7 @@ import { Command } from 'commander'
 import { registerDetectCommand } from './commands/detect'
 import { registerDoctorCommand } from './commands/doctor'
 import { registerGenerateCommand } from './commands/generate'
-import { registerDeployCommand } from './commands/deploy'
+import { registerDeployCommand, registerAliasCommand } from './commands/deploy'
 import { registerEnvCommand } from './commands/env'
 import { registerSeedCommand } from './commands/seed'
 import { logger } from './utils/logger'
@@ -19,9 +19,19 @@ import { registerUpCommand } from './commands/up'
 import { registerStartCommand } from './commands/start'
 import { registerTestMatrixCommand } from './commands/test-matrix'
 import { computeRedactors } from './utils/redaction'
+import { fsx } from './utils/fs'
+import { join, resolve } from 'node:path'
+import { readFile } from 'node:fs/promises'
 import { registerCiLogsCommand } from './commands/ci-logs'
+import { registerScanCommand } from './commands/scan'
+import { registerCiDoctorCommand } from './commands/ci-doctor'
+import { registerCiRunCommand } from './commands/ci-run'
+import { registerNdjsonValidateCommand } from './commands/ndjson-validate'
+import { registerCiGenerateCommand } from './commands/ci-generate'
+import { registerCiDiffCommand } from './commands/ci-diff'
+import { registerCiLocalCommand } from './commands/ci-local'
 
-const VERSION: string = '1.2.0-rc.2'
+const VERSION: string = '1.2.2'
 
 function main(): void {
   const program: Command = new Command()
@@ -146,11 +156,63 @@ function main(): void {
     process.env.OPD_COLOR = 'auto'
   }
   // Initialize redaction patterns from local env files and process.env (best-effort, non-blocking)
-  if (process.env.OPD_NO_REDACT !== '1') {
+  const isCI: boolean = process.env.CI === 'true' || process.env.CI === '1' || process.env.GITHUB_ACTIONS === 'true' || process.env.OPD_FORCE_CI === '1'
+  if (isCI) process.env.OPD_FORCED_REDACT = '1'
+  if (isCI || process.env.OPD_NO_REDACT !== '1') {
     void computeRedactors({ cwd: process.cwd(), envFiles: ['.env', '.env.local', '.env.production.local'], includeProcessEnv: true })
       .then((patterns) => { if (Array.isArray(patterns) && patterns.length > 0) logger.setRedactors(patterns) })
       .catch(() => { /* ignore redactor init errors */ })
   }
+  // In CI, reject project-local cache dir configuration by disabling cache
+  void (async () => {
+    try {
+      if (!isCI) return
+      const cwd = process.cwd()
+      const cacheDirEnv: string | undefined = process.env.OPD_CACHE_DIR
+      if (cacheDirEnv) {
+        const c = resolve(cacheDirEnv).replace(/\\/g,'/')
+        const p = resolve(cwd).replace(/\\/g,'/')
+        const inProject: boolean = c.startsWith(p.endsWith('/') ? p : p + '/')
+        if (inProject) {
+          process.env.OPD_DISABLE_CACHE = '1'
+          const isJson = process.env.OPD_JSON === '1' || process.env.OPD_NDJSON === '1'
+          if (!isJson) logger.warn('CI: OPD_CACHE_DIR points inside project; caching disabled')
+        }
+      }
+    } catch { /* ignore */ }
+  })()
+  // Tiny security banner (human mode only) — warns on risky conditions with concise suggestions
+  void (async () => {
+    try {
+      const isJson: boolean = process.env.OPD_JSON === '1' || process.env.OPD_NDJSON === '1'
+      if (isJson) return
+      const cwd: string = process.cwd()
+      const cacheDirEnv: string | undefined = process.env.OPD_CACHE_DIR
+      const cacheDisabled: boolean = process.env.OPD_DISABLE_CACHE === '1' || process.env.OPD_SAFE_MODE === '1' || process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true'
+      const redactionEnabled: boolean = process.env.OPD_NO_REDACT !== '1'
+      const stateInProject: boolean = process.env.OPD_STATE_IN_PROJECT === '1'
+      const legacyCache: boolean = await fsx.exists(join(cwd, '.opendeploy', 'cache.json'))
+      let gitignoreHasOpd: boolean = false
+      try { const buf = await readFile(join(cwd, '.gitignore'), 'utf8'); gitignoreHasOpd = /(\n|^)\.opendeploy\/(\s|$)/.test(buf) } catch { /* ignore */ }
+      let cacheDirRisk: boolean = false
+      try { if (cacheDirEnv) { const c = resolve(cacheDirEnv).replace(/\\/g,'/'); const p = resolve(cwd).replace(/\\/g,'/'); cacheDirRisk = c.startsWith(p.endsWith('/') ? p : p + '/') } } catch { /* ignore */ }
+      const risks: string[] = []
+      if (!cacheDisabled && cacheDirRisk) risks.push('cache=project-path')
+      if (!redactionEnabled) risks.push('redaction=off')
+      if (stateInProject) risks.push('state=project')
+      if (legacyCache) risks.push('legacy-cache')
+      if (!gitignoreHasOpd) risks.push('gitignore-missing')
+      if (risks.length > 0) {
+        const tips: string[] = []
+        if (!cacheDisabled) tips.push('set OPD_SAFE_MODE=1 or OPD_DISABLE_CACHE=1')
+        if (cacheDirRisk) tips.push('move OPD_CACHE_DIR outside project')
+        if (!redactionEnabled) tips.push('avoid OPD_NO_REDACT=1')
+        if (stateInProject) tips.push('unset OPD_STATE_IN_PROJECT')
+        if (!gitignoreHasOpd) tips.push('add .opendeploy/ to .gitignore')
+        logger.note(`Security: risks=[${risks.join(', ')}]; tips=[${tips.join('; ')}]`)
+      }
+    } catch { /* ignore banner errors */ }
+  })()
   registerDetectCommand(program)
   registerDoctorCommand(program)
   registerGenerateCommand(program)
@@ -168,7 +230,15 @@ function main(): void {
   registerUpCommand(program)
   registerStartCommand(program)
   registerCiLogsCommand(program)
+  registerScanCommand(program)
+  registerAliasCommand(program)
   registerTestMatrixCommand(program)
+  registerCiDoctorCommand(program)
+  registerCiRunCommand(program)
+  registerNdjsonValidateCommand(program)
+  registerCiGenerateCommand(program)
+  registerCiDiffCommand(program)
+  registerCiLocalCommand(program)
   program.parseAsync(process.argv)
     .then(() => {})
     .catch((err: unknown) => {

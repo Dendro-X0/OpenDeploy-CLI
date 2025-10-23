@@ -10,6 +10,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Version](https://img.shields.io/github/v/tag/Dendro-X0/OpenDeploy-CLI?label=version)](https://github.com/Dendro-X0/OpenDeploy-CLI/releases)
 
+
 ## Introduction
 
 OpenDeploy is a cross‑provider deployment CLI for modern web apps. It detects your stack, validates environment, and deploys with human‑readable logs and CI‑friendly JSON/NDJSON. The short command is `opd`.
@@ -49,6 +50,15 @@ Three steps to deploy, per provider:
 - Vercel: https://dendro-x0.github.io/OpenDeploy-CLI/docs/opendeploy/quickstart-vercel
 - GitHub Pages: https://dendro-x0.github.io/OpenDeploy-CLI/docs/opendeploy/quickstart-github-pages
 - Cloudflare Pages: https://dendro-x0.github.io/OpenDeploy-CLI/docs/opendeploy/quickstart-cloudflare
+
+Local docs (repository):
+
+- [Overview](docs/overview.md)
+- [Getting Started](docs/getting-started.md)
+- [Configuration](docs/configuration.md)
+- [Deployment](docs/deployment.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Acknowledgments](docs/acknowledgments.md)
 
 ## License
 

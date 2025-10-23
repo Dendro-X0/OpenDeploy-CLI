@@ -3,7 +3,7 @@ import type { ProjectRef, BuildInputs, BuildResult, DeployInputs, DeployResult }
 import type { DetectionResult } from '../../types/detection-result'
 
 /**
- * The Provider interface is implemented by each provider plugin (e.g. vercel, netlify, cloudflare).
+ * The Provider interface is implemented by each provider plugin (e.g. vercel, cloudflare, github-pages).
  */
 export interface Provider {
   readonly id: string
@@ -18,7 +18,7 @@ export interface Provider {
   envSet(project: ProjectRef, kv: Record<string, string>): Promise<void>
   logs(project: ProjectRef, options?: { readonly follow?: boolean }): Promise<void>
   /**
-   * Generate provider-specific config files (e.g. vercel.json, netlify.toml) in cwd.
+   * Generate provider-specific config files (e.g. vercel.json, wrangler.toml) in cwd.
    * Returns the absolute or relative path to the written config file.
    */
   generateConfig(args: { readonly detection: DetectionResult; readonly cwd: string; readonly overwrite: boolean }): Promise<string>

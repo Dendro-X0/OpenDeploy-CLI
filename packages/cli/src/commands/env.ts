@@ -12,7 +12,7 @@ import { printEnvPullSummary, printEnvSyncSummary, printEnvDiffSummary } from '.
 import { confirm } from '../utils/prompt'
 import { proc, runWithRetry } from '../utils/process'
 import { fsx } from '../utils/fs'
-import { getCached, setCached } from '../utils/cache'
+import { getCached, setCached, hashValue } from '../utils/cache'
 import Ajv from 'ajv'
 import { envSummarySchema } from '../schemas/env-summary.schema'
 
@@ -74,9 +74,12 @@ async function syncCloudflare(args: { readonly cwd: string; readonly file: strin
     const go = args.yes === true || args.ci === true || args.dryRun === true ? true : await confirm(`Set ${key}=${mask(value)} to Cloudflare Pages?`, { defaultYes: true })
     if (!go) continue
     if (args.dryRun === true) { logger.info(`[dry-run] wrangler pages project secret put ${key} --project-name ${project}`); results.push({ key, status: 'skipped' }); continue }
-    const cmd = `wrangler pages project secret put ${key} --project-name ${project} --value ${JSON.stringify(value)}`
-    if (args.printCmd) logger.info(`$ ${cmd}`)
-    const res = await runWithRetry({ cmd, cwd: args.cwd })
+    const cmd = `wrangler pages project secret put ${key} --project-name ${project}`
+    if (args.printCmd) {
+      const safe = `wrangler pages project secret put ${key} --project-name ${project} <(redacted)`
+      logger.info(`$ ${safe}`)
+    }
+    const res = await runWithRetry({ cmd, cwd: args.cwd, stdin: `${value}` })
     if (res.ok) { logger.success(`Set ${key}`); results.push({ key, status: 'set' }) }
     else { const errMsg: string = res.stderr.trim() || res.stdout.trim(); logger.warn(`Failed to set ${key}: ${errMsg}`); results.push({ key, status: 'failed', error: errMsg }) }
   }
@@ -314,13 +317,13 @@ async function syncVercel(args: { readonly cwd: string; readonly file: string; r
   }
   const targets: readonly string[] = toVercelEnv(args.env)
   // Optimize writes: fetch remote maps once per target and skip same-values
-  const remoteByEnv: Record<string, Record<string, string>> = {}
+  const remoteHashByEnv: Record<string, Record<string, string>> = {}
   if (args.optimizeWrites === true && !args.dryRun) {
     for (const t of targets) {
       try {
         const cacheKey = `vercel:env:${t}`
         const cached = await getCached<Record<string, string>>({ cwd: args.cwd, key: cacheKey, ttlMs: 60_000 })
-        if (cached) { remoteByEnv[t] = cached; continue }
+        if (cached) { remoteHashByEnv[t] = cached; continue }
         const tmpDir: string = await mkdtemp(join(tmpdir(), 'opendeploy-remote-'))
         const tmpFile: string = join(tmpDir, `.env.remote.${t}`)
         const pullCmd = `vercel env pull ${tmpFile} --environment ${t}`
@@ -328,7 +331,8 @@ async function syncVercel(args: { readonly cwd: string; readonly file: string; r
         const pulled = await runWithRetry({ cmd: pullCmd, cwd: args.cwd })
         if (pulled.ok) {
           const m = await parseEnvFile({ path: tmpFile })
-          remoteByEnv[t] = m
+          const hashed: Record<string, string> = Object.fromEntries(Object.entries(m).map(([k, v]) => [k, hashValue(String(v))]))
+          remoteHashByEnv[t] = hashed
           await setCached({ cwd: args.cwd, key: cacheKey, value: m })
         }
         await rm(tmpDir, { recursive: true, force: true })
@@ -348,8 +352,8 @@ async function syncVercel(args: { readonly cwd: string; readonly file: string; r
         touched.push(t)
         continue
       }
-      // Skip if optimize-writes and remote value matches
-      if (args.optimizeWrites === true && remoteByEnv[t] && remoteByEnv[t][key] === value) {
+      // Skip if optimize-writes and remote value matches (compare against hashed remote value)
+      if (args.optimizeWrites === true && remoteHashByEnv[t] && remoteHashByEnv[t][key] === hashValue(String(value))) {
         logger.info(`Skip (same) ${key} in ${t}`)
         touched.push(t)
         continue

@@ -3,6 +3,7 @@ import * as vscode from 'vscode'
 import { Settings } from './config'
 import { getOutput, printJsonSummary } from './output'
 import { postSummary } from './summary'
+import { postPanelState } from './panel'
 
 export interface RunArgs {
   readonly args: readonly string[]
@@ -22,7 +23,15 @@ export async function runOpenDeploy(opts: RunArgs): Promise<RunnerResult> {
   const cmd: string = buildCommand(opts)
   output.appendLine(`$ ${cmd}`)
   return await new Promise<RunnerResult>((resolve) => {
-    const childProc = child.spawn(cmd, { cwd: opts.cwd, shell: true })
+    const childProc = child.spawn(cmd, {
+      cwd: opts.cwd,
+      shell: true,
+      env: {
+        ...process.env,
+        // Enable NDJSON streaming when JSON view is preferred
+        OPD_NDJSON: opts.settings.preferJson ? '1' : undefined
+      }
+    })
     let buf = ''
     let logsUrl: string | undefined
     const urlCandidates: Set<string> = new Set()
@@ -37,18 +46,45 @@ export async function runOpenDeploy(opts: RunArgs): Promise<RunnerResult> {
         // JSON summary line
         if (line.startsWith('{') && line.endsWith('}')) {
           try {
-            const obj = JSON.parse(line) as { logsUrl?: string; final?: boolean; provider?: string; phase?: string; ok?: boolean; app?: string; project?: string; message?: string; error?: string }
+            const obj = JSON.parse(line) as { logsUrl?: string; final?: boolean; provider?: string; phase?: string; ok?: boolean; app?: string; project?: string; message?: string; error?: string; action?: string; results?: Array<{ name?: string; ok?: boolean; message?: string }>; suggestions?: string[] }
             if (obj.logsUrl) urlCandidates.add(obj.logsUrl)
             printJsonSummary(obj)
             if (opts.onJson) opts.onJson(obj)
             // Send compact summary to the webview
+            const checks = Array.isArray((obj as any).results) ? (obj as any).results : undefined
+            const suggestions = Array.isArray((obj as any).suggestions) ? (obj as any).suggestions : undefined
             postSummary({
               ok: obj.ok !== false,
               provider: obj.provider,
               phase: obj.phase,
               app: obj.app ?? obj.project,
-              message: obj.message ?? obj.error
+              url: (obj as any).url,
+              logsUrl: obj.logsUrl,
+              message: obj.message ?? obj.error,
+              action: (obj as any).action,
+              checks,
+              suggestions
             })
+            // Mirror Security Health in panel if present
+            try {
+              const anyObj: any = obj
+              if (anyObj && anyObj.action === 'doctor' && anyObj.event === 'security-health') {
+                const hints: string[] = []
+                if (anyObj.cacheDisabled) hints.push('Cache: disabled')
+                if (anyObj.state === 'os') hints.push('State: OS config')
+                if (anyObj.gitignoreHasOpd !== true) hints.push('Add .opendeploy/ to .gitignore')
+                if (anyObj.cacheDirRisk === true) hints.push('OPD_CACHE_DIR inside project (risk)')
+                if (anyObj.legacyCachePresent === true) hints.push('Legacy .opendeploy/cache.json present')
+                if (hints.length) {
+                  postSummary({ ok: anyObj.ok !== false, provider: undefined, phase: 'doctor', app: undefined, url: undefined, logsUrl: undefined, message: 'Security Health', action: 'doctor', checks: undefined, suggestions: hints })
+                  postPanelState({ kind: 'hints', hints })
+                }
+              }
+              if (anyObj && anyObj.action === 'doctor' && anyObj.event === 'security-guide' && Array.isArray(anyObj.steps)) {
+                const text = String(anyObj.steps.join(' | '))
+                getOutput().appendLine('[security-guide] ' + text)
+              }
+            } catch { /* ignore */ }
           } catch { /* ignore */ }
         }
         // Detect login hints
@@ -90,6 +126,7 @@ function chooseBestLogUrl(urls: readonly string[]): string | undefined {
   const score = (u: string): number => {
     const s = u.toLowerCase()
     if (s.includes('vercel.com') && s.includes('/deployments')) return 100
+    if (s.includes('vercel.com') && s.includes('/inspections')) return 95
     if (s.includes('vercel.com')) return 90
     if (s.includes('cloudflare') && (s.includes('pages') || s.includes('workers'))) return 80
     if (s.includes('pages.dev')) return 70
