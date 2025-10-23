@@ -42,13 +42,13 @@ opd start
 
 ## Documentation
 
-Docs site: https://dendro-x0.github.io/opendeploy-cli-docs-site/
+Docs site: https://dendro-x0.github.io/OpenDeploy-CLI/
 
 Three steps to deploy, per provider:
 
-- Vercel: https://dendro-x0.github.io/opendeploy-cli-docs-site/docs/opendeploy/quickstart-vercel
-- GitHub Pages: https://dendro-x0.github.io/opendeploy-cli-docs-site/docs/opendeploy/quickstart-github-pages
-- Cloudflare Pages: https://dendro-x0.github.io/opendeploy-cli-docs-site/docs/opendeploy/quickstart-cloudflare
+- Vercel: https://dendro-x0.github.io/OpenDeploy-CLI/docs/opendeploy/quickstart-vercel
+- GitHub Pages: https://dendro-x0.github.io/OpenDeploy-CLI/docs/opendeploy/quickstart-github-pages
+- Cloudflare Pages: https://dendro-x0.github.io/OpenDeploy-CLI/docs/opendeploy/quickstart-cloudflare
 
 ## License
 
