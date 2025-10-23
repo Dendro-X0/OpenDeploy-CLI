@@ -31,7 +31,7 @@ import { registerCiGenerateCommand } from './commands/ci-generate'
 import { registerCiDiffCommand } from './commands/ci-diff'
 import { registerCiLocalCommand } from './commands/ci-local'
 
-const VERSION: string = '1.2.0-rc.2'
+const VERSION: string = '1.2.2'
 
 function main(): void {
   const program: Command = new Command()
