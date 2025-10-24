@@ -34,8 +34,18 @@ Write-Host "Downloading $asset -> $dest"
 Invoke-WebRequest -Headers $hdr -Uri $url -OutFile $dest
 
 Write-Host "Installed: $dest"
-if (-not ($env:PATH -split ';' | Where-Object { $_ -eq $destDir })) {
-  Write-Host "Note: $destDir may not be on PATH. Add it via System Properties or:`n  [Environment]::SetEnvironmentVariable('PATH', \"$destDir;\" + $env:PATH, 'User')"
+
+# Ensure install dir on PATH for the current user
+$pathParts = $env:PATH -split ';'
+if (-not ($pathParts -contains $destDir)) {
+  try {
+    $newPath = "$destDir;" + $env:PATH
+    [Environment]::SetEnvironmentVariable('PATH', $newPath, 'User')
+    Write-Host "Added $destDir to User PATH. Open a new terminal to pick up changes."
+  }
+  catch {
+    Write-Warning "Could not modify PATH automatically. Add this directory to PATH manually: $destDir"
+  }
 }
 
 & $dest -v
