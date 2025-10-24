@@ -3,15 +3,29 @@
 This page describes supported installation methods for the OpenDeploy CLI.
 
 > Note
-> Recommended: install from npm (no cloning required). Releases and Docker are available as alternatives.
+> Recommended: install via the script from GitHub Releases (no npm account required). Docker and source builds are also available. npm will be recommended once published.
 
-## Install from npm — recommended
+## Install via script — recommended
+
+- Linux/macOS (installs to `~/.local/bin/opd`):
+```bash
+curl -fsSL "https://raw.githubusercontent.com/Dendro-X0/OpenDeploy-CLI/main/scripts/install/install.sh" | bash
+opd -v
+```
+
+- Windows PowerShell (installs to `%USERPROFILE%\bin\opd.exe`):
+```powershell
+iwr "https://raw.githubusercontent.com/Dendro-X0/OpenDeploy-CLI/main/scripts/install/install.ps1" -UseBasicParsing | iex
+& "$env:USERPROFILE\bin\opd.exe" -v
+```
+
+## Install from npm — when available
 
 Requires Node.js 18+ (includes npm 9/10). No repository clone required.
 
 - One-off (always latest):
 ```bash
-npx opendeploy@latest -h
+npx opendeploy@latest start
 ```
 
 - Global install (adds `opd` to PATH):
@@ -36,10 +50,10 @@ TAG=$(curl -sH 'User-Agent: opd-installer' https://api.github.com/repos/Dendro-X
 
 Build and run (from the extracted folder; building from source requires Node 20+ and pnpm via Corepack):
 ```bash
-# enable pnpm
-corepack enable && corepack prepare pnpm@10.13.1 --activate
+# enable pnpm (avoid pinning a specific version)
+corepack enable
 # install deps for the monorepo
-pnpm install -r --frozen-lockfile
+pnpm install -r --no-frozen-lockfile
 # build CLI
 pnpm -C packages/cli build
 # run CLI
@@ -130,7 +144,7 @@ opd -v
 ```
 
 Troubleshooting downloads:
-- If `Invoke-WebRequest` shows an HTML page or fails with a web exception, the URL may be wrong (no release/tag yet) or headers are missing. Use the API‑based scripts above, ensure a tag like `v1.1.1` exists, and that assets are attached (e.g., `opd-windows-x64.exe`).
+- If `Invoke-WebRequest` shows an HTML page or fails with a web exception, the URL may be wrong (no release/tag yet) or headers are missing. Use the API‑based scripts above, ensure a tag like `v1.1.1` exists, and that assets are attached (e.g., `opd-win-x64.exe`).
  - If using the direct `latest/download` URLs above, verify that a release is published with the corresponding asset name for your OS/arch (e.g., `opd-windows-x64.exe`).
 
 ## Docker/OCI (no Node required)

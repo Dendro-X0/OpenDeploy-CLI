@@ -25,20 +25,18 @@ OpenDeploy is a cross‑provider deployment CLI for modern web apps. It detects 
 ## Quick Start
 
 ```bash
-# Linux/macOS — install from GitHub Releases (recommended)
-curl -fsSL "https://raw.githubusercontent.com/Dendro-X0/OpenDeploy-CLI/main/packages/cli/install/install.sh" | bash
+# Linux/macOS — install via script (no sudo, installs to ~/.local/bin)
+curl -fsSL "https://raw.githubusercontent.com/Dendro-X0/OpenDeploy-CLI/main/scripts/install/install.sh" | bash
 opd start
 
-# Windows PowerShell — install from GitHub Releases
-iwr "https://raw.githubusercontent.com/Dendro-X0/OpenDeploy-CLI/main/packages/cli/install/install.ps1" -UseBasicParsing | iex
+# Windows PowerShell — install via script (installs to %USERPROFILE%\bin)
+iwr "https://raw.githubusercontent.com/Dendro-X0/OpenDeploy-CLI/main/scripts/install/install.ps1" -UseBasicParsing | iex
 opd start
-
-# Package manager alternatives
-# npm:  npx opendeploy-cli start
-# pnpm: pnpm dlx opendeploy-cli start
-# yarn: yarn dlx opendeploy-cli start
-# bun:  bunx opendeploy-cli start
 ```
+
+More install options (GitHub Releases binaries, Docker, source build):
+
+- See the Install guide: https://dendro-x0.github.io/OpenDeploy-CLI/docs/opendeploy/install
 
 ## Documentation
 

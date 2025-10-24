@@ -17,7 +17,7 @@
     "prepare:dist": "tsup --clean",
     "prepack": "pnpm build",
     "build:cjs": "tsup src/index.ts --format cjs --target node18 --out-dir dist-cjs --sourcemap --no-dts --no-minify --clean",
-    "build:bin": "pnpm build:cjs && pkg dist-cjs/index.cjs --targets node18-win-x64,node18-linux-x64,node18-macos-arm64 --output artifacts/bin/opd",
+    "build:bin": "pnpm build:cjs && pkg dist-cjs/index.cjs --targets node18-win-x64,node18-linux-x64,node18-linux-arm64,node18-macos-arm64 --output artifacts/bin/opd",
     "build:bin:win": "pnpm build:cjs && pkg dist-cjs/index.cjs --targets node18-win-x64 --output artifacts/bin/opd-win-x64.exe",
     "build:bin:linux": "pnpm build:cjs && pkg dist-cjs/index.cjs --targets node18-linux-x64 --output artifacts/bin/opd-linux-x64",
     "build:bin:mac": "pnpm build:cjs && pkg dist-cjs/index.cjs --targets node18-macos-arm64 --output artifacts/bin/opd-macos-arm64",
