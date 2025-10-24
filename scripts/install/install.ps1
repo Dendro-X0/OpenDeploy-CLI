@@ -45,7 +45,9 @@ if (-not ($pathParts -contains $destDir)) {
   try {
     $newPath = "$destDir;" + $env:PATH
     [Environment]::SetEnvironmentVariable('PATH', $newPath, 'User')
-    Write-Host "Added $destDir to User PATH. Open a new terminal to pick up changes."
+    # Also update current session PATH so opd is immediately available
+    $env:PATH = $newPath
+    Write-Host "Added $destDir to User PATH."
   }
   catch {
     Write-Warning "Could not modify PATH automatically. Add this directory to PATH manually: $destDir"
