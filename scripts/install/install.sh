@@ -25,19 +25,17 @@ case "$ARCH_UNAME" in
 esac
 
 ASSET="opd-${OS}-${ARCH}"
-API="https://api.github.com/repos/${OWNER}/${REPO}/releases/latest"
-URL=$(curl -fsSL -H "User-Agent: ${UA}" "$API" | sed -n "s#.*\"browser_download_url\": \"\(https://[^"]*${ASSET}[^\"]*\)\".*#\1#p" | head -n1)
-if [ -z "$URL" ]; then
-  echo "Could not find asset ${ASSET} in latest release. Is a release published?" >&2
-  exit 1
-fi
+# Use direct latest/download URL to avoid API rate limits
+URL="https://github.com/${OWNER}/${REPO}/releases/latest/download/${ASSET}"
 
 PREFIX_DIR=${PREFIX:-"$HOME/.local"}
 BIN_DIR="${PREFIX_DIR}/bin"
 mkdir -p "$BIN_DIR"
 
 echo "Downloading ${ASSET} -> ${BIN_DIR}/opd"
-curl -fsSL -H "User-Agent: ${UA}" -o "${BIN_DIR}/opd" "$URL"
+HDR=(-H "User-Agent: ${UA}")
+if [ -n "${GH_TOKEN:-}" ]; then HDR+=( -H "Authorization: Bearer ${GH_TOKEN}" ); fi
+curl -fSLo "${BIN_DIR}/opd" "${URL}" "${HDR[@]}"
 chmod +x "${BIN_DIR}/opd"
 
 echo "Installed: ${BIN_DIR}/opd"

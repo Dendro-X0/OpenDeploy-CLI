@@ -8,7 +8,6 @@ $ErrorActionPreference = 'Stop'
 $Owner = 'Dendro-X0'
 $Repo  = 'OpenDeploy-CLI'
 $UA    = 'opd-installer'
-$Api   = "https://api.github.com/repos/$Owner/$Repo/releases/latest"
 
 # Detect arch
 $arch = (Get-CimInstance Win32_Processor).Architecture
@@ -18,12 +17,17 @@ $asset = switch ($arch) {
   default { 'opd-win-x64.exe' }
 }
 
-# Fetch release JSON and find asset
+# Build direct download URL to avoid API rate limits. Optionally pin version with $env:OPD_VERSION
 $hdr = @{ 'User-Agent' = $UA }
+if ($env:GH_TOKEN) { $hdr['Authorization'] = "Bearer $($env:GH_TOKEN)" }
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-$rel = Invoke-RestMethod -Headers $hdr -Uri $Api
-$url = ($rel.assets | Where-Object name -eq $asset).browser_download_url
-if (-not $url) { throw "Asset not found: $asset in $($rel.tag_name)" }
+$version = if ($env:OPD_VERSION) { $env:OPD_VERSION } else { 'latest' }
+if ($version -eq 'latest') {
+  $url = "https://github.com/$Owner/$Repo/releases/latest/download/$asset"
+}
+else {
+  $url = "https://github.com/$Owner/$Repo/releases/download/$version/$asset"
+}
 
 $prefix = if ($env:OPD_PREFIX) { $env:OPD_PREFIX } else { Join-Path $env:USERPROFILE 'bin' }
 $destDir = $prefix
