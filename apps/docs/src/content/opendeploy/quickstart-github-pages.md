@@ -1,83 +1,44 @@
-# Quick Start: GitHub Pages (3 steps)
+# Quick Start: GitHub Pages (Lite Mode)
 
-Deploy a static Next.js/SSG site to GitHub Pages using OpenDeploy CLI.
+Deploy a static site to GitHub Pages using OpenDeploy's lightweight wrappers (delegates to `npx gh-pages`).
 
-## 1) Install and Start
+## 1) Install `opd` wrapper
 
-Follow the steps in the [Install](./install.md) page to install from a tag (source) for now.
-
-Then start the wizard:
-
-```bash
-opd start
+- Windows PowerShell
+```powershell
+$dest = "$env:USERPROFILE\bin\opd.ps1"
+iwr "https://raw.githubusercontent.com/Dendro-X0/OpenDeploy-CLI/main/scripts/lite/opd.ps1" -UseBasicParsing -OutFile $dest
+[Environment]::SetEnvironmentVariable('PATH', "$env:USERPROFILE\bin;" + $env:PATH, 'User')
+$env:PATH = "$env:USERPROFILE\bin;" + $env:PATH
+opd.ps1 --help
 ```
 
-The Start wizard detects your framework and provider. For GitHub Pages, it offers to:
+- macOS/Linux
+```bash
+mkdir -p ~/.local/bin
+curl -fsSL "https://raw.githubusercontent.com/Dendro-X0/OpenDeploy-CLI/main/scripts/lite/opd.sh" -o ~/.local/bin/opd
+chmod +x ~/.local/bin/opd
+export PATH="$HOME/.local/bin:$PATH"
+opd --help
+```
 
-- Ensure `public/.nojekyll` exists (avoids asset mangling).
-- Patch `next.config.*` for static export (if Next.js):
+## 2) Prerequisites
+
+- Ensure you have a writable git remote for the repository.
+- For Next.js static export, set in `next.config.*`:
   - `output: 'export'`
   - `images.unoptimized: true`
   - `trailingSlash: true` (recommended)
-  - `basePath` and `assetPrefix` for Project Pages: expected `basePath` is `/<repo>`, and `assetPrefix` is `/<repo>/`
+  - If using Project Pages: `basePath: '/<repo>'` and `assetPrefix: '/<repo>/'`
 
-In JSON/CI mode, these fixes auto‑apply.
-
-## 2) Configure CI Workflow
-
-Use the wizard’s “GitHub Actions (recommended)” option. It writes `.github/workflows/deploy-pages.yml` and prints a deep‑link to Actions.
-
-Per‑app reusable workflow (monorepo):
+## 3) Deploy with a single command
 
 ```bash
-opd generate github --reusable
-# writes .github/workflows/deploy-app-gh-pages.yml using _reusable-gh-pages.yml
-```
-
-Then commit and push:
-
-```bash
-git add .github/workflows/deploy-pages.yml
-git commit -m "chore(ci): deploy to GitHub Pages"
-git push origin HEAD
-```
-
-Optionally, set the repo’s Pages settings to deploy from “GitHub Actions”.
-
-## 3) Verify Deployment
-
-- Open your site at `https://<owner>.github.io/<repo>`
-- Or use:
-
-```bash
-opd open github
+opd start --path <APP_PATH> --provider github-pages --output dist
 ```
 
 Tips:
 
-- Local build before pushing:
-
-```bash
-# static export (Next.js)
-pnpm build && pnpm next export
-# or use your framework’s build command
-```
-
-- Troubleshooting common issues (missing CSS/assets):
-
-```bash
-opd doctor --strict
-opd up github --preflight-only --strict-preflight --json
-```
-
-Notes:
-
-- The CLI ensures a `.nojekyll` marker in your artifact so `_next/` assets are published.
-- For Project Pages, mismatched `basePath`/`assetPrefix` is the most common cause of missing CSS/JS. The CLI now prints explicit hints if it detects a mismatch.
-
-## Screenshots (placeholders)
-
-<div style={{ display: 'grid', gap: 12 }}>
-  <img alt="Start wizard" src={`${process.env.NEXT_PUBLIC_BASE_PATH || ''}/screens/wizard-start.svg`} style={{ maxWidth: '100%', borderRadius: 8, border: '1px solid var(--gray-800)' }} />
-  <img alt="GitHub Actions run" src={`${process.env.NEXT_PUBLIC_BASE_PATH || ''}/screens/github-actions-run.svg`} style={{ maxWidth: '100%', borderRadius: 8, border: '1px solid var(--gray-800)' }} />
-</div>
+- In monorepos, set `<APP_PATH>` to the app folder that contains `package.json` (not the repo root).
+- Use your framework’s build to write `dist/` (e.g., `pnpm build && pnpm next export`).
+- The wrapper runs `npx gh-pages -d dist` from your app directory.

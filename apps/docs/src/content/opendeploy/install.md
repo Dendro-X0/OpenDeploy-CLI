@@ -3,9 +3,36 @@
 This page describes supported installation methods for the OpenDeploy CLI.
 
 > Note
-> Recommended: install via the script from GitHub Releases (no npm account required). Docker and source builds are also available. npm will be recommended once published.
+> Recommended: Lite Mode wrappers (`opd`) that delegate deploys to official CLIs (Vercel/Wrangler/GitHub Pages). Classic binary/source installs remain below.
 
-## Install via script — recommended
+## Lite Mode — recommended
+
+Use a tiny wrapper that calls official CLIs under the hood. No packaging or releases required.
+
+- Windows PowerShell (installs to `%USERPROFILE%\\bin`):
+```powershell
+$dest = "$env:USERPROFILE\bin\opd.ps1"
+iwr "https://raw.githubusercontent.com/Dendro-X0/OpenDeploy-CLI/main/scripts/lite/opd.ps1" -UseBasicParsing -OutFile $dest
+[Environment]::SetEnvironmentVariable('PATH', "$env:USERPROFILE\bin;" + $env:PATH, 'User')
+$env:PATH = "$env:USERPROFILE\bin;" + $env:PATH
+opd.ps1 --help
+```
+
+- macOS/Linux (installs to `~/.local/bin/opd`):
+```bash
+mkdir -p ~/.local/bin
+curl -fsSL "https://raw.githubusercontent.com/Dendro-X0/OpenDeploy-CLI/main/scripts/lite/opd.sh" -o ~/.local/bin/opd
+chmod +x ~/.local/bin/opd
+export PATH="$HOME/.local/bin:$PATH"
+opd --help
+```
+
+Provider prerequisites:
+- Vercel: `npm i -g vercel` (optional `VERCEL_TOKEN` for non-interactive)
+- Cloudflare Pages: `npm i -g wrangler` + `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`
+- GitHub Pages: `npx gh-pages` and a writable git remote
+
+## Classic: Install via script
 
 - Linux/macOS (installs to `~/.local/bin/opd`):
 ```bash

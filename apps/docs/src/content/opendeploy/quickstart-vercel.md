@@ -1,50 +1,43 @@
-# Quick Start: Vercel (3 steps)
+# Quick Start: Vercel (Lite Mode)
 
-Follow these 3 steps to deploy your app to Vercel using OpenDeploy CLI.
+Deploy to Vercel using the official Vercel CLI through OpenDeploy's lightweight wrappers. No binary packaging required.
 
-## 1) Install and Start
+## 1) Install `opd` wrapper
 
-Follow the steps in the [Install](./install.md) page to install from a tag (source) for now.
-
-Then start the wizard:
-
-```bash
-opd start
+- Windows PowerShell
+```powershell
+$dest = "$env:USERPROFILE\bin\opd.ps1"
+iwr "https://raw.githubusercontent.com/Dendro-X0/OpenDeploy-CLI/main/scripts/lite/opd.ps1" -UseBasicParsing -OutFile $dest
+[Environment]::SetEnvironmentVariable('PATH', "$env:USERPROFILE\bin;" + $env:PATH, 'User')
+$env:PATH = "$env:USERPROFILE\bin;" + $env:PATH
+opd.ps1 --help
 ```
 
-The Start wizard detects your framework, checks auth, and links your directory if needed. In JSON/CI mode you can pass `--json`.
-
-## 2) Preview Deploy
-
+- macOS/Linux
 ```bash
-opd up vercel --env preview
+mkdir -p ~/.local/bin
+curl -fsSL "https://raw.githubusercontent.com/Dendro-X0/OpenDeploy-CLI/main/scripts/lite/opd.sh" -o ~/.local/bin/opd
+chmod +x ~/.local/bin/opd
+export PATH="$HOME/.local/bin:$PATH"
+opd --help
 ```
 
-- Streams deploy output and captures the preview URL.
-- Prints a final JSON summary with `final: true` in `--json` mode.
-
-Optional alias/promotion from the Start wizard:
+## 2) Install provider CLI (Vercel)
 
 ```bash
-# Promote preview to a production domain
-opd start --provider vercel --env preview --promote --alias your-domain.com
+npm i -g vercel
+# optional, for non-interactive deploys
+# export VERCEL_TOKEN=... (PowerShell: $env:VERCEL_TOKEN = "...")
 ```
 
-## 3) Production
+## 3) Deploy with a single command
 
 ```bash
-# Promote via dedicated command
-opd promote vercel --alias your-domain.com
+opd start --path <APP_PATH> --provider vercel --env preview
 ```
 
 Tips:
 
-- Use `opd logs vercel --open` to view logs for the latest deployment.
-- Use `opd env sync vercel --file .env.local --env preview` to push env vars.
-- In CI, prefer `--json --summary-only --timestamps` or `--gha`.
-
-## Screenshots (placeholders)
-
-<div style={{ display: 'grid', gap: 12 }}>
-  <img alt="Start wizard" src={`${process.env.NEXT_PUBLIC_BASE_PATH || ''}/screens/wizard-start.svg`} style={{ maxWidth: '100%', borderRadius: 8, border: '1px solid var(--gray-800)' }} />
-</div>
+- In monorepos, set `<APP_PATH>` to the app folder that contains `package.json` (not the repo root).
+- Use `--env production` or `--prod` for a production deploy.
+- If you prefer a guided flow, add `-s` to enable the wizard prompts.

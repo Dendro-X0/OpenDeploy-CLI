@@ -25,13 +25,24 @@ OpenDeploy is a cross‑provider deployment CLI for modern web apps. It detects 
 ## Quick Start
 
 ```bash
-# Linux/macOS — install via script (no sudo, installs to ~/.local/bin)
-curl -fsSL "https://raw.githubusercontent.com/Dendro-X0/OpenDeploy-CLI/main/scripts/install/install.sh" | bash
-opd start
+# Lite Mode (recommended): single-command deploy via official CLIs
 
-# Windows PowerShell — install via script (installs to %USERPROFILE%\bin)
-iwr "https://raw.githubusercontent.com/Dendro-X0/OpenDeploy-CLI/main/scripts/install/install.ps1" -UseBasicParsing | iex
-opd start
+# Windows PowerShell — install wrapper to %USERPROFILE%\bin
+iwr "https://raw.githubusercontent.com/Dendro-X0/OpenDeploy-CLI/main/scripts/lite/opd.ps1" -UseBasicParsing -OutFile "$env:USERPROFILE\bin\opd.ps1"; \
+[Environment]::SetEnvironmentVariable('PATH', "$env:USERPROFILE\bin;" + $env:PATH, 'User'); $env:PATH = "$env:USERPROFILE\bin;" + $env:PATH
+
+# macOS/Linux — install wrapper to ~/.local/bin
+mkdir -p ~/.local/bin && curl -fsSL "https://raw.githubusercontent.com/Dendro-X0/OpenDeploy-CLI/main/scripts/lite/opd.sh" -o ~/.local/bin/opd && chmod +x ~/.local/bin/opd && export PATH="$HOME/.local/bin:$PATH"
+
+# Deploy examples
+# Vercel (requires `npm i -g vercel`, optional VERCEL_TOKEN)
+opd start --path <APP_PATH> --provider vercel --env preview
+
+# Cloudflare Pages (requires `npm i -g wrangler`)
+opd start --path <APP_PATH> --provider cloudflare-pages --env preview --output dist
+
+# GitHub Pages (uses `npx gh-pages`)
+opd start --path <APP_PATH> --provider github-pages --output dist
 ```
 
 More install options (GitHub Releases binaries, Docker, source build):
