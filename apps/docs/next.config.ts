@@ -47,14 +47,14 @@ const nextConfig: NextConfig = {
     ...(deployTarget === 'github' ? { NEXT_PUBLIC_BASE_PATH: `/${repoName}` } : { NEXT_PUBLIC_BASE_PATH: '' }),
     ...(derivedVersion ? { NEXT_PUBLIC_OPD_VERSION: derivedVersion } : {}),
   },
-  // GitHub Pages vs Cloudflare Pages
-  ...(deployTarget === 'github'
+    // Static export for GitHub and explicit 'static' target; GitHub also sets basePath/assetPrefix
+  ...((deployTarget === 'github' || deployTarget === 'static')
     ? {
         output: 'export' as const,
         images: { unoptimized: true },
-        trailingSlash: true,
-        basePath: `/${repoName}`,
-        assetPrefix: `/${repoName}/`,
+        // GitHub prefers trailingSlash for Pages
+        ...(deployTarget === 'github' ? { trailingSlash: true } : { trailingSlash: false }),
+        ...(deployTarget === 'github' ? { basePath: `/${repoName}`, assetPrefix: `/${repoName}/` } : {}),
       }
     : {
         trailingSlash: false,

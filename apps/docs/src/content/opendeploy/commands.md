@@ -135,10 +135,7 @@ You can optionally enable the Go sidecar and experimental provider features:
 - `OPD_GO_FORCE=1` — prefer the Go sidecar when present (more reliable process control)
 - `OPD_GO_DISABLE=1` — disable the sidecar and use the Node runner
 - `OPD_PTY=1|0` — force PTY usage on/off; by default, PTY is used in interactive terminals but disabled in CI/JSON modes
-- `OPD_PACKAGE=zip` — pre-package Netlify `publishDir` as a `.zip` and emit an `artifact` event with a checksum
-- `OPD_NETLIFY_DIRECT=1` — attempt a direct Netlify deploy via API (no CLI). Requires `NETLIFY_AUTH_TOKEN` and a known `publishDir` + `--project`
-
-See also: `docs/development/opd-go-protocol.md` and `docs/providers/netlify.md`.
+See also: `docs/development/opd-go-protocol.md`.
 
 ### Troubleshooting and Logs
 
@@ -183,8 +180,6 @@ When `--ndjson` is active (or `OPD_NDJSON=1`), the wizard emits compact one-line
 {"action":"start","provider":"vercel","target":"preview","event":"logs","logsUrl":"https://vercel.com/acme/app/inspections/dep_123"}
 ```
 
-<!-- Netlify removed -->
-
 Examples:
 
 ```bash
@@ -198,9 +193,6 @@ opd start --provider vercel --path apps/web --env preview --json
 Notes:
 - Use `--no-save-defaults` to suppress the prompt to persist your selections to `opd.config.json` under `startDefaults`.
  - To clear saved defaults, delete `opd.config.json` at the project root or remove the `startDefaults` property from it.
-- Netlify support in `start` is intentionally limited to preparation for now. To deploy on Netlify, either:
-  - Run the recommended commands the wizard prints (e.g., `netlify deploy --dir <publish_dir> --site <SITE_ID>`), or
-  - Use `opd up netlify --env <preview|prod> --project <SITE_ID>`
 
 ## detect
 Detect your app and its configuration (supports Next.js, Astro, SvelteKit, Remix, Nuxt; Expo when `OPD_EXPERIMENTAL=1`).
@@ -252,8 +244,6 @@ Notes:
 - With `--from`, you can point the production alias at a specific preview URL (or SHA that corresponds to a preview). Without `--from`, the CLI resolves the most recent ready preview.
 - Final JSON contains `{ ok, provider: 'vercel', action: 'promote', target: 'prod', from, url, alias, final: true }`.
 
-<!-- Netlify removed -->
-
 Reliability knobs:
 
 - All provider subprocess calls honor `--retries`, `--timeout-ms`, and `--base-delay-ms`.
@@ -273,27 +263,7 @@ Notes:
 - When `--to` is omitted, the CLI lists production history and suggests a candidate. With `--to`, it will attempt to repoint the alias directly.
 - Final JSON includes `{ ok, provider: 'vercel', action: 'rollback', target: 'prod', to|candidate, alias, final: true }`.
 
-<!-- Netlify removed -->
  - Reliability knobs: `--retries`, `--timeout-ms`, and `--base-delay-ms` apply here as well.
-```
-
-Example:
-```json
-{
-  "framework": "next",
-  "rootDir": "/home/me/app",
-  "appDir": "/home/me/app",
-  "hasAppRouter": true,
-  "packageManager": "pnpm",
-  "monorepo": "workspaces",
-  "buildCommand": "next build",
-  "outputDir": ".next",
-  "publishDir": null,
-  "renderMode": "hybrid",
-  "confidence": 0.95,
-  "environmentFiles": [".env", ".env.local", ".env.production.local"]
-}
-```
 
 ## explain
 
@@ -302,7 +272,9 @@ Show what will happen for a deploy without executing anything. Useful for PR com
 Usage:
 
 ```bash
-opd explain <vercel|netlify> [--env <prod|preview>] [--path <dir>] [--project <id>] [--org <id>] [--sync-env] [--json]
+opd explain <vercel|cloudflare|github> \
+  [--env <prod|preview>] [--path <dir>] [--project <id>] [--org <id>] \
+  [--sync-env] [--json]
 ```
 
 Behavior:
@@ -368,8 +340,6 @@ Examples:
 ```bash
 # Fix Vercel linking in a monorepo app directory
 opd doctor --fix --path apps/web --project <VERCEL_PROJECT_ID> --org <ORG_ID>
-
-<!-- Netlify removed -->
 ```
 
 ### JSON output (schema)
@@ -390,22 +360,43 @@ Open or tail provider logs for the last deployment.
 Usage:
 
 ```bash
-opd logs <vercel|netlify> \
+opd logs <vercel|cloudflare> \
   [--env <prod|preview>] \
-  [--follow] [--since <duration>] \
+  [--follow] \
   [--path <dir>] \
   [--project <id>] [--org <id>] \
   [--limit <n>] [--sha <commit>] \
-  [--open] [--json]
+  [--since <duration>] \
+  [--json] [--open]
 ```
 
 Notes:
+- Vercel:
+  - Auto-discovers the latest deployment via `vercel list` (respects `--env`, `--limit`, `--sha`, `--project`, `--org`).
+  - `--follow` tails runtime logs; `--since 15m` or `--since 1h` supported.
+  - Human mode shows a spinner while following; NDJSON emits `logs:start`, `vc:log`, `logs:end` events.
+- Cloudflare Pages:
+  - Resolves Pages deployment info and inspect URL when available.
+  - `--follow` polls deployment status and emits `cf:deploy:status` events until ready; non-follow prints dashboard URL.
+  - NDJSON mirrors Vercel with `logs:start`/`logs:end` and provider-specific events; exponential backoff events are emitted as `cf:backoff` with the next sleep duration.
 
-- Vercel: supports project/org hints and sha filtering.
-- Netlify: resolves siteId from `--project` or `.netlify/state.json`, builds a dashboard `logsUrl`.
-- `--follow` tails logs (best‑effort) and emits NDJSON events in `--ndjson` mode.
-- `--since` accepts durations like `1h`, `15m`.
-- With `--json` or `--ndjson`, output is machine‑readable.
+### JSON output (schema)
+
+```json
+{
+  "provider": "vercel",
+  "env": "production|preview|development",
+  "ok": true,
+  "added": ["STRING"],
+  "removed": ["STRING"],
+  "changed": [
+    { "key": "STRING", "local": "STRING", "remote": "STRING" }
+  ]
+}
+```
+
+Notes:
+- In `--ci`, non-zero exit when differences exist. With `--fail-on-add` and/or `--fail-on-remove`, exit is also non-zero specifically when those conditions hold.
 
 ## env sync
 Sync variables from a .env file to provider environments.
@@ -419,14 +410,6 @@ opd env sync vercel --file <path> --env <prod|preview|development|all> \
   [--fail-on-add] [--fail-on-remove] \
   [--optimize-writes] \
   [--map <file>] \
-  [--retries <n>] [--timeout-ms <ms>] [--base-delay-ms <ms>]
-```
-Usage (Netlify):
-```bash
-opd env sync netlify --file <path> \
-  [--yes] [--dry-run] [--json] [--ci] \
-  [--project-id <siteId>] \
-  [--ignore <glob,glob>] [--only <glob,glob>] \
   [--retries <n>] [--timeout-ms <ms>] [--base-delay-ms <ms>]
 ```
 Behavior:
@@ -456,10 +439,6 @@ Examples:
 # Rename and base64 a secret before syncing to Vercel
 opd env sync vercel --file .env --env preview \
   --map ./env.map.json --optimize-writes --yes
-
-# Apply same mapping on Netlify
-opd env sync netlify --file .env \
-  --map ./env.map.json --yes
 ```
 
 ## env pull
@@ -469,12 +448,6 @@ Usage (Vercel):
 ```bash
 opd env pull vercel --env <prod|preview|development> \
   [--out <path>] [--json] [--ci] [--project-id <id>] [--org-id <id>] \
-  [--retries <n>] [--timeout-ms <ms>] [--base-delay-ms <ms>]
-```
-Usage (Netlify):
-```bash
-opd env pull netlify \
-  [--out <path>] [--json] [--project-id <siteId>] [--context <ctx>] \
   [--retries <n>] [--timeout-ms <ms>] [--base-delay-ms <ms>]
 ```
 Behavior:
@@ -511,14 +484,6 @@ Usage (Vercel):
 ```bash
 opd env diff vercel --file <path> --env <prod|preview|development> \
   [--json] [--ci] [--project-id <id>] [--org-id <id>] \
-  [--ignore <glob,glob>] [--only <glob,glob>] \
-  [--fail-on-add] [--fail-on-remove] \
-  [--retries <n>] [--timeout-ms <ms>] [--base-delay-ms <ms>]
-```
-Usage (Netlify):
-```bash
-opd env diff netlify --file <path> \
-  [--json] [--ci] [--project-id <siteId>] [--context <ctx>] \
   [--ignore <glob,glob>] [--only <glob,glob>] \
   [--fail-on-add] [--fail-on-remove] \
   [--retries <n>] [--timeout-ms <ms>] [--base-delay-ms <ms>]
@@ -560,35 +525,25 @@ Generate provider configuration files based on the detected framework.
 
 Usage:
 ```bash
-opd generate <vercel|netlify> [--overwrite] [--json]
+opd generate <vercel|turbo> [--overwrite] [--json]
 ```
 
 Behavior:
 - Detects framework using the Detection Engine v2.
 - Vercel: writes a minimal `vercel.json` (idempotent). Keeps your customizations when present unless `--overwrite`.
-- Netlify: writes a minimal `netlify.toml` (idempotent). For Next.js, uses the official Next Runtime when available, otherwise falls back to `@netlify/plugin-nextjs`. For other frameworks, uses `build` and `publishDir` from detection.
-
-JSON:
-```json
-{ "provider": "vercel|netlify", "path": "STRING", "final": true }
-```
-
-Notes:
-- Use `--overwrite` to replace an existing file.
 
 ## deploy
 Deploy the detected app to a provider.
 
 Usage:
 ```bash
-opd deploy <vercel|netlify> \
+opd deploy <vercel|cloudflare|github> \
   [--env <prod|preview>] [--project <id>] [--org <id>] [--path <dir>] \
   [--dry-run] [--json] [--ci] [--sync-env] [--alias <domain>]
 ```
 
 Notes:
 - In monorepos, the CLI prefers the linked app directory (e.g., `apps/web/.vercel/project.json`). If only the root is linked, it deploys from the root. Otherwise it deploys from the target path.
-- For Netlify, the CLI generates a minimal `netlify.toml` using detection. For Next.js it selects the official Next Runtime when installed or falls back to `@netlify/plugin-nextjs`.
 
 Dry‑run:
 - `--dry-run` emits a deterministic JSON summary and performs no provider actions.
@@ -604,21 +559,10 @@ Dry‑run example (Vercel):
 }
 ```
 
-Dry‑run example (Netlify):
-
-```json
-{
-  "provider": "netlify",
-  "target": "prod",
-  "mode": "dry-run",
-  "final": true
-}
-```
-
 ### Single‑command deploy (alias: up)
 
 ```bash
-opd up [vercel|netlify] \
+opd up [vercel|cloudflare|github] \
   [--env <prod|preview>] [--project <id>] [--org <id>] [--path <dir>] \
   [--dry-run] [--json] [--ci] [--print-cmd] \
   [--retries <n>] [--timeout-ms <ms>] [--base-delay-ms <ms>] [--ndjson]
@@ -661,11 +605,11 @@ Dry‑run example (Vercel):
 }
 ```
 
-Dry‑run example (Netlify):
+Dry‑run example (Cloudflare Pages):
 
 ```json
 {
-  "provider": "netlify",
+  "provider": "cloudflare",
   "target": "preview",
   "mode": "dry-run",
   "final": true
@@ -677,7 +621,7 @@ Dry‑run example (Netlify):
 `up` and `deploy` emit `url` (deployment/production URL) and `logsUrl` when available:
 
 - Vercel: `logsUrl` is the Inspect URL. If the deploy stream doesn’t print it, the CLI falls back to `vercel inspect <url>` to resolve it.
-- Netlify: `logsUrl` points to the deployment dashboard, resolved from the site ID and latest deploy id.
+- Cloudflare Pages: `logsUrl` points to the deployment dashboard, resolved from the site ID and latest deploy id.
 
 Example (Vercel, up --json):
 
@@ -691,14 +635,14 @@ Example (Vercel, up --json):
 }
 ```
 
-Example (Netlify, up --json):
+Example (Cloudflare Pages, up --json):
 
 ```json
 {
-  "provider": "netlify",
-  "target": "prod",
-  "url": "https://my-site.netlify.app",
-  "logsUrl": "https://app.netlify.com/sites/my-site/deploys/dep_abc123",
+  "provider": "cloudflare",
+  "target": "preview",
+  "url": "https://my-app.pages.dev",
+  "logsUrl": "https://dash.cloudflare.com/.../my-app/deployments/dep_abc",
   "final": true
 }
 ```
@@ -709,18 +653,18 @@ Promote a preview to production.
 
 Usage (Vercel):
 ```bash
-opd promote vercel --alias <prod-domain> [--path <dir>] [--project <id>] [--org <id>] [--dry-run] [--json]
+opd promote vercel --alias <prod-domain> [--from <preview-url-or-sha>] [--print-cmd] [--json] [--dry-run]
 ```
 Behavior (Vercel):
 - Resolves the most recent ready preview deploy and assigns the provided `--alias` domain to it.
 - In monorepos, prefers the linked app directory when present.
 
-Usage (Netlify):
+Usage (Cloudflare Pages):
 ```bash
-opd promote netlify [--path <dir>] [--project <siteId>] [--dry-run] [--json]
+opd promote cloudflare [--path <dir>] [--project <siteId>] [--dry-run] [--json]
 ```
-Behavior (Netlify):
-- Best‑effort promote by deploying current code to production: `netlify deploy --build --prod`.
+Behavior (Cloudflare Pages):
+- Best‑effort promote by deploying current code to production: `wrangler pages deploy --prod`.
 
 Dry‑run:
 - `--dry-run` emits a deterministic JSON summary (no promotion), suitable for CI validation.
@@ -737,11 +681,11 @@ Dry‑run example (Vercel):
 }
 ```
 
-Dry‑run example (Netlify):
+Dry‑run example (Cloudflare Pages):
 
 ```json
 {
-  "provider": "netlify",
+  "provider": "cloudflare",
   "action": "promote",
   "target": "prod",
   "final": true
@@ -765,16 +709,16 @@ Vercel:
 }
 ```
 
-Netlify:
+Cloudflare Pages:
 
 ```json
 {
   "ok": true,
-  "provider": "netlify",
+  "provider": "cloudflare",
   "action": "promote",
   "target": "prod",
-  "url": "https://my-site.netlify.app",
-  "logsUrl": "https://app.netlify.com/sites/my-site/deploys/dep_abc123",
+  "url": "https://my-site.pages.dev",
+  "logsUrl": "https://dash.cloudflare.com/.../my-site/deployments/dep_abc123",
   "siteId": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
   "final": true
 }
@@ -790,27 +734,6 @@ opd rollback vercel --alias <prod-domain> [--to <url|sha>] [--path <dir>] [--pro
 ```
 Behavior (Vercel):
 - Resolves the previous production deploy (or a specific one via `--to`) and points the alias back to it.
-
-Usage (Netlify):
-```bash
-opd rollback netlify [--project <siteId>] [--path <dir>] [--dry-run] [--json]
-```
-Behavior (Netlify):
-- Attempts restore via Netlify API; falls back to dashboard guidance if not permitted.
-
-Dry‑run:
-- `--dry-run` emits a deterministic JSON summary (no restore), suitable for CI validation.
-
-Dry‑run example (Vercel/Netlify):
-
-```json
-{
-  "provider": "vercel",
-  "action": "rollback",
-  "target": "prod",
-  "final": true
-}
-```
 
 ### JSON examples
 
@@ -843,27 +766,13 @@ Vercel (candidate only):
 }
 ```
 
-Netlify (failure path):
-
-```json
-{
-  "ok": false,
-  "provider": "netlify",
-  "action": "rollback",
-  "target": "prod",
-  "message": "Restore failed. Use dashboard to restore.",
-  "dashboard": "https://app.netlify.com/sites/my-site/deploys/dep_abc123",
-  "final": true
-}
-```
-
 ## explain
 
 Show what will happen for a deployment without executing anything.
 
 Usage:
 ```bash
-opd explain <vercel|netlify> \
+opd explain <vercel|cloudflare|github> \
   [--env <prod|preview>] [--path <dir>] [--project <id>] [--org <id>] \
   [--sync-env] [--ci] [--json]
 ```
@@ -876,19 +785,18 @@ Open the project dashboard on the provider.
 
 Usage:
 ```bash
-opd open <vercel|netlify> [--project <id>] [--org <id>] [--path <dir>]
+opd open <vercel|cloudflare|github> [--project <id>] [--org <id>] [--path <dir>]
 ```
 
 Notes:
 - Vercel: respects monorepo link state just like `deploy`; if `--project/--org` are passed, the CLI will auto-link the chosen cwd before opening.
-- Netlify: passes `--site <id>` when `--project` is provided.
 
 ## logs
 Open or tail provider logs for the last deployment.
 
 Usage:
 ```bash
-opd logs <vercel|netlify> \
+opd logs <vercel|cloudflare> \
   [--env <prod|preview>] \
   [--follow] \
   [--path <dir>] \
@@ -903,10 +811,10 @@ Notes:
   - Auto-discovers the latest deployment via `vercel list` (respects `--env`, `--limit`, `--sha`, `--project`, `--org`).
   - `--follow` tails runtime logs; `--since 15m` or `--since 1h` supported.
   - Human mode shows a spinner while following; NDJSON emits `logs:start`, `vc:log`, `logs:end` events.
-- Netlify:
-  - Resolves site ID from `--project <siteId>` or `.netlify/state.json` in `--path`/cwd.
-  - `--follow` polls deployment status and emits `nl:deploy:status` events until ready; non-follow prints dashboard URL.
-  - NDJSON mirrors Vercel with `logs:start`/`logs:end` and provider-specific events; exponential backoff events are emitted as `nl:backoff` with the next sleep duration.
+ - Cloudflare Pages:
+  - Resolves Pages deployment info and inspect URL when available.
+  - `--follow` polls deployment status and emits `cf:deploy:status` events until ready; non-follow prints dashboard URL.
+  - NDJSON mirrors Vercel with `logs:start`/`logs:end` and provider-specific events.
 
 ### JSON output (schema)
 
@@ -952,7 +860,7 @@ Deploy via the chosen provider.
 
 Usage:
 ```bash
-opd deploy <vercel|netlify> \
+opd deploy <vercel|cloudflare|github> \
   [--env <prod|preview>] [--project <id>] [--org <id>] [--path <dir>] [--dry-run] [--json] [--ci]
 ```
 Behavior (Vercel):

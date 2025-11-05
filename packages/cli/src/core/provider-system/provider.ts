@@ -17,11 +17,8 @@ export async function loadProvider(id: string): Promise<Provider> {
     return new mod.VercelProvider()
   }
   if (normalized === 'netlify') {
-    // Netlify is no longer supported by OpenDeploy CLI.
-    // Rationale: the official Netlify CLI and platform workflows are complex and rapidly evolving;
-    // we prefer to direct users to the Netlify CLI for deploys and env management to avoid
-    // fragmentation and surprising limitations. See docs for details.
-    throw new Error('Netlify is not supported by OpenDeploy. Please use the official Netlify CLI (https://github.com/netlify/cli).')
+    // Netlify is not supported by OpenDeploy.
+    throw new Error('Netlify is not supported by OpenDeploy. Please use the official Netlify CLI.')
   }
   if (normalized === 'cloudflare' || normalized === 'cloudflare-pages') {
     const mod = await import('./providers/cloudflare-pages')

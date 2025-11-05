@@ -6,7 +6,7 @@ This guide helps contributors set up the repo, understand the architecture, and 
 
 - `src/core/provider-system/`
   - `provider-interface.ts`: Provider interface implemented by each plugin.
-  - `providers/`: Built-in provider plugins (`vercel.ts`, `netlify.ts`, `cloudflare-pages.ts`, `github-pages.ts`).
+  - `providers/`: Built-in provider plugins (`vercel.ts`, `cloudflare-pages.ts`, `github-pages.ts`).
   - `provider.ts`: `loadProvider()` and utilities.
   - `provider-capabilities.ts`, `provider-types.ts`: shared types.
 - `src/commands/`: CLI commands (`start`, `generate`, `up`, `deploy`, `promote`, `rollback`, `env`, `doctor`, etc.).

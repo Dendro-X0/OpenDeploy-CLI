@@ -31,28 +31,22 @@ The 1.0.0 Beta milestone is complete (provider parity, CI ergonomics, extensibil
 | Command                              | Writes         | Summary |
 |--------------------------------------|----------------|---------|
 | `opd generate vercel`         | `vercel.json`  | Minimal config with `version`, optional `buildCommand`, and `outputDirectory` when a `publishDir` is detected. |
-| (Netlify removed)             | —              | — |
 | `opd generate turbo`          | `turbo.json`   | Minimal cache config: `tasks.build.dependsOn = ['^build']`, `outputs = ['.next/**', '!.next/cache/**', 'dist/**']`. |
 
 ## Quick Start
 
 ```bash
 # 1) Guided start (detect framework/provider, optional env sync)
-# Note: start deploys on Vercel. Netlify is prepare-only (wizard prints recommended commands).
 opd start
 
 # (Alternative) Initialize in your repo
 opd init
 
 # 2) Preview: one‑command deploy (sync env then deploy)
-# Tip: running `opd up` without a provider opens the wizard.
 opd up vercel --env preview
 opd logs cloudflare --open
 
-# 3) Promote to production
-# From the Start wizard, you can promote the preview directly by setting an alias.
-opd start --provider vercel --env preview --promote --alias your-domain.com
-or use the dedicated command:
+# 3) Promote to production (Vercel)
 opd promote vercel --alias your-domain.com
 
 # (Optional) Explain plan before executing
@@ -94,7 +88,7 @@ opd run --all --env preview --sync-env --concurrency 3 --json
 - Use `--gha` for GitHub Actions‑friendly defaults (implies `--json --summary-only --timestamps`, sets artifact sinks and annotation defaults).
 - `--json-file`/`--ndjson-file` persist outputs for artifacts.
 - GitHub annotations: doctor and env diff emit `::warning`/`::error` appropriately in CI.
-- Recipes: see `docs/recipes.md` for Up (Netlify), Env Diff, Matrix CI, and more.
+- Recipes: see `docs/recipes.md` for Up, Env Diff, Matrix CI, and more.
 
 ## Output Modes
 
@@ -102,16 +96,14 @@ opd run --all --env preview --sync-env --concurrency 3 --json
 - `--json`, `--ndjson`, `--timestamps`, `--summary-only`
  - CI sink flags: `--json-file`, `--ndjson-file`; CI preset: `--gha`
 
-## Promote & Rollback
+## Promote & Rollback (Vercel)
 
-- Vercel promote: `opd promote vercel --alias <prod-domain> [--from <preview-url-or-sha>]`
-- Netlify promote: `opd promote netlify --project <SITE_ID> [--from <deployId>]`
-- Vercel rollback: `opd rollback vercel --alias <prod-domain> [--to <url|sha>]`
-- Netlify rollback: `opd rollback netlify --project <SITE_ID>`
+- Promote: `opd promote vercel --alias <prod-domain> [--from <preview-url-or-sha>]`
+- Rollback: `opd rollback vercel --alias <prod-domain> [--to <url|sha>]`
 
 Notes:
 
-- With `--from`, Vercel promotion targets a specific preview (URL/SHA). On Netlify, `--from` requests a direct `restoreDeploy` (no rebuild).
+- With `--from`, promotion targets a specific preview (URL/SHA).
 - Outputs are standardized JSON with `final: true`; `up` emits NDJSON progress events when `--ndjson` is used.
 
 ## Reliability Knobs

@@ -37,13 +37,6 @@ Steps:
    - Production: `opd up vercel --env prod`
 
 Notes:
-- For SPA routing on Netlify add:
-  ```toml
-  [[redirects]]
-    from = "/*"
-    to = "/index.html"
-    status = 200
-  ```
 - SSR requires a provider-specific adapter; static is supported out of the box.
 
 
@@ -153,7 +146,6 @@ jobs:
 
 - SvelteKit
   - Static: use `@sveltejs/adapter-static` → Publish: `build`
-  - Netlify adapter (`@sveltejs/adapter-netlify`) produces server functions (not static). For prepare-only flow, stick to static output; for SSR, deploy via Netlify CI.
 
 - Remix (React Router v7 family)
   - Build: `react-router build`

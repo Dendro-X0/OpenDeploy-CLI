@@ -15,7 +15,7 @@ export function registerPlanCommand(program: Command): void {
   program
     .command('plan')
     .description('Compute a provider-aware build and deploy plan (does not execute)')
-    .argument('<provider>', 'Target provider: vercel | netlify | cloudflare | github')
+    .argument('<provider>', 'Target provider: vercel | cloudflare | github')
     .option('--env <env>', 'Environment: prod | preview', 'preview')
     .option('--project <id>', 'Provider project/site identifier (name or ID)')
     .option('--org <id>', 'Provider org/team ID or slug')
@@ -39,11 +39,7 @@ export function registerPlanCommand(program: Command): void {
         } catch { /* ignore */ }
         // Heuristic command suggestions per provider
         const cmdPlan: string[] = []
-        if (provider === 'netlify') {
-          const ctx = envTarget === 'production' ? 'production' : 'deploy-preview'
-          cmdPlan.push(`netlify build --context ${ctx}`)
-          cmdPlan.push(`netlify deploy --no-build${envTarget === 'production' ? ' --prod' : ''}${publishDir ? ` --dir ${publishDir}` : ''}${opts.project ? ` --site ${opts.project}` : ''}`.trim())
-        } else if (provider === 'vercel') {
+        if (provider === 'vercel') {
           cmdPlan.push(envTarget === 'production' ? 'vercel deploy --prod --yes' : 'vercel deploy --yes')
           if (opts.project) cmdPlan.unshift(`vercel link --yes${opts.project ? ` --project ${opts.project}` : ''}${opts.org ? ` --org ${opts.org}` : ''}`.trim())
         } else if (provider === 'cloudflare') {

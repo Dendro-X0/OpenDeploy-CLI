@@ -79,21 +79,6 @@ Request:
 
 `done.extra.digest` contains the hex digest.
 
-### netlify-deploy-dir (experimental)
-
-Deploy a directory directly to Netlify via API.
-
-Requirements:
-- Environment: `NETLIFY_AUTH_TOKEN`
-- Request:
-```json
-{ "action": "netlify-deploy-dir", "src": "dist", "site": "site_123", "prod": false }
-```
-
-Results:
-- Streams `status` (hashing, creating, uploading N, finalizing)
-- Final `done.extra`: `{ "url": "https://…netlify.app", "logsUrl": "https://app.netlify.com/sites/<site>/deploys/<id>", "deployId": "dep_…" }`
-
 ## Termination and reasons
 
 When a process is terminated by timeout or idle watchdog, `done` includes a `reason`. Consumers should surface `reason` in user output and CI logs.

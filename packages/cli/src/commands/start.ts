@@ -26,7 +26,7 @@ import { loadProvider } from '../core/provider-system/provider'
 
 // NOTE: This scaffold uses @clack/prompts for a friendly wizard UX.
 // Make sure to add it as a dependency: pnpm add @clack/prompts
-import { intro, outro, select, confirm as clackConfirm, isCancel, cancel, note, text } from '@clack/prompts'
+import { intro, outro, select, confirm as clackConfirm, isCancel, cancel, note } from '@clack/prompts'
 
 type Provider = 'vercel' | 'cloudflare' | 'github'
 
@@ -66,7 +66,7 @@ async function autoDetectFramework(cwd: string): Promise<Framework | undefined> 
   try { const res = await autoDetect({ cwd }); return res.framework as Framework } catch { return undefined }
 }
 
-// Short provider login status for prompt; no Netlify support
+// Short provider login status for prompt
 async function providerStatus(p: Provider): Promise<'logged in' | 'login required'> {
   try {
     if (p === 'vercel') {
@@ -91,7 +91,7 @@ async function providerStatus(p: Provider): Promise<'logged in' | 'login require
   return 'login required'
 }
 
-// Ensure provider auth (interactive when not in CI). No Netlify.
+// Ensure provider auth (interactive when not in CI)
 async function ensureProviderAuth(p: Provider, opts: StartOptions): Promise<void> {
   if (opts.skipAuthCheck || opts.assumeLoggedIn) return
   const tryValidate = async (): Promise<boolean> => {
@@ -105,9 +105,20 @@ async function ensureProviderAuth(p: Provider, opts: StartOptions): Promise<void
   const cmd: string = p === 'vercel' ? 'vercel login' : p === 'cloudflare' ? 'wrangler login' : 'git remote -v'
   note(`Running: ${cmd}`, 'Auth')
   const res = await proc.run({ cmd })
-  if (!res.ok) throw new Error(`${p} login failed`)
-  const ok2 = await tryValidate()
-  if (!ok2) throw new Error(`${p} login failed`)
+  let validated: boolean = false
+  if (res.ok) {
+    for (let i = 0; i < 20; i++) { if (await tryValidate()) { validated = true; break } await sleep(1000) }
+  }
+  if (!validated) {
+    // Open browser fallback
+    const url: string = providerLoginUrl(p)
+    note(`Opening ${providerNiceName(p)} login page in your browser...`, 'Auth')
+    try { await openUrl(url) } catch { /* ignore opener errors */ }
+    const proceed = await clackConfirm({ message: 'Continue after logging in?', initialValue: true })
+    if (isCancel(proceed)) throw new Error(`${p} login required`)
+    for (let i = 0; i < 20; i++) { if (await tryValidate()) { validated = true; break } await sleep(1000) }
+    if (!validated) throw new Error(`${p} login failed`)
+  }
 }
 
 // Minimal .env keys parser for preview display
@@ -130,6 +141,12 @@ function providerNiceName(p: Provider): string {
   if (p === 'vercel') return 'Vercel'
   if (p === 'cloudflare') return 'Cloudflare Pages'
   return 'GitHub Pages'
+}
+
+function providerLoginUrl(p: Provider): string {
+  if (p === 'vercel') return 'https://vercel.com/login'
+  if (p === 'cloudflare') return 'https://dash.cloudflare.com/login'
+  return 'https://github.com/login'
 }
 
 /**
@@ -377,21 +394,6 @@ async function detectForFramework(framework: Framework, cwd: string): Promise<De
   throw new Error(`Unsupported framework: ${framework}`)
 }
 
-function inferNetlifyPublishDir(args: { readonly framework: Framework; readonly cwd: string }): string {
-  const fw = args.framework
-  // Heuristics per framework
-  if (fw === 'nuxt') return '.output/public'
-  if (fw === 'remix') return 'build/client'
-  if (fw === 'astro') return 'dist'
-  if (fw === 'expo') return 'dist'
-  if (fw === 'next') return '.next' // Netlify plugin/runtime handles Next
-  if (fw === 'sveltekit') {
-    // SvelteKit static usually 'build' (adapter-static);
-    // adapter-netlify produces server functions, but for prepare-only we default to 'build'.
-    return 'build'
-  }
-  return 'dist'
-}
 
 // Determine the package manager used in the target app directory.
 async function detectPackageManager(cwd: string): Promise<string> {
@@ -788,193 +790,40 @@ async function runDeploy(args: { readonly provider: Provider; readonly env: 'pro
     }
     return { url: capturedUrl, logsUrl: capturedInspect, alias: aliased }
   }
-  // Netlify deploy path removed. Use official Netlify CLI.
-  throw new Error('Netlify is not supported by OpenDeploy. Use the official Netlify CLI.')
+  
+  // Unknown provider fallback
+  throw new Error('Unsupported provider')
 }
 
 export async function runStartWizard(opts: StartOptions): Promise<void> {
-  try {
+    // Initialize core context and helpers
     const rootCwd: string = process.cwd()
-    if (process.env.OPD_NDJSON === '1') { logger.setNdjson(true) }
-    else if (opts.json === true || process.env.OPD_JSON === '1') { logger.setJsonOnly(true) }
-    if (process.env.OPD_SUMMARY === '1' || opts.summaryOnly === true) { logger.setSummaryOnly(true) }
-    if (process.env.OPD_NDJSON === '1' || opts.json === true || opts.ci === true) { process.env.OPD_FORCE_CI = '1' }
-    const inCI: boolean = Boolean(opts.ci) || process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true'
-    // EARLY deterministic safe-fixes: apply before any prompts or provider logic
-    if (process.env.OPD_TEST_FORCE_SAFE_FIXES === '1') {
-      try {
-        const preliminaryTargetCwd: string = (() => {
-          const p = String(opts.path || '').trim();
-          if (!p) return rootCwd
-          return isAbsolute(p) ? p : join(rootCwd, p)
-        })()
-        // Emit deterministic events for both providers
-        if (isJsonMode(opts.json)) {
-          logger.json({ ok: true, action: 'start', event: 'fix', provider: 'github', fix: 'github-next-config', file: join(preliminaryTargetCwd, 'next.config.js'), changes: ['github-next-output-export','github-next-images-unoptimized','github-next-trailing-true'] })
-          logger.json({ ok: true, action: 'start', event: 'fix', provider: 'github', fix: 'github-nojekyll', file: join(preliminaryTargetCwd, 'public/.nojekyll') })
-          logger.json({ ok: true, action: 'start', event: 'fix', provider: 'cloudflare', fix: 'cloudflare-next-config', file: join(preliminaryTargetCwd, 'next.config.js'), changes: ['cloudflare-next-remove-output-export','cloudflare-next-remove-assetPrefix','cloudflare-next-basePath-empty','cloudflare-next-trailing-false'] })
-          logger.json({ ok: true, action: 'start', event: 'fix', provider: 'cloudflare', fix: 'cloudflare-wrangler', file: join(preliminaryTargetCwd, 'wrangler.toml') })
-        }
-        // Attempt the actual IO so tests can assert read/write calls
-        try { await readFile(join(preliminaryTargetCwd, 'next.config.js'), 'utf8') } catch { /* ignore */ }
-        try { await writeFile(join(preliminaryTargetCwd, 'next.config.js'), (await patchNextConfigForGithub({ path: join(preliminaryTargetCwd, 'next.config.js'), setTrailing: true })).content, 'utf8') } catch { /* ignore */ }
-        try { await writeFile(join(preliminaryTargetCwd, 'public/.nojekyll'), '', 'utf8') } catch { /* ignore */ }
-        try { await writeFile(join(preliminaryTargetCwd, 'wrangler.toml'), ['pages_build_output_dir = ".vercel/output/static"','pages_functions_directory = ".vercel/output/functions"','compatibility_flags = ["nodejs_compat"]',''].join('\n'), 'utf8') } catch { /* ignore */ }
-        try { await writeFile(join(preliminaryTargetCwd, 'next.config.js'), (await patchNextConfigForCloudflare({ path: join(preliminaryTargetCwd, 'next.config.js'), setTrailing: true })).content, 'utf8') } catch { /* ignore */ }
-      } catch { /* ignore early deterministic errors */ }
+    const targetPath: string = opts.path ? (isAbsolute(opts.path) ? opts.path : join(rootCwd, opts.path)) : rootCwd
+    const targetCwd: string = targetPath
+    const machineMode: boolean = isJsonMode(opts.json) || Boolean(opts.ci)
+    const humanNote = (msg: string, section?: string): void => {
+      if (isJsonMode(opts.json)) logger.note(msg)
+      else note(msg, section || 'Info')
     }
-    // Minimal preset: short-circuit prompts and deploy with defaults
-    if (opts.minimal === true) {
-      const targetCwd: string = (() => {
-        const p = String(opts.path || '').trim(); if (!p) return rootCwd; return isAbsolute(p) ? p : join(rootCwd, p)
-      })()
-      const detection: DetectionResult = await (async (): Promise<DetectionResult> => {
-        const f = await autoDetectFramework(targetCwd)
-        if (f) return await detectForFramework(f, targetCwd)
-        // Fallback: try Next/Astro quickly
-        try { return await detectForFramework('next', targetCwd) } catch { /* ignore */ }
-        try { return await detectForFramework('astro', targetCwd) } catch { /* ignore */ }
-        return { cwd: targetCwd, framework: 'next', buildCommand: 'next build', publishDir: 'out' } as unknown as DetectionResult
-      })()
-      const provider: Provider = await (async (): Promise<Provider> => {
-        // Prefer GitHub Pages when Next static export is detected, else Vercel
-        const hasStatic: boolean = await hasNextStaticExport(targetCwd)
-        return hasStatic ? 'github' : 'vercel'
-      })()
-      const res = await runDeploy({ provider, env: 'preview', cwd: targetCwd, json: Boolean(opts.json), project: opts.project, org: opts.org, printCmd: opts.printCmd, publishDir: detection.publishDir, noBuild: opts.noBuild, alias: opts.alias, showLogs: Boolean(opts.showLogs), timeoutSeconds: undefined, idleTimeoutSeconds: undefined })
-      // Print a concise summary for humans
-      if (!isJsonMode(opts.json)) {
-        printDeploySummary({ provider, target: 'preview', url: res.url, logsUrl: res.logsUrl })
-      }
-      return
-    }
-    // Only treat this run as 'machine mode' when explicitly requested via flags,
-    // or when OPD_SUMMARY is set in a CI context. Do NOT inherit OPD_JSON/OPD_NDJSON
-    // for gating preflight; they affect output formatting but should not skip preflight.
-    const machineMode: boolean = (opts.json === true) || opts.summaryOnly === true || (process.env.OPD_SUMMARY === '1' && inCI)
-    const humanNote = (msg: string, title?: string): void => { if (!machineMode) note(msg, title) }
-    if (!machineMode) intro('OpenDeploy • Start')
-    // Default capture in CI or when --capture is passed: create file sinks if missing
-    const wantCapture: boolean = Boolean(opts.capture === true || opts.ci === true)
-    if (wantCapture) {
-      if (!process.env.OPD_JSON_FILE) {
-        const ts = new Date().toISOString().replace(/[:.]/g, '-')
-        const p = `./.artifacts/opd-start-${ts}.json`
-        logger.setJsonFile(p); process.env.OPD_JSON_FILE = p
-      }
-      if (!process.env.OPD_NDJSON_FILE) {
-        const ts2 = new Date().toISOString().replace(/[:.]/g, '-')
-        const p2 = `./.artifacts/opd-start-${ts2}.ndjson`
-        logger.setNdjsonFile(p2); process.env.OPD_NDJSON_FILE = p2
-      }
-    }
-    // Load saved defaults
-    let saved: Partial<StartOptions> = {}
+    // Load saved defaults (best-effort)
+    let saved: Record<string, unknown> = {}
     try {
-      const cfg = await fsx.readJson<Record<string, unknown>>(join(rootCwd, 'opendeploy.config.json'))
-      const sd = (cfg as { startDefaults?: Partial<StartOptions> }).startDefaults
-      if (sd && typeof sd === 'object') saved = sd
+      const raw = await fsx.readJson<Record<string, unknown>>(join(rootCwd, 'opendeploy.config.json'))
+      saved = ((raw ?? {}) as any).startDefaults ?? {}
     } catch { /* ignore */ }
-    if (Object.keys(saved).length > 0 && opts.json !== true) {
-      note('Saved defaults loaded from opendeploy.config.json', 'Defaults')
+    const savedProject: string | undefined = typeof (saved as any).project === 'string' ? (saved as any).project : undefined
+    const savedOrg: string | undefined = typeof (saved as any).org === 'string' ? (saved as any).org : undefined
+    // Detect framework and project hints
+    const detectedFramework: Framework | undefined = opts.framework ?? await autoDetectFramework(targetCwd)
+    let framework: Framework | undefined = detectedFramework
+    let detection: DetectionResult
+    try {
+      if (framework) detection = await detectForFramework(framework, targetCwd)
+      else { const res = await autoDetect({ cwd: targetCwd }); detection = res as DetectionResult; framework = res.framework as Framework | undefined }
+    } catch {
+      detection = { framework: framework ?? 'next', path: targetCwd, buildCommand: 'build', publishDir: 'dist' } as unknown as DetectionResult
     }
-
-    // Path selection (monorepo-friendly)
-    let targetPath: string | undefined = opts.path ?? saved.path
-    let targetCwd: string = targetPath ? (isAbsolute(targetPath) ? targetPath : join(rootCwd, targetPath)) : rootCwd
-    if (!targetPath && !opts.ci) {
-      try {
-        const cands = await scanMonorepoCandidates(rootCwd)
-        if (cands.length > 1) {
-          const choice = await select({
-            message: 'Select app directory',
-            options: [
-              { value: '.', label: 'Root (.)' },
-              ...cands.map((c) => ({ value: c.path, label: `${c.path.replace(rootCwd + '/', '')} (${c.framework})` }))
-            ]
-          })
-          if (isCancel(choice)) { cancel('Cancelled'); return }
-          const picked = String(choice)
-          targetPath = picked === '.' ? undefined : picked
-          targetCwd = targetPath ? picked : rootCwd
-        } else if (cands.length === 1) {
-          targetPath = cands[0]!.path
-          targetCwd = targetPath
-        }
-      } catch { /* ignore */ }
-    }
-    if (!machineMode) note(`Deploying from: ${targetCwd}\nTip: For monorepos, pass --path to target an app directory.`, 'Path')
-
-    // Framework
-    let framework: Framework | undefined = opts.framework ?? (saved.framework as Framework | undefined)
-    if (!framework) framework = await autoDetectFramework(targetCwd)
-    if (!framework) {
-      if (opts.ci) {
-        throw new Error('Framework not detected. Pass --framework <next|astro|sveltekit|remix|expo> in CI mode.')
-      }
-      const marks = await detectMarks({ cwd: targetCwd })
-      const options: Array<{ value: Framework; label: string }> = [
-        { value: 'next', label: `Next.js${marks.has('next') ? ' (detected)' : ''}` },
-        { value: 'astro', label: `Astro${marks.has('astro') ? ' (detected)' : ''}` },
-        { value: 'sveltekit', label: `SvelteKit${marks.has('sveltekit') ? ' (detected)' : ''}` },
-        { value: 'remix', label: `Remix${marks.has('remix') ? ' (detected)' : ''}` },
-        { value: 'nuxt', label: `Nuxt${marks.has('nuxt') ? ' (detected)' : ''}` }
-      ]
-      if (process.env.OPD_EXPERIMENTAL === '1') {
-        options.splice(4, 0, { value: 'expo', label: `Expo${marks.has('expo') ? ' (detected)' : ''} (experimental)` })
-      }
-      const choice = await select({
-        message: 'Select your framework',
-        options
-      })
-      if (isCancel(choice)) { cancel('Cancelled'); return }
-      framework = choice as Framework
-    }
-    void framework
-
-    // Show detection summary (human) and emit when --debug-detect
-    const detection: DetectionResult = await detectForFramework(framework!, targetCwd)
-    let publishSuggestion: string | undefined = ((): string | undefined => {
-      try { return inferNetlifyPublishDir({ framework: framework!, cwd: targetCwd }) } catch { return undefined }
-    })()
-    const pkgMgr: string = await detectPackageManager(targetCwd)
-    const runtime: string = runtimeHint(framework!)
-    const workspaceGlobs: string[] = await readWorkspaceGlobs(rootCwd)
-    let workspaceMatches = 0
-    for (const g of workspaceGlobs) { const dirs = await expandWorkspacePattern(rootCwd, g); workspaceMatches += dirs.length }
-    if (!machineMode) {
-      const rel = targetCwd.replace(process.cwd() + '\\', '').replace(process.cwd() + '/', '')
-      const lines: string[] = []
-      lines.push(`Path: ${rel.length === 0 ? '.' : rel}`)
-      lines.push(`Framework: ${framework}`)
-      if (detection.buildCommand) lines.push(`Build: ${detection.buildCommand}`)
-      if (publishSuggestion) lines.push(`Publish dir: ${publishSuggestion}`)
-      lines.push(`Package manager: ${pkgMgr}`)
-      lines.push(`Runtime: ${runtime}`)
-      if (workspaceGlobs.length > 0) {
-        lines.push(`Workspaces: ${workspaceGlobs.join(', ')} (${workspaceMatches} matches)`)
-      }
-      note(lines.join('\n'), 'Detection')
-    }
-    if (opts.debugDetect) {
-      const payload = { action: 'start', event: 'detection', cwd: targetCwd, framework, buildCommand: detection.buildCommand, publishSuggestion, packageManager: pkgMgr, runtime, workspaceGlobs, workspaceMatches }
-      logger.jsonPrint(payload)
-    }
-
-    // Early dry-run summary before any provider auth/linking
-    const envTargetEarly: 'prod' | 'preview' = (opts.env ?? 'preview') === 'prod' ? 'prod' : 'preview'
-    if (opts.dryRun === true) {
-      const provEarly: Provider = (opts.provider as Provider) ?? 'vercel'
-      const cmdEarly = buildNonInteractiveCmd({ provider: provEarly, envTarget: envTargetEarly, path: opts.path, project: opts.project, org: opts.org, syncEnv: Boolean(opts.syncEnv) })
-      const summaryEarly = { ok: true, action: 'start' as const, provider: provEarly, target: envTargetEarly, mode: 'dry-run', cmd: cmdEarly, cwd: rootCwd, final: true }
-      // Emit a single-line JSON for easy parsing in tests, ensuring the substring "final": true exists
-      const compact: string = JSON.stringify(summaryEarly)
-      const spacedFinal: string = compact.replace('"final":true', '"final": true')
-      // eslint-disable-next-line no-console
-      console.log(spacedFinal)
-      outro('Dry run complete')
-      return
-    }
+    let publishSuggestion: string | undefined = typeof detection.publishDir === 'string' ? detection.publishDir : undefined
 
     // Provider
     let provider: Provider | undefined = opts.provider
@@ -987,90 +836,23 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
           providerStatus('cloudflare'),
           providerStatus('github')
         ])
-        const choice = await select({
-          message: 'Select deployment provider',
-          options: [
-            { value: 'vercel', label: `Vercel (${vs})` },
-            { value: 'cloudflare', label: `Cloudflare Pages (${cs})` },
-            { value: 'github', label: `GitHub Pages (${gs})` }
-          ]
-        })
+        const options: Array<{ value: Provider; label: string }> = [
+          { value: 'vercel', label: `Vercel (${vs})` },
+          { value: 'cloudflare', label: `Cloudflare Pages (${cs})` },
+          { value: 'github', label: `GitHub Pages (${gs})` }
+        ]
+        const choice = await select({ message: 'Select deployment provider', options })
         if (isCancel(choice)) { cancel('Cancelled'); return }
         provider = choice as Provider
       }
     }
-
-    // Deterministic test path: when OPD_TEST_FORCE_SAFE_FIXES is on, apply fixes early
-    if (process.env.OPD_TEST_FORCE_SAFE_FIXES === '1') {
-      try {
-        // Always apply GitHub fixes in deterministic mode
-        {
-          // Emit expected deterministic events for GitHub to satisfy tests
-          if (isJsonMode(opts.json)) {
-            const p1 = { ok: true, action: 'start', event: 'fix', provider: 'github', fix: 'github-next-config', file: join(targetCwd, 'next.config.js'), changes: ['github-next-output-export','github-next-images-unoptimized','github-next-trailing-true'] }
-            const p2 = { ok: true, action: 'start', event: 'fix', provider: 'github', fix: 'github-nojekyll', file: join(targetCwd, 'public/.nojekyll') }
-            logger.json(p1); try { console.log(JSON.stringify(p1)) } catch {}
-            logger.json(p2); try { console.log(JSON.stringify(p2)) } catch {}
-          }
-          const pubDir = join(targetCwd, 'public')
-          const marker = join(pubDir, '.nojekyll')
-          const existsPub = await fsx.exists(pubDir)
-          const existsMarker = await fsx.exists(marker)
-          if ((existsPub || true) && !existsMarker) {
-            await writeFile(marker, '', 'utf8')
-            if (isJsonMode(opts.json)) { const pl = { ok: true, action: 'start', event: 'fix', provider: 'github', fix: 'github-nojekyll', file: marker }; logger.json(pl); try { console.log(JSON.stringify(pl)) } catch {} }
-          }
-          let cfgPath = await findNextConfig(targetCwd)
-          if (!cfgPath) cfgPath = join(targetCwd, 'next.config.js')
-          // Ensure a read is attempted for tests capturing readFile calls
-          try { await readFile(cfgPath, 'utf8') } catch { /* ignore */ }
-          if (cfgPath) {
-            const patched = await patchNextConfigForGithub({ path: cfgPath, setTrailing: true })
-            await writeFile(cfgPath, patched.content, 'utf8')
-            if (isJsonMode(opts.json)) { const pl = { ok: true, action: 'start', event: 'fix', provider: 'github', fix: 'github-next-config', file: cfgPath, changes: patched.fixes }; logger.json(pl); try { console.log(JSON.stringify(pl)) } catch {} }
-          }
-        }
-        // Always apply Cloudflare fixes in deterministic mode
-        {
-          // Emit expected deterministic events for Cloudflare to satisfy tests
-          if (isJsonMode(opts.json)) {
-            const p1 = { ok: true, action: 'start', event: 'fix', provider: 'cloudflare', fix: 'cloudflare-next-config', file: join(targetCwd, 'next.config.js'), changes: ['cloudflare-next-remove-output-export','cloudflare-next-remove-assetPrefix','cloudflare-next-basePath-empty','cloudflare-next-trailing-false'] }
-            const p2 = { ok: true, action: 'start', event: 'fix', provider: 'cloudflare', fix: 'cloudflare-wrangler', file: join(targetCwd, 'wrangler.toml') }
-            logger.json(p1); try { console.log(JSON.stringify(p1)) } catch {}
-            logger.json(p2); try { console.log(JSON.stringify(p2)) } catch {}
-          }
-          const wranglerPath = join(targetCwd, 'wrangler.toml')
-          const existsWr = await fsx.exists(wranglerPath)
-          if (!existsWr) {
-            const content = [
-              'pages_build_output_dir = ".vercel/output/static"',
-              'pages_functions_directory = ".vercel/output/functions"',
-              'compatibility_flags = ["nodejs_compat"]',
-              ''
-            ].join('\n')
-            await writeFile(wranglerPath, content, 'utf8')
-            if (isJsonMode(opts.json)) { const pl = { ok: true, action: 'start', event: 'fix', provider: 'cloudflare', fix: 'cloudflare-wrangler', file: wranglerPath }; logger.json(pl); try { console.log(JSON.stringify(pl)) } catch {} }
-          }
-          let cfgPath = await findNextConfig(targetCwd)
-          if (!cfgPath) cfgPath = join(targetCwd, 'next.config.js')
-          // Ensure a read is attempted for tests capturing readFile calls
-          try { await readFile(cfgPath, 'utf8') } catch { /* ignore */ }
-          if (cfgPath) {
-            const patched = await patchNextConfigForCloudflare({ path: cfgPath, setTrailing: true })
-            await writeFile(cfgPath, patched.content, 'utf8')
-            if (isJsonMode(opts.json)) { const pl = { ok: true, action: 'start', event: 'fix', provider: 'cloudflare', fix: 'cloudflare-next-config', file: cfgPath, changes: patched.fixes }; logger.json(pl); try { console.log(JSON.stringify(pl)) } catch {} }
-          }
-        }
-      } catch { /* ignore deterministic fix errors */ }
-    }
-    // Optional build preflight (run early, before auth/link to avoid side-effects)
+    if (!opts.generateConfigOnly) await ensureProviderAuth(provider!, opts)
+    // Optional build preflight
     await runBuildPreflight({ detection, provider: provider!, cwd: targetCwd, ci: Boolean(opts.ci), skipPreflight: Boolean(opts.skipPreflight) })
     // Help unit tests capture a clear signal that preflight succeeded
     try { /* eslint-disable-next-line no-console */ console.log('Build validated') } catch { /* ignore */ }
 
-    // Netlify is not a supported Provider at compile-time; no runtime guard required.
-    // One-click login when missing (skip when generating config only)
-    if (!opts.generateConfigOnly) await ensureProviderAuth(provider!, opts)
+    
 
     // Validate provider and show selection (human mode only)
     humanNote(`${providerNiceName(provider!)} selected`, 'Select deployment provider')
@@ -1100,10 +882,7 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
       return
     }
 
-    // Track a created Netlify site id (if we create one) so we can pass it to deploy
-    let createdSiteId: string | undefined
-    // Track CI state where directory is unlinked and no --project was provided (for JSON/hints)
-    let ciUnlinkedNoProject: boolean = false
+    
 
     // Inline linking when IDs are provided but folder isn't linked
     if (provider === 'vercel') {
@@ -1129,7 +908,7 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
     }
     // Compute effective project as early as possible (needed for env sync)
     let effectiveProject: string | undefined
-    effectiveProject = opts.project ?? (saved.project as string | undefined)
+    effectiveProject = opts.project ?? savedProject
 
     // Compute env target for subsequent steps
     const envTarget: 'prod' | 'preview' = (opts.env ?? (saved.env as 'prod' | 'preview') ?? 'preview') === 'prod' ? 'prod' : 'preview'
@@ -1352,7 +1131,7 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
     // Vercel deploy path
     const idleSeconds = Number(opts.idleTimeout)
     const effIdle: number | undefined = Number.isFinite(idleSeconds) && idleSeconds > 0 ? Math.floor(idleSeconds) : (opts.ci ? 45 : undefined)
-    const { url, logsUrl, alias } = await runDeploy({ provider: provider!, env: envTarget, cwd: targetCwd, json: Boolean(opts.json), project: effectiveProject, org: opts.org ?? saved.org, printCmd: opts.printCmd === true, alias: opts.alias, showLogs: Boolean(opts.showLogs), timeoutSeconds: effectiveTimeout, idleTimeoutSeconds: effIdle })
+    const { url, logsUrl, alias } = await runDeploy({ provider: provider!, env: envTarget, cwd: targetCwd, json: Boolean(opts.json), project: effectiveProject, org: opts.org ?? savedOrg, printCmd: opts.printCmd === true, alias: opts.alias, showLogs: Boolean(opts.showLogs), timeoutSeconds: effectiveTimeout, idleTimeoutSeconds: effIdle, publishDir: publishSuggestion, noBuild: Boolean(opts.noBuild) })
     let aliasAssigned: string | undefined = alias
     let didPromote: boolean = false
 
@@ -1387,7 +1166,7 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
         }
       } catch { /* ignore, keep deploy result */ }
     }
-    const cmd = buildNonInteractiveCmd({ provider: provider!, envTarget, path: targetPath, project: effectiveProject, org: opts.org ?? saved.org, syncEnv: doSync })
+    const cmd = buildNonInteractiveCmd({ provider: provider!, envTarget, path: targetPath, project: effectiveProject, org: opts.org ?? savedOrg, syncEnv: doSync })
     // Build a small CI checklist for Vercel as well
     const buildCommand: string = detection.buildCommand
     let ciEnvFile: string | undefined
@@ -1464,7 +1243,7 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
         } else {
           try {
             const plugin = await loadProvider(provider)
-            await withTimeout(plugin.open({ projectId: effectiveProject, orgId: opts.org ?? saved.org }), 5_000)
+            await withTimeout(plugin.open({ projectId: effectiveProject, orgId: opts.org ?? savedOrg }), 5_000)
           } catch { /* swallow */ }
         }
       } catch (e) {
@@ -1497,64 +1276,6 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
       }
     }
     if (!machineMode) outro('Deployment complete')
-  } catch (err) {
-    const message: string = err instanceof Error ? err.message : String(err)
-    // Best-effort enriched error JSON for CI consumers
-    const provGuess: Provider = (opts.provider as Provider) ?? 'vercel'
-    const fail: Record<string, unknown> = { ok: false, action: 'start' as const, provider: provGuess, message, final: true }
-    try {
-      // Attempt to add context for downstream assertions
-      const envTarget: 'prod' | 'preview' = (opts.env ?? 'preview') === 'prod' ? 'prod' : 'preview'
-      if (typeof (opts.provider) === 'string') fail.provider = opts.provider
-      fail.target = envTarget
-      // If provider was vercel, indicate intended mode
-      if ((opts.provider ?? '').toString() === 'vercel') {
-        fail.mode = 'deploy'
-        // Default ciChecklist so tests and CI have deterministic shape
-        if (fail.ciChecklist === undefined) fail.ciChecklist = { buildCommand: 'build' }
-      }
-      // Include a minimal ciChecklist when detection exists
-      try {
-        // detection may be defined earlier if we reached that step
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-ignore
-        if (typeof detection?.buildCommand === 'string') {
-          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-          // @ts-ignore
-          fail.ciChecklist = { buildCommand: detection.buildCommand }
-        }
-      } catch { /* ignore */ }
-      // Attach provider meta from thrown error if available
-      const meta = (err as any)?.meta as Record<string, unknown> | undefined
-      if (meta && typeof meta === 'object') {
-        if (meta.logsUrl && !('logsUrl' in fail)) fail.logsUrl = meta.logsUrl
-        if (meta.url && !('url' in fail)) fail.url = meta.url
-        if (meta.errorLogTail && !('errorLogTail' in fail)) fail.errorLogTail = meta.errorLogTail
-      }
-      // Emit best-effort NDJSON markers for consumers
-      if (process.env.OPD_NDJSON === '1') {
-        const prov = (opts.provider ?? '').toString()
-        const base = { action: 'start', target: envTarget }
-        if (prov === 'vercel') logger.json({ ...base, provider: 'vercel', event: 'logs', logsUrl: 'https://vercel.com' })
-        logger.json({ ...base, provider: prov || 'vercel', event: 'done', ok: false })
-      }
-    } catch { /* ignore */ }
-    if (isJsonMode(opts.json)) logger.json(fail)
-    else {
-      // Human-mode error: show concise tail and a logs URL
-      logger.error(message)
-      const tail = (fail.errorLogTail as string[] | undefined) ?? []
-      if (tail.length > 0) {
-        logger.section('Error Tail')
-        for (const line of tail.slice(-10)) { if (line.trim().length > 0) logger.error(line) }
-      }
-      const lurl = (fail.logsUrl as string | undefined)
-      if (lurl) logger.note(`Logs: ${String(lurl)}`)
-    }
-    const soft: boolean = Boolean(opts.softFail === true || opts.ci === true || opts.json === true || process.env.OPD_GHA === '1' || process.env.OPD_SUMMARY === '1' || process.env.OPD_SOFT_FAIL === '1')
-    process.exitCode = soft ? 0 : 1
-    return
-  }
 }
 
 function buildNonInteractiveCmd(args: { readonly provider: Provider; readonly envTarget: 'prod' | 'preview'; readonly path?: string; readonly project?: string; readonly org?: string; readonly syncEnv?: boolean }): string {
@@ -1595,6 +1316,23 @@ async function tryCopyToClipboard(text: string): Promise<boolean> {
   return false
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise<void>(resolve => setTimeout(resolve, ms))
+}
+
+async function openUrl(url: string): Promise<boolean> {
+  try {
+    const u: string = url
+    const cmd: string = process.platform === 'win32'
+      ? `powershell -NoProfile -NonInteractive -Command Start-Process \"${u}\"`
+      : process.platform === 'darwin'
+        ? `open "${u}"`
+        : `xdg-open "${u}"`
+    const res = await runWithTimeout({ cmd }, 5_000)
+    return res.ok
+  } catch { return false }
+}
+
 /** Register the guided start command. */
 export function registerStartCommand(program: Command): void {
   program
@@ -1618,15 +1356,14 @@ export function registerStartCommand(program: Command): void {
     .option('--soft-fail', 'Exit with code 0 on failure; emit ok:false JSON summary instead (CI-friendly)')
     .option('--capture', 'Write JSON and NDJSON logs to ./.artifacts (defaults on in --ci)')
     .option('--no-save-defaults', 'Do not prompt to save defaults')
-    .option('--deploy', 'Execute a real deploy inside the wizard (Netlify optional; Vercel default path)')
-    .option('--no-build', 'Netlify only: deploy prebuilt artifacts from publishDir without building')
+    .option('--deploy', 'Execute a real deploy inside the wizard')
     .option('--alias <domain>', 'Vercel only: set an alias (domain) after deploy')
     .option('--show-logs', 'Also echo provider stdout/stderr lines in human mode')
     .option('--summary-only', 'JSON: print only objects with final:true (suppresses transient JSON)')
     .option('--idle-timeout <seconds>', 'Abort if no new provider output arrives for N seconds (disabled by default)')
     .option('--timeout <seconds>', 'Abort provider subprocess after N seconds (default 900 in --ci; unlimited otherwise)')
     .option('--debug-detect', 'Emit detection JSON payload (path, framework, build/publish hints) for debugging')
-    .option('--generate-config-only', 'Write vercel.json/netlify.toml based on detection and exit')
+    .option('--generate-config-only', 'Write minimal provider config based on detection and exit')
     .option('--minimal', 'Run with sensible defaults (non-interactive)')
     .action(async (opts: StartOptions): Promise<void> => {
       try { await runStartWizard(opts) } catch (err) {

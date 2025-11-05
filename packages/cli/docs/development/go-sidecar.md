@@ -67,8 +67,7 @@ OPD_GO_DISABLE=1 opd start
 
 - `OPD_GO_FORCE=1` — force using the sidecar when present
 - `OPD_PTY=1|0` — force PTY on/off (auto-detected by default; off in CI/JSON modes)
-- `OPD_PACKAGE=zip` — pre-package artifacts for Netlify before deploy
-- `OPD_NETLIFY_DIRECT=1` — use the experimental Netlify direct deploy path (requires `NETLIFY_AUTH_TOKEN`)
+ 
 
 ## Quick smoke test
 You can invoke the sidecar directly:

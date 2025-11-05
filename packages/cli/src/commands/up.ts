@@ -18,6 +18,7 @@ import Ajv from 'ajv'
 import { upSummarySchema } from '../schemas/up-summary.schema'
 import { providerBuildResultSchema } from '../schemas/provider-build-result.schema'
 import { providerDeployResultSchema } from '../schemas/provider-deploy-result.schema'
+import { runWithTimeout } from '../utils/process'
 
 interface UpOptions {
   readonly path?: string
@@ -49,6 +50,26 @@ function inferPublishDir(fw: Framework): string {
   if (fw === 'next') return '.next'
   if (fw === 'sveltekit') return 'build'
   return 'dist'
+}
+
+function providerLoginUrl(p: string): string {
+  const prov: string = String(p)
+  if (prov === 'vercel') return 'https://vercel.com/login'
+  if (prov === 'cloudflare') return 'https://dash.cloudflare.com/login'
+  return 'https://github.com/login'
+}
+
+async function openUrl(url: string): Promise<boolean> {
+  try {
+    const u: string = url
+    const cmd: string = process.platform === 'win32'
+      ? `powershell -NoProfile -NonInteractive -Command Start-Process "${u}"`
+      : process.platform === 'darwin'
+        ? `open "${u}"`
+        : `xdg-open "${u}"`
+    const res = await runWithTimeout({ cmd }, 5_000)
+    return res.ok
+  } catch { return false }
 }
 
 /**
@@ -155,7 +176,14 @@ export function registerUpCommand(program: Command): void {
         process.env.OPD_SYNC_ENV = '1'
         // Plugin-first flow unless explicitly opting into legacy
         if (process.env.OPD_LEGACY !== '1') {
-          const prov: string = (provider && ['vercel', 'cloudflare', 'github'].includes(provider)) ? provider : 'vercel'
+          const allowed: readonly string[] = ['vercel', 'cloudflare', 'github']
+          // Explicitly reject Netlify
+          if (provider && provider.toLowerCase() === 'netlify') {
+            const msg = 'Netlify is not supported by OpenDeploy. Please use the official Netlify CLI.'
+            if (jsonMode) { logger.jsonPrint({ ok: false, action: 'up' as const, provider: 'netlify', message: msg, final: true }); return }
+            throw new Error(msg)
+          }
+          const prov: string = (provider && allowed.includes(provider)) ? provider : 'vercel'
           const envTargetUp: 'preview' | 'production' = (opts.env === 'prod' ? 'production' : 'preview')
           // Early preflight short-circuit for Cloudflare to avoid provider linking
           if (prov === 'cloudflare' && (opts.preflightOnly === true || opts.strictPreflight === true)) {
@@ -263,7 +291,26 @@ export function registerUpCommand(program: Command): void {
           }
           const p = await loadProvider(prov)
           if (process.env.OPD_SKIP_VALIDATE !== '1') {
-            await p.validateAuth(targetCwd)
+            try {
+              await p.validateAuth(targetCwd)
+            } catch {
+              if (opts.ci) throw new Error(`${prov} login required`)
+              const cmd = prov === 'vercel' ? 'vercel login' : prov === 'cloudflare' ? 'wrangler login' : 'git remote -v'
+              logger.section('Auth')
+              logger.note(`Running: ${cmd}`)
+              const res = await proc.run({ cmd, cwd: targetCwd })
+              let revalidated = false
+              if (res.ok) {
+                try { await p.validateAuth(targetCwd); revalidated = true } catch { /* ignore */ }
+              }
+              if (!revalidated) {
+                const url = providerLoginUrl(prov)
+                logger.note(`Opening provider login page: ${url}`)
+                try { await openUrl(url) } catch { /* ignore */ }
+                try { await p.validateAuth(targetCwd); revalidated = true } catch { /* ignore */ }
+              }
+              if (!revalidated) throw new Error(`${prov} login failed`)
+            }
           }
           // Optional env sync for supported providers
           const wantSync: boolean = opts.syncEnv === true || process.env.OPD_SYNC_ENV === '1'
@@ -347,7 +394,7 @@ export function registerUpCommand(program: Command): void {
               if (opts.strictPreflight && warned) {
                 const targetShort: 'prod' | 'preview' = envTargetUp === 'production' ? 'prod' : 'preview'
                 const message = 'Preflight failed (strict): resolve Next.js GitHub Pages warnings.'
-                if (jsonMode) { logger.jsonPrint({ ok: false, action: 'up' as const, provider: 'github' as const, target: targetShort, message, preflightOnly: true, final: true }); throw new Error(message) }
+                if (jsonMode) { logger.jsonPrint({ ok: false, action: 'up' as const, provider: 'github' as const, target: targetShort, message, preflightOnly: true, preflight, final: true }); throw new Error(message) }
                 throw new Error(message)
               }
               // If only preflight requested, exit early
@@ -416,8 +463,23 @@ export function registerUpCommand(program: Command): void {
           if (!buildRes.ok) {
             const targetShort: 'prod' | 'preview' = envTargetUp === 'production' ? 'prod' : 'preview'
             const message: string = buildRes.message || 'Build failed'
-            if (jsonMode) { logger.jsonPrint(annotate({ ok: false, action: 'up' as const, provider: prov, target: targetShort, message, preflight, buildSchemaOk, buildSchemaErrors, final: true })); return }
+            if (jsonMode) { logger.jsonPrint(annotate({ ok: false, action: 'up' as const, provider: prov as any, target: targetShort, message, preflight, buildSchemaOk, buildSchemaErrors, final: true })); process.exit(1) }
             throw new Error(message)
+          }
+          // If user requested --no-build, ensure artifact dir exists before deploying
+          if (prov === 'github' && opts.noBuild === true) {
+            try {
+              const exists = await fsx.exists(buildRes.artifactDir!)
+              if (!exists) {
+                const targetShort: 'prod' | 'preview' = envTargetUp === 'production' ? 'prod' : 'preview'
+                const hint = frameworkHint && frameworkHint.toLowerCase() === 'next'
+                  ? 'Run: pnpm -C apps/docs run build && pnpm -C apps/docs exec next export (creates out)'
+                  : 'Build your site locally to produce the publish directory (e.g., dist)'
+                const message = `Publish directory not found: ${buildRes.artifactDir}. ${hint}`
+                if (jsonMode) { logger.jsonPrint(annotate({ ok: false, action: 'up' as const, provider: 'github' as const, target: targetShort, message, preflight, buildSchemaOk, buildSchemaErrors, final: true })); process.exit(1) }
+                throw new Error(message)
+              }
+            } catch { /* if fs check fails, fall through to deploy */ }
           }
           // Asset sanity: for Next.js ensure _next/static exists in artifact
           const skipAssetSanity: boolean = process.env.OPD_SKIP_ASSET_SANITY === '1'

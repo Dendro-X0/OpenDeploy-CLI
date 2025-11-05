@@ -13,7 +13,7 @@ This document summarizes the migration from legacy provider adapters/shims to th
   - Deleted legacy type: `src/types/provider-adapter.ts`.
 - Introduced a unified Provider interface and plugins:
   - Provider interface: `src/core/provider-system/provider-interface.ts`
-  - Provider plugins: `src/core/provider-system/providers/` (e.g., `vercel.ts`, `netlify.ts`, `cloudflare-pages.ts`, `github-pages.ts`)
+  - Provider plugins: `src/core/provider-system/providers/` (e.g., `vercel.ts`, `cloudflare-pages.ts`, `github-pages.ts`)
 - Auth and config generation now go through the provider plugin only.
 - Logs follow uses provider CLIs directly when appropriate (e.g., `vercel logs`).
 
@@ -46,7 +46,7 @@ This document summarizes the migration from legacy provider adapters/shims to th
 ## CLI behavior notes
 - `start` wizard uses provider plugin auth/validate and ensures minimal config files are generated idempotently.
 - `generate <provider>` calls `provider.generateConfig({ detection, cwd, overwrite })`.
-- `up` and `deploy` use provider plugins for deploys; Netlify `--no-build` path is supported.
+- `up` and `deploy` use provider plugins for deploys.
 
 ## Netlify Support Removal (2025-10-05)
 
