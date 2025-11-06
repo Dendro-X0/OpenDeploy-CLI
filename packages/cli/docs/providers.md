@@ -1,12 +1,14 @@
 ## Provider Docs Index
 
-- Netlify: Not supported. Please use the official Netlify CLI (https://github.com/netlify/cli).
-
 Supported providers:
 
 - Vercel
 - Cloudflare Pages
 - GitHub Pages
+
+Unsupported providers:
+
+- Netlify — not supported by OpenDeploy. Please use the official Netlify CLI (https://github.com/netlify/cli).
 
 ### React Router v7
 

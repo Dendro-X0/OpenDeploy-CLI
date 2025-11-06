@@ -31,7 +31,6 @@ The 1.0.0 Beta milestone is complete (provider parity, CI ergonomics, extensibil
 | Command                              | Writes         | Summary |
 |--------------------------------------|----------------|---------|
 | `opd generate vercel`         | `vercel.json`  | Minimal config with `version`, optional `buildCommand`, and `outputDirectory` when a `publishDir` is detected. |
-| (Netlify removed)             | —              | — |
 | `opd generate turbo`          | `turbo.json`   | Minimal cache config: `tasks.build.dependsOn = ['^build']`, `outputs = ['.next/**', '!.next/cache/**', 'dist/**']`. |
 
 ## Quick Start
@@ -44,14 +43,10 @@ opd start
 opd init
 
 # 2) Preview: one‑command deploy (sync env then deploy)
-# Tip: running `opd up` without a provider opens the wizard.
 opd up vercel --env preview
 opd logs cloudflare --open
 
-# 3) Promote to production
-# From the Start wizard, you can promote the preview directly by setting an alias.
-opd start --provider vercel --env preview --promote --alias your-domain.com
-or use the dedicated command:
+# 3) Promote to production (Vercel)
 opd promote vercel --alias your-domain.com
 
 # (Optional) Explain plan before executing
@@ -101,14 +96,14 @@ opd run --all --env preview --sync-env --concurrency 3 --json
 - `--json`, `--ndjson`, `--timestamps`, `--summary-only`
  - CI sink flags: `--json-file`, `--ndjson-file`; CI preset: `--gha`
 
-## Promote & Rollback
+## Promote & Rollback (Vercel)
 
-- Vercel promote: `opd promote vercel --alias <prod-domain> [--from <preview-url-or-sha>]`
-- Vercel rollback: `opd rollback vercel --alias <prod-domain> [--to <url|sha>]`
+- Promote: `opd promote vercel --alias <prod-domain> [--from <preview-url-or-sha>]`
+- Rollback: `opd rollback vercel --alias <prod-domain> [--to <url|sha>]`
 
 Notes:
 
-- With `--from`, Vercel promotion targets a specific preview (URL/SHA).
+- With `--from`, promotion targets a specific preview (URL/SHA).
 - Outputs are standardized JSON with `final: true`; `up` emits NDJSON progress events when `--ndjson` is used.
 
 ## Reliability Knobs

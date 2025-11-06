@@ -99,7 +99,8 @@ async function ensureProviderAuth(p: Provider, opts: StartOptions): Promise<void
   }
   const ok: boolean = await tryValidate()
   if (ok) return
-  if (opts.ci) throw new Error(`${p} login required`)
+  // In machine modes (JSON or CI), fail fast without interactive retries
+  if (isJsonMode(opts.json) || opts.ci) throw new Error(`${p} login required`)
   const want = await clackConfirm({ message: `${providerNiceName(p)} login required. Log in now?`, initialValue: true })
   if (isCancel(want) || want !== true) throw new Error(`${p} login required`)
   const cmd: string = p === 'vercel' ? 'vercel login' : p === 'cloudflare' ? 'wrangler login' : 'git remote -v'
@@ -802,8 +803,8 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
     const targetCwd: string = targetPath
     const machineMode: boolean = isJsonMode(opts.json) || Boolean(opts.ci)
     const humanNote = (msg: string, section?: string): void => {
-      if (isJsonMode(opts.json)) logger.note(msg)
-      else note(msg, section || 'Info')
+      if (isJsonMode(opts.json)) return
+      note(msg, section || 'Info')
     }
     // Load saved defaults (best-effort)
     let saved: Record<string, unknown> = {}
@@ -846,7 +847,31 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
         provider = choice as Provider
       }
     }
-    if (!opts.generateConfigOnly) await ensureProviderAuth(provider!, opts)
+    // Dry-run summary (JSON-friendly) and exit early
+    if (opts.dryRun === true) {
+      const envTarget: 'prod' | 'preview' = (opts.env ?? 'preview') === 'prod' ? 'prod' : 'preview'
+      if (isJsonMode(opts.json)) {
+        logger.json({ ok: true, action: 'start', provider, target: envTarget, mode: 'dry-run', cwd: targetCwd, final: true })
+      } else {
+        logger.info(`[dry-run] start ${provider} (env=${envTarget})`)
+      }
+      return
+    }
+    // Compute env target early for error summaries
+    const envTarget: 'prod' | 'preview' = (opts.env ?? 'preview') === 'prod' ? 'prod' : 'preview'
+    if (!opts.generateConfigOnly) {
+      try {
+        await ensureProviderAuth(provider!, opts)
+      } catch (e) {
+        if (isJsonMode(opts.json)) {
+          const message: string = e instanceof Error ? e.message : String(e)
+          logger.json({ ok: false, action: 'start', provider, target: envTarget, mode: 'auth', message, cwd: targetCwd, final: true })
+          process.exitCode = 1
+          return
+        }
+        throw e
+      }
+    }
     // Optional build preflight
     await runBuildPreflight({ detection, provider: provider!, cwd: targetCwd, ci: Boolean(opts.ci), skipPreflight: Boolean(opts.skipPreflight) })
     // Help unit tests capture a clear signal that preflight succeeded
@@ -910,8 +935,7 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
     let effectiveProject: string | undefined
     effectiveProject = opts.project ?? savedProject
 
-    // Compute env target for subsequent steps
-    const envTarget: 'prod' | 'preview' = (opts.env ?? (saved.env as 'prod' | 'preview') ?? 'preview') === 'prod' ? 'prod' : 'preview'
+    // Env target already computed earlier; continue to use it for subsequent steps
 
     // Env + Sync
     let doSync: boolean = Boolean(opts.syncEnv ?? saved.syncEnv)
@@ -1111,16 +1135,24 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
     if (provider === 'cloudflare') {
       const idleSeconds = Number(opts.idleTimeout)
       const effIdle: number | undefined = Number.isFinite(idleSeconds) && idleSeconds > 0 ? Math.floor(idleSeconds) : (opts.ci ? 45 : undefined)
-      const { url, logsUrl } = await runDeploy({ provider: provider!, env: envTarget, cwd: targetCwd, json: Boolean(opts.json), project: effectiveProject, printCmd: opts.printCmd === true, timeoutSeconds: effectiveTimeout, idleTimeoutSeconds: effIdle })
-      if (isJsonMode(opts.json)) {
-        logger.json({ ok: true, action: 'start', provider, target: envTarget, mode: 'deploy', url, logsUrl, cwd: targetCwd, final: true })
-        if (!machineMode) outro('Done')
+      try {
+        const { url, logsUrl } = await runDeploy({ provider: provider!, env: envTarget, cwd: targetCwd, json: Boolean(opts.json), project: effectiveProject, printCmd: opts.printCmd === true, timeoutSeconds: effectiveTimeout, idleTimeoutSeconds: effIdle })
+        if (isJsonMode(opts.json)) {
+          logger.json({ ok: true, action: 'start', provider, target: envTarget, mode: 'deploy', url, logsUrl, cwd: targetCwd, final: true })
+          if (!machineMode) outro('Done')
+          return
+        }
+        if (url) logger.success(`${envTarget === 'prod' ? 'Production' : 'Preview'}: ${url}`)
+        if (logsUrl) logger.note(`Logs: ${logsUrl}`)
+        if (!machineMode) outro('Deployment complete')
         return
+      } catch (e) {
+        if (isJsonMode(opts.json)) {
+          const message: string = (e as any)?.meta?.message || (e instanceof Error ? e.message : 'Deploy failed')
+          logger.json({ ok: false, action: 'start', provider, target: envTarget, mode: 'deploy', message, cwd: targetCwd, final: true })
+        }
+        throw e
       }
-      if (url) logger.success(`${envTarget === 'prod' ? 'Production' : 'Preview'}: ${url}`)
-      if (logsUrl) logger.note(`Logs: ${logsUrl}`)
-      if (!machineMode) outro('Deployment complete')
-      return
     }
 
     // Ensure vercel.json for Vercel
@@ -1131,7 +1163,21 @@ export async function runStartWizard(opts: StartOptions): Promise<void> {
     // Vercel deploy path
     const idleSeconds = Number(opts.idleTimeout)
     const effIdle: number | undefined = Number.isFinite(idleSeconds) && idleSeconds > 0 ? Math.floor(idleSeconds) : (opts.ci ? 45 : undefined)
-    const { url, logsUrl, alias } = await runDeploy({ provider: provider!, env: envTarget, cwd: targetCwd, json: Boolean(opts.json), project: effectiveProject, org: opts.org ?? savedOrg, printCmd: opts.printCmd === true, alias: opts.alias, showLogs: Boolean(opts.showLogs), timeoutSeconds: effectiveTimeout, idleTimeoutSeconds: effIdle, publishDir: publishSuggestion, noBuild: Boolean(opts.noBuild) })
+    let url: string | undefined
+    let logsUrl: string | undefined
+    let alias: string | undefined
+    try {
+      const res = await runDeploy({ provider: provider!, env: envTarget, cwd: targetCwd, json: Boolean(opts.json), project: effectiveProject, org: opts.org ?? savedOrg, printCmd: opts.printCmd === true, alias: opts.alias, showLogs: Boolean(opts.showLogs), timeoutSeconds: effectiveTimeout, idleTimeoutSeconds: effIdle, publishDir: publishSuggestion, noBuild: Boolean(opts.noBuild) })
+      url = res.url
+      logsUrl = res.logsUrl
+      alias = res.alias
+    } catch (e) {
+      if (isJsonMode(opts.json)) {
+        const message: string = (e as any)?.meta?.message || (e instanceof Error ? e.message : 'Deploy failed')
+        logger.json({ ok: false, action: 'start', provider, target: envTarget, mode: 'deploy', message, cwd: targetCwd, final: true })
+      }
+      throw e
+    }
     let aliasAssigned: string | undefined = alias
     let didPromote: boolean = false
 

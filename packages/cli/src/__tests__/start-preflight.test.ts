@@ -74,7 +74,7 @@ vi.mock('../utils/process', async (orig) => {
 beforeEach(() => { logs.length = 0; vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => { logs.push(String(args[0] ?? '')); return undefined as any }) })
 afterEach(() => { (console.log as any) = origLog; vi.clearAllMocks() })
 
-describe('start preflight (netlify)', () => {
+describe.skip('start preflight (netlify removed)', () => {
   it('runs build preflight and validates publishDir output', async () => {
     await runStartWizard({ framework: 'astro', provider: 'netlify', env: 'preview', json: false, ci: false, syncEnv: false })
     const found = logs.find((l) => l.includes('Build validated'))
